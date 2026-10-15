@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "noEmit": true, "types": ["@webgpu/types", "vite/client", "@ericrius1/weft/client"] },
+  "include": ["."]
+}

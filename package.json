@@ -1,0 +1,17 @@
+{
+  "name": "weft-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/weft", "packages/loom", "examples/*"],
+  "scripts": {
+    "build": "npm run build -w @ericrius1/weft && npm run build -w @ericrius1/loom",
+    "dev": "npm run dev -w weft-lab",
+    "typecheck": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@webgpu/types": "^0.1.74",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["@webgpu/types", "vite/client", "node"],
+    "paths": { "@ericrius1/weft": ["./src/index.ts"] }
+  },
+  "include": ["src", "plugin", "shaders/*.d.wgsl.ts"]
+}

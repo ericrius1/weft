@@ -1,0 +1,5 @@
+node_modules
+dist
+*.d.wgsl.ts
+.DS_Store
+*.tgz

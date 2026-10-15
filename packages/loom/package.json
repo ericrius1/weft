@@ -1,0 +1,59 @@
+{
+  "name": "@ericrius1/loom",
+  "version": "0.1.0",
+  "description": "A cinematic WebGPU renderer on weft: physically based atmosphere, volumetric clouds and storm cells, the sea, rain, light in the air, GTAO, bloom, eye adaptation and an AgX film grade \u2014 plus GPU particles, paint, ink and toon light, breakable rubble on box3d, and a procedural audio engine.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Eric Levin",
+  "homepage": "https://github.com/ericrius1/weft/tree/main/packages/loom#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericrius1/weft.git",
+    "directory": "packages/loom"
+  },
+  "bugs": {
+    "url": "https://github.com/ericrius1/weft/issues"
+  },
+  "keywords": [
+    "webgpu",
+    "wgsl",
+    "renderer",
+    "volumetric-clouds",
+    "atmosphere",
+    "ocean",
+    "procedural-audio"
+  ],
+  "sideEffects": false,
+  "exports": {
+    "./audio": {
+      "types": "./dist/audio/index.d.ts",
+      "default": "./dist/audio/index.js"
+    },
+    "./shaders/*": "./dist/shaders/*",
+    "./package.json": "./package.json",
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "weft": {
+    "shaders": "dist/shaders"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && node scripts/declare.mjs && tsc -p tsconfig.json && node scripts/copy-shaders.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "box3d.js": "^0.1.1",
+    "math": "^0.1.0"
+  },
+  "peerDependencies": {
+    "@ericrius1/weft": "^0.1.0"
+  }
+}
