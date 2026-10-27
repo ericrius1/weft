@@ -13,6 +13,17 @@ export type Bindable = object | SamplerName;
 
 export class BindError extends Error {}
 
+/** set a bind group unless the pass already has that one at that index (WebGPU keeps them across draws) */
+type Tracked = (GPURenderPassEncoder | GPUComputePassEncoder) & { __weftGroups?: (GPUBindGroup | undefined)[] };
+function setGroup(enc: Tracked, i: number, bg: GPUBindGroup) {
+  const s = (enc.__weftGroups ??= []);
+  if (s[i] === bg) return;
+  s[i] = bg;
+  enc.setBindGroup(i, bg);
+}
+/** forget what a pass has set (after code outside weft may have changed it) */
+export function forgetBindings(enc: GPURenderPassEncoder | GPUComputePassEncoder) { (enc as Tracked).__weftGroups = undefined; }
+
 interface Resolved { res: GPUBindingResource; key: string; unfilterable?: boolean; format?: GPUTextureFormat }
 
 const describe = (v: unknown) => {
@@ -282,10 +293,10 @@ export class Binder {
   }
 
   apply(enc: GPURenderPassEncoder | GPUComputePassEncoder, view: View, shared?: Record<number, Record<string, unknown>>) {
-    enc.setBindGroup(0, view.group0());
+    setGroup(enc, 0, view.group0());
     for (const g of this.groups) {
-      if (g.shared) { enc.setBindGroup(g.index, g.shared.bindGroup(shared?.[g.index])); continue; }
-      if (!g.infos.length) { enc.setBindGroup(g.index, this.kit.emptyGroup); continue; }
+      if (g.shared) { setGroup(enc, g.index, g.shared.bindGroup(shared?.[g.index])); continue; }
+      if (!g.infos.length) { setGroup(enc, g.index, this.kit.emptyGroup); continue; }
       let key = '';
       const res: Resolved[] = [];
       for (const info of g.infos) {
@@ -306,7 +317,7 @@ export class Binder {
         g.last = bg;
         g.lastKey = key;
       }
-      enc.setBindGroup(g.index, g.last);
+      setGroup(enc, g.index, g.last);
     }
   }
 }

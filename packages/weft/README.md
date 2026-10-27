@@ -42,6 +42,16 @@ await kit.ready();
 kit.loop(() => kit.run([/* your passes… */ out]));
 ```
 
+Reading back and recording:
+
+```ts
+const d = await depth.readTexel(x, y);      // one texel, no stall (pooled; depth formats too): picking, cursor depth
+const cap = new Capture(kit);               // frames read from the swapchain (headless Chrome screenshots, films)
+const png = await cap.grab();               // a data URL; cap.step(dt) / cap.blob() step a frame by hand
+// vite.config.ts: plugins: [weft(), filmSink({ dir: resolve(__dirname, '../film') })]
+//   a page POSTs /__film/frame?name=&i= (JPEG), /__film/audio (WAV), /__film/meta → <dir>/<name>/…
+```
+
 In WGSL, `#include "weft/frame"`, `"weft/fullscreen"`, `"weft/mesh"` reach the kit's shader library; `libs` in the plugin
 options adds your own prefixes (a directory, or a package name).
 

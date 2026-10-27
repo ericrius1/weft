@@ -12,3 +12,4 @@ export { Painter, Atlas, atlasOf, hex, withAlpha, scaleColor, type Color, type S
 export { MipChain } from './mipgen';
 export { MeshBuilder, packColor, VERTEX_BYTES, type GpuMesh } from './mesh';
 export { blueNoise, blueNoiseTexture } from './bluenoise';
+export { Capture } from './capture';

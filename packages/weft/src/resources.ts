@@ -248,7 +248,81 @@ export class Texture implements Resource {
     staging.destroy();
     return out.buffer;
   }
-  destroy() { this.gpu.destroy(); }
+  private probes: GPUBuffer[] = [];
+  /** one texel back to the CPU without stalling the frame: what the GPU last drew there, a frame or two later (null
+   *  outside the texture). Its staging buffers are pooled, so picking or a cursor's depth can ask every frame. The
+   *  texture needs 'copy-src' in its usage (a depth texture is read depth-only). */
+  async readTexel(x: number, y: number, o: { mip?: number; layer?: number } = {}): Promise<ArrayBuffer | null> {
+    const mip = o.mip ?? 0, w = Math.max(1, this.width >> mip), h = Math.max(1, this.height >> mip);
+    x = Math.floor(x); y = Math.floor(y);
+    if (x < 0 || y < 0 || x >= w || y >= h) return null;
+    const d = this.kit.device, bpp = bytesPerPixel(this.format);
+    const buf = this.probes.pop() ?? d.createBuffer({ label: `${this.label}.probe`, size: 256, usage: BUF.MAP_READ | BUF.COPY_DST });
+    const enc = d.createCommandEncoder({ label: `${this.label}.probe` });
+    if (isDepthFormat(this.format)) {
+      // (a depth texture can only be copied whole: a one-thread compute reads the texel instead)
+      depthProbe(this.kit).encode(enc, this, x, y, mip, buf);
+    } else {
+      enc.copyTextureToBuffer({ texture: this.gpu, mipLevel: mip, origin: [x, y, o.layer ?? 0] }, { buffer: buf, bytesPerRow: 256 }, [1, 1, 1]);
+    }
+    this.kit.queue.submit([enc.finish()]);
+    try {
+      await buf.mapAsync(MAP.READ);
+      const out = buf.getMappedRange(0, Math.max(4, bpp)).slice(0);
+      buf.unmap();
+      if (this.probes.length < 8) this.probes.push(buf); else buf.destroy();
+      return out;
+    } catch {
+      buf.destroy();
+      return null;
+    }
+  }
+  destroy() { this.gpu.destroy(); for (const b of this.probes) b.destroy(); this.probes = []; }
+}
+
+// reads one depth texel into a buffer (Texture.readTexel on a depth format)
+class DepthProbe {
+  private pipe: GPUComputePipeline;
+  private at: GPUBuffer;
+  private out: GPUBuffer;
+  constructor(private kit: Kit) {
+    const d = kit.device;
+    const module = d.createShaderModule({
+      label: 'weft.depthProbe',
+      code: `@group(0) @binding(0) var t: texture_depth_2d;
+@group(0) @binding(1) var<storage, read_write> o: array<f32, 4>;
+@group(0) @binding(2) var<uniform> at: vec4u;
+@compute @workgroup_size(1) fn main() { o[0] = textureLoad(t, at.xy, i32(at.z)); }`,
+    });
+    this.pipe = d.createComputePipeline({ label: 'weft.depthProbe', layout: 'auto', compute: { module, entryPoint: 'main' } });
+    this.at = d.createBuffer({ label: 'weft.depthProbe.at', size: 16, usage: BUF.UNIFORM | BUF.COPY_DST });
+    this.out = d.createBuffer({ label: 'weft.depthProbe.out', size: 16, usage: BUF.STORAGE | BUF.COPY_SRC });
+  }
+  encode(enc: GPUCommandEncoder, tex: Texture, x: number, y: number, mip: number, dst: GPUBuffer) {
+    const d = this.kit.device;
+    // (the queue write lands before this encoder's commands: one probe per submit, as readTexel does)
+    this.kit.queue.writeBuffer(this.at, 0, new Uint32Array([x, y, mip, 0]));
+    const bg = d.createBindGroup({
+      layout: this.pipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: tex.view({ aspect: 'depth-only', dimension: '2d', baseMipLevel: 0, mipLevelCount: tex.mips }) },
+        { binding: 1, resource: { buffer: this.out } },
+        { binding: 2, resource: { buffer: this.at } },
+      ],
+    });
+    const p = enc.beginComputePass({ label: 'weft.depthProbe' });
+    p.setPipeline(this.pipe);
+    p.setBindGroup(0, bg);
+    p.dispatchWorkgroups(1);
+    p.end();
+    enc.copyBufferToBuffer(this.out, 0, dst, 0, 16);
+  }
+}
+const depthProbes = new WeakMap<Kit, DepthProbe>();
+function depthProbe(kit: Kit) {
+  let p = depthProbes.get(kit);
+  if (!p) depthProbes.set(kit, (p = new DepthProbe(kit)));
+  return p;
 }
 
 /** a specific view of a texture (one mip, one layer…) usable as a binding or an attachment */

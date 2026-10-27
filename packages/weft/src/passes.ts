@@ -3,7 +3,7 @@
 // loading screen means nothing compiles mid-game. A hot shader edit rebuilds just the pipelines made from it.
 import type { Kit, View } from './kit';
 import type { Shader } from './shader';
-import { Binder, BindError, type Bindable } from './binder';
+import { Binder, BindError, forgetBindings, type Bindable } from './binder';
 import { Ref, deref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat } from './resources';
 
 type Num = number | (() => number);
@@ -286,11 +286,19 @@ export class Draw<S extends Shader = Shader> {
     const p = this.pipe.pipeline;
     if (!p || !on(this.enabled)) return;
     const o = this.opts;
-    pe.setPipeline(p);
+    // (consecutive draws with one pipeline set it once)
+    const tracked = pe as GPURenderPassEncoder & { __weftPipeline?: GPURenderPipeline | null };
+    if (tracked.__weftPipeline !== p) { tracked.__weftPipeline = p; pe.setPipeline(p); }
     this.binder.apply(pe, this.pass.opts.view ?? this.kit.mainView, this.pass.opts.shared);
     o.vertexBuffers?.forEach((v, i) => pe.setVertexBuffer(i, gpuBuf(v.buffer), v.offset ?? 0));
     if (o.indices) pe.setIndexBuffer(gpuBuf(o.indices.buffer), o.indices.format ?? 'uint32', o.indices.offset ?? 0);
-    if (o.encode) { o.encode(pe, this); return; }
+    if (o.encode) {
+      o.encode(pe, this);
+      // (the callback may have set its own pipeline or groups)
+      tracked.__weftPipeline = null;
+      forgetBindings(pe);
+      return;
+    }
     if (o.indirect) {
       if (o.indices) pe.drawIndexedIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
       else pe.drawIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));

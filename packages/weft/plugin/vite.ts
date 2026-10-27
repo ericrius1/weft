@@ -9,7 +9,8 @@
 // `#include "weft/…"` always resolves to this package's shader library; `libs` adds more prefixes, each a directory or
 // a package name (its shader directory is the package.json's `weft.shaders` field, else `shaders/`).
 import type { Plugin, ModuleNode } from 'vite';
-import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join, dirname, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -116,5 +117,39 @@ export function weft(opts: WeftOptions = {}): Plugin {
       }
       return [...mods];
     },
+  };
+}
+
+/** Where a page's film frames land: the dev (and preview) server takes POSTs from a page rendering a film frame by
+ *  frame (see Capture) and writes them under `dir`/<name>/ — `/__film/frame?name=&i=` a JPEG as frames/f00012.jpg,
+ *  `/__film/audio?name=` a WAV as audio.wav, `/__film/meta?name=` JSON as meta.json. Use a preview server for long
+ *  films: a dev server reloads the page when a source file is saved.
+ *
+ *    plugins: [weft(), filmSink({ dir: resolve(__dirname, '../film') })]
+ */
+export function filmSink(opts: { dir: string; route?: string }): Plugin {
+  const route = opts.route ?? '/__film';
+  type Use = (path: string, fn: (req: IncomingMessage, res: ServerResponse) => void) => void;
+  const mount = (use: Use) => use(route, (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    const name = (url.searchParams.get('name') ?? 'film').replace(/[^\w.-]/g, '');
+    const dir = resolve(opts.dir, name);
+    if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      const i = Number(url.searchParams.get('i') ?? 0);
+      if (url.pathname === '/frame') { mkdirSync(join(dir, 'frames'), { recursive: true }); writeFileSync(join(dir, 'frames', `f${String(i).padStart(5, '0')}.jpg`), body); }
+      else if (url.pathname === '/audio') { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'audio.wav'), body); }
+      else if (url.pathname === '/meta') { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'meta.json'), body); }
+      else { res.statusCode = 404; res.end(); return; }
+      res.end('ok');
+    });
+  });
+  return {
+    name: 'weft-film-sink',
+    configureServer(server) { mount((p, fn) => server.middlewares.use(p, fn)); },
+    configurePreviewServer(server) { mount((p, fn) => server.middlewares.use(p, fn)); },
   };
 }

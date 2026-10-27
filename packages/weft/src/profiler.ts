@@ -53,7 +53,10 @@ export class Profiler {
   resolve(cbs: GPUCommandBuffer[]) {
     if (!this.on || !this.qs || this.next === this.resolved) return;
     const enc = this.kit.device.createCommandEncoder({ label: 'weft.ts' });
-    enc.resolveQuerySet(this.qs, this.resolved, this.next - this.resolved, this.resolveBuf!, this.resolved * 8);
+    // (a resolve's destination offset must be a multiple of 256 bytes, i.e. 32 queries: a second kit.run in a frame
+    // starts mid-block, so resolve from the block's start — re-resolving a few written queries is harmless)
+    const start = Math.floor(this.resolved / 32) * 32;
+    enc.resolveQuerySet(this.qs, start, this.next - start, this.resolveBuf!, start * 8);
     this.resolved = this.next;
     cbs.push(enc.finish());
   }
