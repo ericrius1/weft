@@ -62,7 +62,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.plugin.json && node scripts/declare.mjs && tsc -p tsconfig.json && node scripts/copy-shaders.mjs",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.plugin.json && node scripts/declare.mjs && tsc -p tsconfig.json && node scripts/copy-shaders.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

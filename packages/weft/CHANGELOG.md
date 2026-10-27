@@ -13,6 +13,7 @@
   bytes), taking the frame's whole submit down; it now resolves from the 32-query block the range starts in.
 - Draws skip `setPipeline` / `setBindGroup` when the pass already has that pipeline or group (consecutive draws with
   one pipeline, the frame group, shared groups). A draw's own `encode` callback resets the tracking.
+- The package build (and so `npm publish`) runs from PowerShell and cmd too: `dist` is cleared with Node, not `rm -rf`.
 
 ## 0.1.0
 
