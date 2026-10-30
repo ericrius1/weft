@@ -62,3 +62,12 @@ test('each entry point keeps only what it reaches', () => {
   assert.deepEqual(uses(code, 'vertex').resources, ['world']);
   assert.deepEqual(uses(code, 'fragment').resources, ['TS', 'world']);
 });
+
+test('an override read only inside a called function', () => {
+  const r = uses(`${STRUCTS}
+override RAGGED: f32 = 1.0;
+@group(0) @binding(1) var<uniform> world: W;
+fn edge(x: f32) -> f32 { return x * RAGGED; }
+@fragment fn fs() -> @location(0) vec4f { return world.lv[0] * edge(0.5); }`);
+  assert.deepEqual(r.overrides, ['RAGGED']);
+});
