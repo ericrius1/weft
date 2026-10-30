@@ -12,6 +12,13 @@ way, headless Chrome on an Apple-silicon Mac):
 | 2,000 draws + 4 shadow cascades (10,000 draws) | 28 ms | 4.1 ms | 0.2 ms |
 | 2,000 draws, each bound through a ping-pong Ref | 5.8 ms | 0.6 ms | (not for bundles) |
 
+- **Every name an entry point reads counts, however deep.** wgsl_reflect missed a binding or override read only inside
+  an index that follows a member access or another index (`world.levels[i32(u.level.x)]`, `data[0][u.i.x]`): the
+  binding fell out of the pipeline layout ("uses bindings in group 2 but the PipelineLayout doesn't have a
+  BindGroupLayout") and an override fell out of the constants, silently keeping its default. The plugin now walks every
+  function an entry reaches through its whole syntax tree and adds what wgsl_reflect missed (parameters and locals that
+  shadow a binding's name aren't it). `npm test` covers it. The stale compiled copies under `plugin/` are gone (the
+  package's `exports` always pointed at `dist/`).
 - **Bind groups by numbers, once per run epoch.** A group remembers the bind group it made and what that holds (uid and
   version per binding, compared as numbers: no key strings per draw). A group of direct resources is reused untouched
   until a resource is reallocated (`kit.resourceGen`) or a value is set on it; a group holding a `Ref` or a buffer range

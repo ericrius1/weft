@@ -3,14 +3,18 @@
 // 1. `#include "path"` is resolved (relative to the including file, or `weft/…` from the kit's shader library), each
 //    file once, and every output line remembers where it came from so compile errors point at the real file:line.
 // 2. The result is reflected with wgsl_reflect: struct layouts (offsets, sizes, array strides), bindings by variable
-//    name, entry points (with the resources each one actually uses and compute workgroup sizes) and overrides.
+//    name, entry points (with the resources each one actually uses and compute workgroup sizes) and overrides. Which
+//    bindings and overrides an entry uses is also worked out here from the syntax tree (entryNames), because
+//    wgsl_reflect misses a name read only inside an index that follows a member access or another index
+//    (`world.levels[i32(u.level.x)]` never counts `u`): the binding fell out of the pipeline layout and the pipeline
+//    failed to build, and an override fell out of the constants and silently kept its default.
 // 3. Struct members can carry tweak annotations in a trailing comment: `// @range(0, 2)`, `// @range(0, 1, 0.01)`,
 //    `// @color`. The debug overlay builds sliders from them.
 // 4. A `.d.wgsl.ts` declaration is generated next to the shader, so `import s from './x.wgsl'` gives typed struct
 //    fields and binding names (TS `allowArbitraryExtensions`).
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, relative, sep } from 'node:path';
-import { WgslReflect } from 'wgsl_reflect/wgsl_reflect.module.js';
+import { WgslReflect, WgslParser } from 'wgsl_reflect/wgsl_reflect.module.js';
 
 export interface FieldLayout {
   name: string; offset: number; size: number;
@@ -163,8 +167,41 @@ function fieldOf(m: Any, ann: Record<string, { range?: number[]; color?: boolean
   return f;
 }
 
+/** The module-scope names an entry point's code reads, through every function it calls: each reachable function's
+ *  body walked whole (every expression, index and argument at any depth), less the names its own parameters and
+ *  local declarations shadow. */
+function entryNames(ast: Any[], entry: string): Set<string> {
+  const fns = new Map<string, Any>();
+  for (const n of ast) if (n?.astNodeType === 'function') fns.set(n.name, n);
+  const names = new Set<string>();
+  const done = new Set<string>();
+  const todo = [entry];
+  while (todo.length) {
+    const fn = fns.get(todo.pop()!);
+    if (!fn || done.has(fn.name)) continue;
+    done.add(fn.name);
+    const local = new Set<string>(((fn.args ?? []) as Any[]).map((a) => a.name as string));
+    const read: string[] = [];
+    const seen = new WeakSet<object>();
+    const visit = (n: Any) => {
+      if (!n || typeof n !== 'object' || seen.has(n)) return;
+      seen.add(n);
+      if (Array.isArray(n)) { for (const c of n) visit(c); return; }
+      const t = n.astNodeType;
+      if ((t === 'let' || t === 'var' || t === 'const') && typeof n.name === 'string') local.add(n.name);
+      else if (t === 'varExpr' && typeof n.name === 'string') read.push(n.name);
+      else if (t === 'callExpr' && typeof n.name === 'string') todo.push(n.name);
+      for (const k in n) if (k !== 'parent' && k !== 'calls') visit(n[k]);
+    };
+    visit(fn.body);
+    for (const name of read) if (!local.has(name)) names.add(name);
+  }
+  return names;
+}
+
 export function reflectWgsl(code: string): ShaderReflection {
   const r: Any = new WgslReflect(code);
+  const ast: Any[] = new WgslParser().parse(code);
   const ann = annotations(code);
   const structs: Record<string, StructLayout> = {};
   for (const s of r.structs as Any[]) {
@@ -203,7 +240,13 @@ export function reflectWgsl(code: string): ShaderReflection {
   const entries: EntryInfo[] = [];
   for (const stage of ['vertex', 'fragment', 'compute'] as const) {
     for (const f of r.entry[stage] as Any[]) {
-      const e: EntryInfo = { name: f.name, stage, resources: [...new Set((f.resources as Any[]).map((x) => x.name as string))], overrides: [...new Set(((f.overrides ?? []) as Any[]).map((x) => x.name as string))] };
+      const resources = new Set((f.resources as Any[]).map((x) => x.name as string));
+      const used = new Set(((f.overrides ?? []) as Any[]).map((x) => x.name as string));
+      for (const name of entryNames(ast, f.name)) {
+        if (bindings[name]) resources.add(name);
+        else if ((r.overrides as Any[]).some((o) => o.name === name)) used.add(name);
+      }
+      const e: EntryInfo = { name: f.name, stage, resources: [...resources], overrides: [...used] };
       if (stage === 'compute') e.workgroupSize = f.workgroupSize ?? [1, 1, 1];
       if (stage === 'fragment') e.targets = (f.outputs as Any[]).filter((o) => o.locationType === 'location').length;
       entries.push(e);
