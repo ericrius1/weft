@@ -36,7 +36,8 @@ fn worldFromDepth(uv: vec2f, d: f32) -> vec3f {
 
 // view ray (world, normalised) through a screen uv
 fn viewRay(uv: vec2f) -> vec3f {
-  // (in the camera's basis: unprojecting a near-plane point and subtracting a far-from-origin camera loses precision)
+  // (in the camera's basis: unprojecting a near-plane point and subtracting a far-from-origin camera loses precision;
+  // proj[2].xy is the frustum's off-axis part, the TAA's jitter and Camera.shift: ndc = proj[0][0] * x / -z - proj[2][0])
   let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-  return normalize(frame.camFwd + frame.camRight * (ndc.x / frame.proj[0][0]) + frame.camUp * (ndc.y / frame.proj[1][1]));
+  return normalize(frame.camFwd + frame.camRight * ((ndc.x + frame.proj[2][0]) / frame.proj[0][0]) + frame.camUp * ((ndc.y + frame.proj[2][1]) / frame.proj[1][1]));
 }

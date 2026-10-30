@@ -16,6 +16,10 @@ export class Camera {
   ortho: { halfWidth: number; halfHeight: number } | null = null;
   /** sub-pixel projection offset in pixels (TAA) */
   jitter: [number, number] = [0, 0];
+  /** lens shift in normalised device units (x right, y up; 1 = half the frame): an off-axis frustum, the view's axis
+   *  kept where it points while the frame slides across the image plane (tiles of a larger frame, a fulldome's cube-face
+   *  halves, a rising front). Unlike `jitter` it's the camera's own and nothing per-frame resets it. */
+  shift: [number, number] = [0, 0];
   /** set to a matrix to bypass yaw/pitch/roll (e.g. light views) */
   viewOverride: M4 | null = null;
 
@@ -77,9 +81,10 @@ export class Camera {
     } else {
       perspectiveReversedFar(this.fovY, this.aspect, this.near, this.far, this.proj);
     }
-    if (this.jitter[0] || this.jitter[1]) {
-      // a sub-pixel shift of the whole projection (clip x += jx * w): written into the z column for perspective
-      const jx = (this.jitter[0] * 2) / width, jy = (this.jitter[1] * 2) / height;
+    if (this.jitter[0] || this.jitter[1] || this.shift[0] || this.shift[1]) {
+      // a shift of the whole projection (ndc x += jx): written into the z column for perspective (clip x += jx * w,
+      // w = -z), into the translation for orthographic; the TAA's sub-pixel jitter and the lens shift add
+      const jx = (this.jitter[0] * 2) / width + this.shift[0], jy = (this.jitter[1] * 2) / height + this.shift[1];
       if (this.ortho) { this.proj[12] += jx; this.proj[13] += jy; }
       else { this.proj[8] -= jx; this.proj[9] -= jy; }
     }

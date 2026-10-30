@@ -95,6 +95,22 @@ const png = await cap.grab();               // a data URL; cap.step(dt) / cap.bl
 //   a page POSTs /__film/frame?name=&i= (JPEG), /__film/audio (WAV), /__film/meta → <dir>/<name>/…
 ```
 
+A planetarium's fulldome (a 180-degree equidistant fisheye: the zenith at the centre, the heading at the bottom rim,
+its right on the right) from six ordinary views of one moment, stitched on the GPU with feathered seams:
+
+```ts
+const L = domeLayout(4096, { oversample: 1.4 });   // size the canvas to L.tile (CSS pixels, pixel ratio 1) first
+const dome = new Fulldome(kit, { size: 4096, oversample: 1.4, source: filmTexture });   // default source: the canvas
+await dome.frame((k) => kit.step(k === 0 ? 1 / 30 - 5e-4 : 1e-4));   // the first view moves the world on; the rest don't
+const img = await dome.read();                     // ImageData 4096 x 4096 (or dome.output, a texture)
+```
+
+Each view is a half cube face (the four sides' upper halves, the zenith's two halves) rendered with `Camera.shift`, a
+lens shift that keeps the view's axis level or vertical while its frame slides up the image plane; `viewRay` follows
+it, as must any shader that rebuilds view rays from the projection (`proj[2].xy` is the off-axis part). Turn off for a
+dome whatever a view draws in screen space that can't be stitched: vignetting, grain, chromatic aberration, lens flares
+and screen-space sun shafts, camera motion blur, temporal accumulation.
+
 In WGSL, `#include "weft/frame"`, `"weft/fullscreen"`, `"weft/mesh"`, `"weft/output"` reach the kit's shader library;
 `libs` in the plugin options adds your own prefixes (a directory, or a package name).
 

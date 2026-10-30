@@ -15,3 +15,5 @@ export { MipChain } from './mipgen';
 export { MeshBuilder, packColor, VERTEX_BYTES, type GpuMesh } from './mesh';
 export { blueNoise, blueNoiseTexture } from './bluenoise';
 export { Capture } from './capture';
+export { Fulldome, type FulldomeOptions } from './dome';
+export { domeLayout, domeDirection, tileWeights, viewBasis, type DomeLayout, type DomeOptions } from './domelayout';

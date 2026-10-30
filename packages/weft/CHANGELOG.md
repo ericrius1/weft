@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1
+
+- **Fulldome** (`Fulldome`, `domeLayout`; `src/dome.ts`, `shaders/dome.wgsl`): a planetarium's domemaster, a 180-degree
+  equidistant fisheye with the zenith at the centre and the heading at the bottom rim, made from six perspective views
+  of one moment — the four sides' upper halves and the zenith face's two halves, each widened by a margin (6 degrees)
+  and all the same size, so one canvas renders every one — and stitched on the GPU, four taps a pixel, each seam
+  feathered across the margin so one view's screen-space effects fade into the next's. The views' detail matches the
+  dome's (size / pi pixels per radian) or `oversample`s it. `npm test` checks the whole hemisphere is covered and the
+  orientation. Made for boulder's 5-minute 4K dome film ("A Boulder Christmas", rendered on an RTX 5090 at about half a
+  second a frame with 1.4x oversampled views).
+- **`Camera.shift`**: a lens shift (normalised device units), an off-axis frustum that keeps the camera's axis where it
+  points while its frame slides across the image plane. Unlike `jitter` (the TAA's, in pixels) nothing per-frame resets
+  it; the two add.
+- **`viewRay` follows an off-axis projection.** It rebuilt the ray from `proj[0][0]` and `proj[1][1]` alone, so any
+  shifted or jittered projection drew what used it (a sky, an atmosphere, fog) misaligned with the geometry: a lens
+  shift put the sky's horizon in the middle of the frame, and the TAA's jitter moved the sky by its sub-pixel offset
+  against everything else. It now adds `proj[2].xy`.
+
 ## 0.2.0
 
 Measured on the lab's bench (`examples/lab/bench.html`: N cubes, each its own draw with its own group, all sharing a
