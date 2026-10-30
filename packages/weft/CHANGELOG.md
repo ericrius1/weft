@@ -13,6 +13,8 @@
 - **`Camera.shift`**: a lens shift (normalised device units), an off-axis frustum that keeps the camera's axis where it
   points while its frame slides across the image plane. Unlike `jitter` (the TAA's, in pixels) nothing per-frame resets
   it; the two add.
+- **`Texture.read()` keeps its staging buffers** (two per size) instead of making and destroying one each call: a film
+  reading a 4096 dome every frame allocated 67 MB a frame.
 - **`viewRay` follows an off-axis projection.** It rebuilt the ray from `proj[0][0]` and `proj[1][1]` alone, so any
   shifted or jittered projection drew what used it (a sky, an atmosphere, fog) misaligned with the geometry: a lens
   shift put the sky's horizon in the middle of the frame, and the TAA's jitter moved the sky by its sub-pixel offset

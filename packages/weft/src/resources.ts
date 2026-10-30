@@ -264,17 +264,24 @@ export class Texture implements Resource {
     const bpp = bytesPerPixel(this.format);
     const bpr = Math.ceil((w * bpp) / 256) * 256;
     const d = this.kit.device;
-    const staging = d.createBuffer({ label: `${this.label}.read`, size: bpr * h, usage: BUF.MAP_READ | BUF.COPY_DST });
+    // (a film reads the same texture every frame: its staging buffers are kept and reused, a couple of them, so two
+    // reads can be in flight)
+    const size = bpr * h;
+    const i = this.stagings.findIndex((b) => b.size === size);
+    const staging = i >= 0 ? this.stagings.splice(i, 1)[0] : d.createBuffer({ label: `${this.label}.read`, size, usage: BUF.MAP_READ | BUF.COPY_DST });
     const enc = d.createCommandEncoder();
     enc.copyTextureToBuffer({ texture: this.gpu, mipLevel: mip, origin: [0, 0, layer] }, { buffer: staging, bytesPerRow: bpr, rowsPerImage: h }, [w, h, 1]);
     this.kit.queue.submit([enc.finish()]);
     await staging.mapAsync(MAP.READ);
     const src = new Uint8Array(staging.getMappedRange());
     const out = new Uint8Array(w * h * bpp);
-    for (let y = 0; y < h; y++) out.set(src.subarray(y * bpr, y * bpr + w * bpp), y * w * bpp);
-    staging.destroy();
+    if (bpr === w * bpp) out.set(src.subarray(0, out.length));
+    else for (let y = 0; y < h; y++) out.set(src.subarray(y * bpr, y * bpr + w * bpp), y * w * bpp);
+    staging.unmap();
+    if (this.stagings.length < 2 && !this.destroyed) this.stagings.push(staging); else staging.destroy();
     return out.buffer;
   }
+  private stagings: GPUBuffer[] = [];
   private probes: GPUBuffer[] = [];
   /** one texel back to the CPU without stalling the frame: what the GPU last drew there, a frame or two later (null
    *  outside the texture). Its staging buffers are pooled, so picking or a cursor's depth can ask every frame. The
@@ -315,8 +322,9 @@ export class Texture implements Resource {
   /** free it for good: it leaves kit.textures, so a resize doesn't reallocate it */
   destroy() {
     this.gpu.destroy();
-    for (const b of this.probes) b.destroy();
+    for (const b of [...this.probes, ...this.stagings]) b.destroy();
     this.probes = [];
+    this.stagings = [];
     this.views.clear();
     this.destroyed = true;
     this.kit.textures.delete(this);
