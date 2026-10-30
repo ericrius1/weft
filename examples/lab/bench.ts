@@ -4,7 +4,7 @@
 // bundle=1 bakes each pass's cubes into a DrawBundle. Frames are stepped by hand and kit.run is timed; the numbers land
 // in window.__bench and on the page.
 //   bench.html?n=2000&cascades=4&refs=1&bundle=1&frames=300
-import { createKit, Camera, Capture, mat4, type Draw, type DrawBundle, type RenderPass } from '@ericrius1/weft';
+import { createKit, Camera, Capture, mat4, type DrawBundle, type RenderPass } from '@ericrius1/weft';
 import envShader from './benchenv.wgsl';
 import cube from './bench.wgsl';
 
@@ -62,7 +62,6 @@ for (let c = 0; c < CASCADES; c++) {
 }
 
 const side = Math.ceil(Math.sqrt(N));
-const draws: Draw<typeof cube>[] = [];
 const sceneDraws = BUNDLE ? scene.bundle('cubes') : scene;
 const cascadeDraws: (RenderPass | DrawBundle)[] = cascades.map((p) => (BUNDLE ? p.bundle('cubes.shadow') : p));
 for (let i = 0; i < N; i++) {
@@ -73,7 +72,7 @@ for (let i = 0; i < N; i++) {
   const inst = kit.uniforms(cube.structs.Inst, `inst${i}`).set({ model: m, color: [0.5 + 0.5 * hue, 0.7, 1.2 - hue, hue] });
   const bind = { inst, albedo: albedos[i & 3], ...(REFS ? { wobble: wobble.read } : {}) };
   const vertex = REFS ? 'vs_wobble' : 'vs';
-  draws.push(sceneDraws.draw(cube, { label: 'cube', vertex, bind, count: 36 }));
+  sceneDraws.draw(cube, { label: 'cube', vertex, bind, count: 36 });
   for (const p of cascadeDraws) p.draw(cube, { label: 'cube.shadow', vertex, fragment: null, bind, count: 36 });
 }
 const out = kit.pass({ label: 'tonemap', color: [{ target: 'screen', clear: [0, 0, 0, 1] }] });
@@ -100,7 +99,7 @@ for (let f = 0; f < WARM + FRAMES; f++) {
 }
 const ms = times.slice(WARM).sort((a, b) => a - b);
 const pick = (p: number) => ms[Math.min(ms.length - 1, Math.floor(p * ms.length))];
-const total = draws.length * (1 + CASCADES);
+const total = N * (1 + CASCADES);
 const result = {
   n: N, cascades: CASCADES, refs: REFS, bundle: BUNDLE, draws: total, frames: ms.length,
   records: BUNDLE ? [sceneDraws as DrawBundle, ...(cascadeDraws as DrawBundle[])].map((b) => b.records) : [],

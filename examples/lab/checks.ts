@@ -1,7 +1,7 @@
 // weft checks: what 0.2 fixed and added, exercised in the browser. Each check prints a line here and lands in
 // window.__checks; a few small kits each own a canvas. The compile-info stall goes last (it stalls every new module
-// on the page for its few seconds). window.__probe gives where the SDR and HDR canvases sit, both filled with the same
-// mid grey, for a screenshot to compare.
+// on the page for its few seconds). window.__probe gives where the SDR and HDR canvases' swatches (a mid grey, an
+// orange) sit, for a page screenshot to compare: the two canvases should look the same.
 import { createKit, Capture, Draw, MipChain, Painter, type Compiler, type Kit, type AnyPipelineRecord } from '@ericrius1/weft';
 import checks from './checks.wgsl';
 import shared from './checkshared.wgsl';
