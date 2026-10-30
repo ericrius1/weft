@@ -1,13 +1,15 @@
 // weft lab: the smallest complete use of the kit — a compute ripple tank (ping-pong storage), a lit grid drawn
 // straight from the sim buffer, a sky, and a tonemap pass. Press ` for the overlay; edit a .wgsl file and the tank
-// keeps rippling through the hot reload.
+// keeps rippling through the hot reload. ?hdr asks for an HDR canvas (on an HDR display; ?hdr=force anywhere): the sun
+// on the water then shines past white. bench.html prices encoding many draws; checks.html runs the kit's checks.
 import { createKit, Input } from '@ericrius1/weft';
 import ripple from './ripple.wgsl';
 import water from './water.wgsl';
 import post from './post.wgsl';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
-const kit = await createKit(canvas);
+const hdrParam = new URLSearchParams(location.search).get('hdr');
+const kit = await createKit(canvas, { hdr: hdrParam === 'force' ? 'force' : hdrParam !== null });
 const input = new Input(canvas);
 const N = 256;
 const EXTENT = 40;
@@ -30,11 +32,11 @@ const scene = kit.pass({ label: 'scene', color: [{ target: hdr, clear: [0, 0, 0,
 scene.draw(water, { label: 'water', bind: { water: look, state: state.read }, count: (N - 1) * (N - 1) * 6, cull: 'none' });
 scene.fullscreen(water, { label: 'sky', fragment: 'fs_sky', bind: { water: look }, depthCompare: 'equal' });
 const out = kit.pass({ label: 'tonemap', color: [{ target: 'screen', clear: [0, 0, 0, 1] }] });
-out.fullscreen(post, { bind: { post: tone, hdr } });
+out.fullscreen(post, { bind: { post: tone, hdr }, constants: { HDR: kit.hdr.enabled ? 1 : 0, P3: kit.hdr.colorSpace === 'display-p3' ? 1 : 0 } });
 
 const t0 = performance.now();
 const r = await kit.ready();
-console.log(`weft lab: ${r.pipelines} pipelines ready in ${(performance.now() - t0).toFixed(0)} ms (${r.failed} failed)`);
+console.log(`weft lab: ${r.pipelines} pipelines ready in ${(performance.now() - t0).toFixed(0)} ms (${r.failed} failed), ${kit.hdr.enabled ? `HDR ${kit.hdr.colorSpace}` : 'SDR'} canvas`);
 
 const cam = kit.camera;
 let nextRain = 0;

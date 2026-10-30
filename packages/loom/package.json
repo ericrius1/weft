@@ -54,6 +54,6 @@
     "math": "^0.1.0"
   },
   "peerDependencies": {
-    "@ericrius1/weft": "^0.1.0"
+    "@ericrius1/weft": "^0.1.0 || ^0.2.0"
   }
 }

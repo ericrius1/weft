@@ -64,13 +64,15 @@ export default defineConfig({ plugins: [weft({ libs: { loom: '@ericrius1/loom' }
 ```
 packages/weft     the kit (src/), its shader library (shaders/), the Vite plugin and WGSL compiler (plugin/)
 packages/loom     the renderer, world, physics glue and audio (src/), its shaders (src/shaders/)
-examples/lab      the smallest complete use of the kit: a compute ripple tank
+examples/lab      the smallest complete use of the kit: a compute ripple tank (?hdr for an HDR canvas); bench.html
+                  prices encoding thousands of draws (?n=2000&cascades=4&bundle=1); checks.html exercises the kit
 ```
 
 ```bash
 npm install
 npm run build      # both packages
 npm run dev        # the lab
+WEFT_SRC=1 npm run dev   # the lab on the kit's source: engine edits without a rebuild
 ```
 
 Working on the engine and a game together: `npm link` the packages into the game, or point its dependency at a

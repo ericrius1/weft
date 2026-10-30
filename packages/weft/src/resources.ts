@@ -1,6 +1,8 @@
 // GPU resources with identities and versions. A bind group remembers the (uid, version) of everything it holds, so a
-// resize, a buffer that grew, or a ping-pong swap just produces a different key and a fresh (or cached) bind group:
-// nothing ever binds a destroyed texture.
+// resize, a buffer that grew, or a ping-pong swap just produces a different identity and a fresh (or cached) bind
+// group: nothing ever binds a destroyed texture. Every reallocation also bumps kit.resourceGen, which tells the binder
+// when bind groups of direct resources need checking at all. destroy() frees a resource for good: it leaves the kit's
+// sets, so a resize doesn't bring it back and the memory tally (kit.memory) drops it.
 import type { Kit } from './kit';
 import type { StructDef } from './shader';
 import { StructView, type DeepPartial } from './struct';
@@ -32,20 +34,25 @@ export const bufferUsage = (u: BufferUse[]) => u.reduce((a, x) => a | BU[x], 0);
 /** a uniform buffer laid out from a WGSL struct; dirty values upload once at the start of the next kit.run() */
 export class UniformBuffer<T = Record<string, unknown>> implements Resource {
   readonly uid = nextUid();
-  version = 1;
+  private v = 1;
   gpu: GPUBuffer;
   view: StructView<T>;
   dirty = true;
+  destroyed = false;
   private layoutVersion: number;
   constructor(private kit: Kit, readonly def: StructDef<T>, public label: string) {
     this.view = new StructView(def);
     this.layoutVersion = def.version;
     this.gpu = kit.device.createBuffer({ label, size: this.view.data.byteLength, usage: BUF.UNIFORM | BUF.COPY_DST });
   }
+  /** bumped when its GPU buffer is replaced (and kit.resourceGen with it, so bind groups are checked again) */
+  get version() { return this.v; }
+  set version(n: number) { this.v = n; this.kit.resourceGen++; }
   set(values: DeepPartial<T>) { this.view.set(values); this.dirty = true; return this; }
   get(field: keyof T & string) { return this.view.get(field); }
   /** upload now if dirty (kit.run does this for every uniform buffer) */
   upload() {
+    if (this.destroyed) return;
     if (this.def.version !== this.layoutVersion) this.relayout();
     if (!this.dirty) return;
     this.kit.queue.writeBuffer(this.gpu, 0, this.view.data);
@@ -66,7 +73,12 @@ export class UniformBuffer<T = Record<string, unknown>> implements Resource {
     }
     this.dirty = true;
   }
-  destroy() { this.gpu.destroy(); }
+  /** free it for good (it's no longer uploaded) */
+  destroy() {
+    this.gpu.destroy();
+    this.destroyed = true;
+    this.kit.uniformBuffers.delete(this as UniformBuffer<any>);
+  }
 }
 
 export interface StorageOptions {
@@ -82,7 +94,7 @@ export interface StorageOptions {
 
 export class StorageBuffer implements Resource {
   readonly uid = nextUid();
-  version = 1;
+  private v = 1;
   gpu!: GPUBuffer;
   size = 0;
   count: number;
@@ -99,6 +111,9 @@ export class StorageBuffer implements Resource {
     this.alloc(size);
     if (o.data) this.write(o.data);
   }
+  /** bumped when its GPU buffer is replaced (and kit.resourceGen with it, so bind groups are checked again) */
+  get version() { return this.v; }
+  set version(n: number) { this.v = n; this.kit.resourceGen++; }
   private alloc(size: number) {
     this.size = Math.max(16, Math.ceil(size / 16) * 16);
     this.gpu = this.kit.device.createBuffer({ label: this.label, size: this.size, usage: this.usage });
@@ -130,7 +145,11 @@ export class StorageBuffer implements Resource {
     staging.destroy();
     return out;
   }
-  destroy() { this.gpu.destroy(); }
+  /** free it for good */
+  destroy() {
+    this.gpu.destroy();
+    this.kit.buffers.delete(this);
+  }
 }
 
 // ---------------------------------------------------------------- textures
@@ -160,12 +179,14 @@ export interface TextureDesc {
 
 export class Texture implements Resource {
   readonly uid = nextUid();
-  version = 0;
+  private v = 0;
   gpu!: GPUTexture;
   width = 0; height = 0; layers = 1; mips = 1; samples = 1;
   label: string;
   readonly format: GPUTextureFormat;
   readonly usage: number;
+  /** freed for good (destroy): a resize no longer reallocates it */
+  destroyed = false;
   private views = new Map<string, GPUTextureView>();
   constructor(private kit: Kit, readonly desc: TextureDesc) {
     this.label = desc.label ?? 'texture';
@@ -177,6 +198,9 @@ export class Texture implements Resource {
     if (this.samples > 1) this.usage &= ~(TEX.STORAGE_BINDING | TEX.COPY_DST | TEX.COPY_SRC);
     this.alloc();
   }
+  /** bumped whenever its GPU texture is replaced (and kit.resourceGen with it, so bind groups are checked again) */
+  get version() { return this.v; }
+  set version(n: number) { this.v = n; this.kit.resourceGen++; }
   get relative() { return typeof this.desc.size === 'string'; }
   /** size this texture wants right now */
   wanted(): [number, number, number] {
@@ -190,8 +214,10 @@ export class Texture implements Resource {
   }
   /** (re)allocate if the wanted size changed; returns true when it did */
   alloc(): boolean {
+    if (this.destroyed) return false;
     const [w, h, l] = this.wanted();
     if (this.gpu && w === this.width && h === this.height && l === this.layers) return false;
+    const first = !this.gpu;
     this.gpu?.destroy();
     this.width = w; this.height = h; this.layers = l;
     const m = this.desc.mips;
@@ -202,7 +228,8 @@ export class Texture implements Resource {
       sampleCount: this.samples, usage: this.usage,
     });
     this.views.clear();
-    this.version++;
+    // (a new texture is in no bind group yet: only a reallocation needs them checked)
+    if (first) this.v++; else this.version++;
     return true;
   }
   /** a view, cached per descriptor until the texture is reallocated */
@@ -277,7 +304,23 @@ export class Texture implements Resource {
       return null;
     }
   }
-  destroy() { this.gpu.destroy(); for (const b of this.probes) b.destroy(); this.probes = []; }
+  /** bytes it holds on the GPU: every mip of every layer, times its samples (block-compressed formats are estimated) */
+  get bytes() {
+    if (this.destroyed) return 0;
+    const bpp = bytesPerPixel(this.format), deep = (this.desc.dimension ?? '2d') === '3d';
+    let n = 0;
+    for (let m = 0; m < this.mips; m++) n += Math.max(1, this.width >> m) * Math.max(1, this.height >> m) * (deep ? Math.max(1, this.layers >> m) : this.layers);
+    return n * bpp * this.samples;
+  }
+  /** free it for good: it leaves kit.textures, so a resize doesn't reallocate it */
+  destroy() {
+    this.gpu.destroy();
+    for (const b of this.probes) b.destroy();
+    this.probes = [];
+    this.views.clear();
+    this.destroyed = true;
+    this.kit.textures.delete(this);
+  }
 }
 
 // reads one depth texel into a buffer (Texture.readTexel on a depth format)
@@ -327,10 +370,22 @@ function depthProbe(kit: Kit) {
 
 /** a specific view of a texture (one mip, one layer…) usable as a binding or an attachment */
 export class TexView {
+  private id = 0;
   constructor(readonly texture: Texture, readonly desc: GPUTextureViewDescriptor) {}
   get view() { return this.texture.view(this.desc); }
   get key() { return `${this.texture.uid}.${this.texture.version}:${JSON.stringify(this.desc)}`; }
+  /** a number per distinct description: views of equal descriptions share it (so they bind alike) */
+  get descId() {
+    if (!this.id) {
+      const k = JSON.stringify(this.desc);
+      let id = descIds.get(k);
+      if (!id) descIds.set(k, (id = descIds.size + 1));
+      this.id = id;
+    }
+    return this.id;
+  }
 }
+const descIds = new Map<string, number>();
 
 export function bytesPerPixel(f: GPUTextureFormat): number {
   if (/^(r8|r8unorm|r8snorm|r8uint|r8sint|stencil8)$/.test(f)) return 1;

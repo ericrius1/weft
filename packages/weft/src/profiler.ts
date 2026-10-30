@@ -1,6 +1,8 @@
 // Per-pass GPU timestamps (when the adapter has 'timestamp-query'). Active while the overlay is open or when an app
 // forces it (dynamic resolution). On Apple's tile-based GPUs per-pass numbers describe the pass structure more than
 // its cost — the frame total is trustworthy; compare passes by switching them off (the overlay's checkboxes).
+// The overlay reads the smoothed numbers; a performance test reads each completed frame's raw ones (lastFrameMs,
+// lastMs), counting them by `serial`.
 import type { Kit } from './kit';
 import { BUF, MAP } from './gpuconst';
 
@@ -14,6 +16,12 @@ export class Profiler {
   readonly ms = new Map<string, number>();
   /** whole-frame GPU time (first pass start → last pass end), smoothed */
   frameMs = 0;
+  /** the newest completed frame's GPU time, raw */
+  lastFrameMs = 0;
+  /** the newest completed frame's ms per pass label, raw */
+  lastMs = new Map<string, number>();
+  /** bumped with each completed frame's raw numbers (a frame read back is counted once) */
+  serial = 0;
   private qs: GPUQuerySet | null = null;
   private resolveBuf: GPUBuffer | null = null;
   private readBuf: GPUBuffer | null = null;
@@ -85,9 +93,12 @@ export class Profiler {
         first = Math.min(first, a);
         last = Math.max(last, b);
       }
+      this.lastMs = frame;
       for (const [k, v] of frame) this.ms.set(k, (this.ms.get(k) ?? v) * 0.9 + v * 0.1);
       if (last > first) {
         const total = (last - first) / 1e6;
+        this.lastFrameMs = total;
+        this.serial++;
         this.frameMs = this.frameMs ? this.frameMs * 0.9 + total * 0.1 : total;
       }
     }).catch(() => { this.pending = false; });

@@ -1,13 +1,15 @@
 // The kit: device + canvas, the resource factories, the frame loop and `run([...])`, which encodes an explicit,
 // ordered list of passes. No scene graph, no hidden scheduling: what you list is what runs, in that order.
+// Each run (and each RunAction in it) starts a bind epoch, the span in which a bind group once resolved is reused; the
+// canvas is SDR (the preferred 8-bit format) unless an HDR one is asked for and the display has it (kit.hdr).
 import frameShader from '../shaders/frame.wgsl';
 import type { Shader, StructDef } from './shader';
 import { sourceLine } from './shader';
 import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction, type StorageOptions, type TextureDesc } from './resources';
-import { Compute, RenderPass, RawItem, PipelineRecord, type ComputeOptions, type RenderPassOptions, type RunItem } from './passes';
+import { Compute, RenderPass, RawItem, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem } from './passes';
 import { SharedGroup, type SamplerName } from './binder';
-import { STAGE } from './gpuconst';
+import { STAGE, TEX } from './gpuconst';
 import { Profiler } from './profiler';
 import { DebugOverlay } from './debug';
 import type { Frame } from '../shaders/frame.wgsl';
@@ -27,9 +29,26 @@ export interface KitOptions {
   alphaMode?: GPUCanvasAlphaMode;
   /** per-pass error scopes + overlay open (also `?debug` in the URL) */
   debug?: boolean;
+  /** an HDR canvas when the display is HDR (dynamic-range: high) and the browser can tone-map one: rgba16float with
+   *  extended tone mapping, in Display P3 where supported ('force': skip the display check). See kit.hdr for what the
+   *  last pass must write then. Without it (or without the display) the canvas is SDR as always. */
+  hdr?: boolean | 'force';
+}
+
+/** how the canvas is set up: SDR (the preferred 8-bit format, values 0..1) or HDR (rgba16float with extended tone
+ *  mapping: values past 1 are brighter than SDR white, up to the display's headroom). Either way the last pass writes
+ *  colour in the canvas colour space with its transfer function — sRGB's, which Display P3 shares; in Display P3 its
+ *  primaries too. weft/output.wgsl has canvasEncode() for it. */
+export interface HdrState {
+  enabled: boolean;
+  format: GPUTextureFormat;
+  colorSpace: PredefinedColorSpace;
+  toneMapping: GPUCanvasToneMappingMode;
 }
 
 export class WebGPUUnavailable extends Error {}
+
+const COMPILE_INFO_WAIT = 4000;
 
 const DEFAULT_FEATURES: GPUFeatureName[] = ['timestamp-query', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance', 'depth-clip-control'];
 const LIMITS = ['maxStorageBufferBindingSize', 'maxBufferSize', 'maxComputeWorkgroupStorageSize', 'maxStorageBuffersPerShaderStage',
@@ -42,7 +61,10 @@ export type RunEntry = RunItem | RunAction | null | undefined | false;
 export class View {
   frame: UniformBuffer<Frame>;
   private group: GPUBindGroup | null = null;
-  private groupKey = '';
+  // (what the frame group holds: the Frame buffer's version, the globals and their version)
+  private groupFrame = -1;
+  private groupGlobals: UniformBuffer<any> | null = null;
+  private groupGlobalsVersion = -1;
   updatedFrame = -1;
   /** per-view values for the shaders (Frame.user): a reflection's clip plane, a flag… */
   user: [number, number, number, number] = [0, 0, 0, 0];
@@ -66,10 +88,10 @@ export class View {
       aspect: w / h, mouse: k.mouse, user: this.user,
     });
   }
+  /** its group-0 bind group (made again only when the Frame buffer or the globals change) */
   group0(): GPUBindGroup {
-    const g = this.kit.globals;
-    const key = `${this.frame.uid}.${this.frame.version}|${g ? `${g.uid}.${g.version}` : '-'}`;
-    if (!this.group || key !== this.groupKey) {
+    const g = this.kit.globals, gv = g ? g.version : 0;
+    if (!this.group || this.groupFrame !== this.frame.version || this.groupGlobals !== g || this.groupGlobalsVersion !== gv) {
       const s = this.kit.samplers;
       this.group = this.kit.device.createBindGroup({
         label: `${this.label}.group0`, layout: this.kit.frameLayout,
@@ -79,9 +101,17 @@ export class View {
           { binding: 2, resource: s.linear }, { binding: 3, resource: s.repeat }, { binding: 4, resource: s.nearest }, { binding: 5, resource: s.shadow },
         ],
       });
-      this.groupKey = key;
+      this.groupFrame = this.frame.version;
+      this.groupGlobals = g;
+      this.groupGlobalsVersion = gv;
     }
     return this.group;
+  }
+  /** stop updating it for good (a reflection or cascade no longer drawn): it leaves kit.views, its Frame is freed */
+  dispose() {
+    const list = this.kit.views, i = list.indexOf(this);
+    if (i >= 0) list.splice(i, 1);
+    this.frame.destroy();
   }
 }
 
@@ -98,9 +128,13 @@ export class Kit {
   readonly samplers: Record<'linear' | 'repeat' | 'nearest' | 'shadow' | 'nearest-repeat' | 'mirror', GPUSampler>;
   readonly nonFiltering = new WeakSet<GPUSampler>();
   readonly rawViews = new WeakMap<GPUTexture, GPUTextureView>();
-  readonly pipelines: PipelineRecord<GPURenderPipeline | GPUComputePipeline>[] = [];
+  readonly pipelines: AnyPipelineRecord[] = [];
   readonly uniformBuffers = new Set<UniformBuffer<any>>();
   readonly textures = new Set<Texture>();
+  /** the storage buffers made by kit.storage (for the memory tally) */
+  readonly buffers = new Set<StorageBuffer>();
+  /** the canvas: SDR or HDR, its format and colour space (see HdrState) */
+  readonly hdr: HdrState;
   readonly mainView: View;
   readonly profiler: Profiler;
   readonly overlay: DebugOverlay;
@@ -125,8 +159,19 @@ export class Kit {
   maxFps = 0;
   /** holds a GPU frame-time budget by moving renderScale (null: off) — see AutoResolution */
   autoRes: AutoResolution | null = null;
+  /** an app's compile scheduler (null: every pipeline compiles the moment it's declared) — see Compiler */
+  compiler: Compiler | null = null;
+  /** the run epoch: bumped by each run, each RunAction in it, and the frame's end. A bind group resolved once in an
+   *  epoch is reused for the rest of it, so a Ref's target may only change between epochs (in an action, or between
+   *  runs), as a ping-pong's swap does */
+  bindEpoch = 0;
+  /** bumped whenever a resource is reallocated (a resize, a buffer grown, a struct relaid out) or the globals change:
+   *  bind groups of direct resources are checked again then, and only then */
+  resourceGen = 0;
   private bgls = new Map<string, GPUBindGroupLayout>();
-  private modules = new Map<Shader, { version: number; module: Promise<GPUShaderModule> }>();
+  private modules = new Map<Shader, { version: number; module: Promise<GPUShaderModule>; raw: GPUShaderModule | null }>();
+  private warned = new Set<string>();
+  private canvasConfig: GPUCanvasConfiguration;
   private screen: GPUTextureView | null = null;
   private resizeObs: ResizeObserver;
   private frameCb: ((t: FrameTime) => void) | null = null;
@@ -143,8 +188,25 @@ export class Kit {
     const ctx = canvas.getContext('webgpu');
     if (!ctx) throw new WebGPUUnavailable('Could not create a WebGPU canvas context.');
     this.context = ctx;
-    this.format = navigator.gpu.getPreferredCanvasFormat();
-    ctx.configure({ device, format: this.format, alphaMode: opts.alphaMode ?? 'opaque' });
+    const sdr: GPUCanvasConfiguration = { device, format: navigator.gpu.getPreferredCanvasFormat(), alphaMode: opts.alphaMode ?? 'opaque' };
+    this.canvasConfig = sdr;
+    this.hdr = { enabled: false, format: sdr.format, colorSpace: 'srgb', toneMapping: 'standard' };
+    if (opts.hdr === 'force' || (opts.hdr && matchMedia('(dynamic-range: high)').matches)) {
+      // (a browser that can't tone-map a canvas leaves toneMapping out of getConfiguration: then it stays SDR)
+      for (const colorSpace of ['display-p3', 'srgb'] as const) {
+        const want: GPUCanvasConfiguration = { ...sdr, format: 'rgba16float', colorSpace, toneMapping: { mode: 'extended' } };
+        try {
+          ctx.configure(want);
+          const got = ctx.getConfiguration?.();
+          if (got?.toneMapping?.mode !== 'extended') break;
+          this.canvasConfig = want;
+          this.hdr = { enabled: true, format: want.format, colorSpace: got.colorSpace, toneMapping: 'extended' };
+          break;
+        } catch (e) { console.warn(`[weft] no ${colorSpace} HDR canvas:`, (e as Error).message); }
+      }
+    }
+    this.format = this.hdr.format;
+    this.configureCanvas();
 
     const all = STAGE.VERTEX | STAGE.FRAGMENT | STAGE.COMPUTE;
     this.frameLayout = device.createBindGroupLayout({
@@ -209,7 +271,11 @@ export class Kit {
     this.uniformBuffers.add(u as UniformBuffer<any>);
     return u;
   }
-  storage(o: StorageOptions) { return new StorageBuffer(this, o); }
+  storage(o: StorageOptions) {
+    const b = new StorageBuffer(this, o);
+    this.buffers.add(b);
+    return b;
+  }
   texture(desc: TextureDesc) {
     const t = new Texture(this, desc);
     this.textures.add(t);
@@ -244,7 +310,10 @@ export class Kit {
   /** every view made by kit.view (each is brought up to date once a frame, at the first run) */
   readonly views: View[] = [];
   /** the app's globals struct (group 0, binding 1) */
-  setGlobals(u: UniformBuffer<any>) { this.globals = u; }
+  setGlobals(u: UniformBuffer<any>) {
+    this.globals = u;
+    this.resourceGen++;
+  }
   /** share a bind group (index ≥ 1) between every pipeline whose shader declares it: `shader` is the include that
    *  declares the group, `values` its resources by name. Declare shared groups before the passes that use them. */
   shareGroup(index: number, shader: Shader, values: Record<string, unknown>, label = `shared${index}`) {
@@ -252,6 +321,36 @@ export class Kit {
     const g = new SharedGroup(this, index, shader, { ...values }, label);
     this.sharedGroups.set(index, g);
     return g;
+  }
+
+  /** free things for good: textures and buffers are destroyed (and leave the kit's sets, so a resize doesn't bring them
+   *  back), draws, bundles, passes, computes and views disposed (their pipelines leave kit.pipelines) */
+  release(...things: ({ destroy(): void } | { dispose(): void } | null | undefined)[]) {
+    for (const t of things) {
+      if (!t) continue;
+      if ('dispose' in t) t.dispose(); else t.destroy();
+    }
+  }
+
+  /** bytes the kit's textures and buffers hold on the GPU (the canvas's own textures aside) */
+  memory() {
+    let textures = 0, buffers = 0;
+    for (const t of this.textures) textures += t.bytes;
+    for (const b of this.buffers) buffers += b.size;
+    for (const u of this.uniformBuffers) buffers += u.gpu.size;
+    return { textures, buffers, total: textures + buffers };
+  }
+
+  /** (re)configure the canvas as the kit set it up (SDR or HDR), with extra usage (Capture adds copy-src) */
+  configureCanvas(usage = 0) {
+    this.context.configure({ ...this.canvasConfig, usage: TEX.RENDER_ATTACHMENT | usage });
+  }
+
+  /** a console warning, once per key */
+  warnOnce(key: string, message: string) {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    console.warn(`[weft] ${message}`);
   }
 
   bindGroupLayout(entries: GPUBindGroupLayoutEntry[], label: string, key = JSON.stringify(entries)) {
@@ -264,13 +363,23 @@ export class Kit {
   module(shader: Shader): Promise<GPUShaderModule> {
     const c = this.modules.get(shader);
     if (c && c.version === shader.version) return c.module;
+    const entry: { version: number; module: Promise<GPUShaderModule>; raw: GPUShaderModule | null } = { version: shader.version, module: null!, raw: null };
     const p = (async () => {
       if (shader.error) throw new Error(shader.error);
       // (scoped, so a bad shader is reported once — mapped to file:line below — not again as an uncaptured error)
       this.device.pushErrorScope('validation');
       const m = this.device.createShaderModule({ label: shader.id, code: shader.code });
+      entry.raw = m;
       void this.device.popErrorScope();
-      const info = await m.getCompilationInfo();
+      // (WebKit now and then never answers getCompilationInfo: after a few seconds the module is used as it is — a bad
+      // one then fails its pipelines instead — so a shader can't hold kit.ready() for ever)
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<null>((r) => { timer = setTimeout(() => r(null), COMPILE_INFO_WAIT); });
+      const info = await Promise.race([m.getCompilationInfo(), late]).finally(() => clearTimeout(timer));
+      if (!info) {
+        this.warnOnce(`info:${shader.id}`, `${shader.id}: no compile info after ${COMPILE_INFO_WAIT / 1000} s, using the module as it is`);
+        return m;
+      }
       const errs = info.messages.filter((x) => x.type === 'error');
       for (const msg of info.messages) {
         if (msg.type === 'info') continue;
@@ -289,14 +398,24 @@ export class Kit {
       this.clearError(shader.id);
       return m;
     })();
-    this.modules.set(shader, { version: shader.version, module: p });
+    entry.module = p;
+    this.modules.set(shader, entry);
     return p;
   }
+  /** the shader's module now, made if it isn't yet (null if the shader has an error): a compile scheduler making a
+   *  pipeline on the spot doesn't wait for the module's compile info */
+  moduleNow(shader: Shader): GPUShaderModule | null {
+    const c = this.modules.get(shader);
+    if (c && c.version === shader.version && c.raw) return c.raw;
+    void this.module(shader).catch(() => {});
+    return this.modules.get(shader)?.raw ?? null;
+  }
 
-  /** wait until every pipeline declared so far has finished compiling (call behind the loading screen) */
+  /** wait until every pipeline declared so far has finished compiling (call behind the loading screen); pipelines a
+   *  compile scheduler holds back (deferred) aren't waited for */
   async ready() {
     for (let i = 0; i < 20; i++) {
-      const pend = this.pipelines.map((p) => p.pending).filter(Boolean);
+      const pend = this.pipelines.filter((p) => !p.deferred).map((p) => p.pending).filter(Boolean);
       if (!pend.length) break;
       await Promise.allSettled(pend);
     }
@@ -339,21 +458,29 @@ export class Kit {
     if (this.paused) this.dt = 0;
     this.time += this.dt;
     this.frameIndex++;
-    this.applySize();
+    // (the frame's own state first: a resize that throws mustn't leave last frame's swapchain view to be drawn into)
     this.screen = null;
     this.ran = [];
     this.profiler.beginFrame();
+    this.applySize();
   }
   endFrame() {
+    this.bindEpoch++;
     // the texture viewer draws over whatever reached the screen this frame
     if (this.screen && this.overlay.viewerActive) {
-      const enc = this.device.createCommandEncoder({ label: 'weft.viewer' });
-      this.overlay.encodeViewer(enc);
-      this.queue.submit([enc.finish()]);
+      this.guard('viewer', () => {
+        const enc = this.device.createCommandEncoder({ label: 'weft.viewer' });
+        this.overlay.encodeViewer(enc);
+        this.queue.submit([enc.finish()]);
+      });
     }
-    this.profiler.endFrame();
-    this.overlay.frame(this.ran);
-    if (this.autoRes) this.autoRes.update(this);
+    this.guard('profiler', () => this.profiler.endFrame());
+    this.guard('overlay', () => this.overlay.frame(this.ran));
+    if (this.autoRes) this.guard('autoRes', () => this.autoRes!.update(this));
+  }
+  // (a frame's own parts report what goes wrong and carry on: one bad frame never stops the loop)
+  private guard(label: string, fn: () => void) {
+    try { fn(); } catch (e) { this.report('frame', label, (e as Error).stack ?? String(e)); }
   }
 
   /** the swapchain view for this frame (acquired on first use) */
@@ -364,6 +491,7 @@ export class Kit {
 
   /** encode + submit an ordered list of passes */
   run(items: RunEntry[]) {
+    this.bindEpoch++;
     this.mainView.update();
     for (const v of this.views) v.update();
     for (const u of this.uniformBuffers) u.upload();
@@ -375,7 +503,7 @@ export class Kit {
       if (!this.overlay.isEnabled(it.label)) continue;
       const en = it.enabled;
       if (en === false || (typeof en === 'function' && !en())) continue;
-      if (it instanceof RunAction) { it.fn(); continue; }
+      if (it instanceof RunAction) { it.fn(); this.bindEpoch++; continue; }
       const ts = it.timed ? this.profiler.writes(it.label) : undefined;
       if (scoped) {
         this.device.pushErrorScope('validation');
@@ -394,7 +522,7 @@ export class Kit {
     this.queue.submit(cbs);
   }
 
-  /** run `cb` every animation frame (resize, time and the overlay are handled) */
+  /** run `cb` every animation frame (resize, time and the overlay are handled; whatever throws, the loop goes on) */
   loop(cb: (t: FrameTime) => void) {
     this.frameCb = cb;
     const tick = (now: number) => {
@@ -404,21 +532,16 @@ export class Kit {
       this.lastTick = now;
       const dt = this.lastNow ? (now - this.lastNow) / 1000 : 1 / 60;
       this.lastNow = now;
-      this.step(dt);
-      requestAnimationFrame(tick);
+      try { this.step(dt); } finally { requestAnimationFrame(tick); }
     };
     requestAnimationFrame(tick);
   }
   /** advance one frame by hand (headless capture / fixed-step films) */
   step(dt: number) {
     if (!this.frameCb) return;
-    this.beginFrame(dt);
-    try {
-      this.frameCb({ time: this.time, dt: this.dt, frame: this.frameIndex });
-    } catch (e) {
-      this.report('frame', 'loop', (e as Error).stack ?? String(e));
-    }
-    this.endFrame();
+    this.guard('beginFrame', () => this.beginFrame(dt));
+    this.guard('loop', () => this.frameCb!({ time: this.time, dt: this.dt, frame: this.frameIndex }));
+    this.guard('endFrame', () => this.endFrame());
   }
 }
 

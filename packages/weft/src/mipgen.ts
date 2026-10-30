@@ -1,5 +1,6 @@
 // A run item that fills a texture's mip chain from level 0 (render passes, so the format must be renderable).
-// The passes are rebuilt when the texture is reallocated (a resize changes the number of levels).
+// The passes are rebuilt when the texture is reallocated (a resize changes the number of levels). Its shader binds
+// in group 3 of its own, whatever an app shares there.
 import type { Kit } from './kit';
 import type { RunItem, RenderPass } from './passes';
 import type { Texture } from './resources';
@@ -16,6 +17,7 @@ export class MipChain implements RunItem {
   }
   private build() {
     const t = this.texture;
+    for (const p of this.passes) p.dispose();
     this.passes = [];
     for (let m = 1; m < t.mips; m++) {
       const p = this.kit.pass({ label: `${this.label}${m}`, color: [{ target: t.mip(m), clear: false }] });
@@ -27,5 +29,10 @@ export class MipChain implements RunItem {
   encode(enc: GPUCommandEncoder) {
     if (this.builtFor !== this.texture.version && this.passes.length !== this.texture.mips - 1) this.build();
     for (const p of this.passes) p.encode(enc);
+  }
+  /** stop it for good (its passes' pipelines leave the kit) */
+  dispose() {
+    for (const p of this.passes) p.dispose();
+    this.passes = [];
   }
 }

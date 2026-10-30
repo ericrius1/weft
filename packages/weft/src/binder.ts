@@ -1,10 +1,23 @@
 // Bind by name. A Binder turns `{ heightIn: tex, params: uniforms }` into bind group layouts (derived from the
-// shader's reflection plus the actual resources, e.g. an r32float texture binds as unfilterable) and per-frame bind
-// groups cached by resource identity + version. Only the bindings the chosen entry points actually use go into the
-// layout, so commenting out a use never breaks the bind; a name the shader doesn't declare at all is an error.
+// shader's reflection plus the actual resources, e.g. an r32float texture binds as unfilterable) and bind groups.
+// Only the bindings the chosen entry points actually use go into the layout, so commenting out a use never breaks the
+// bind; a name the shader doesn't declare at all is an error.
+//
+// Resolving a group is nearly free in the common case. Each group remembers the bind group it made and the identity
+// of what that holds (uid and version per binding, compared as numbers: no keys are built):
+//  - a group of direct resources (no Ref, no buffer range) is reused untouched until a resource is reallocated
+//    somewhere (kit.resourceGen) or a value is set on it;
+//  - any other group is resolved once per run epoch (kit.bindEpoch: each kit.run and each RunAction in it starts one),
+//    so a thousand draws sharing a group resolve it once;
+//  - a resolution that finds the same resources reuses that bind group, or one of the last few it made (both sides of
+//    a ping-pong).
+// A shared group (kit.shareGroup) serves the shaders that include the file declaring it; any other shader's bindings in
+// that group index are its own, so weft's group-3 shaders (painter, mip chain, texture viewer) live beside an app's
+// shared group 3.
 import type { Kit, View } from './kit';
 import type { Shader, BindingInfo } from './shader';
-import { deref, UniformBuffer, StorageBuffer, Texture, TexView, rawUid, isDepthFormat } from './resources';
+import { sourceLine } from './shader';
+import { Ref, deref, UniformBuffer, StorageBuffer, Texture, TexView, rawUid, isDepthFormat } from './resources';
 import { STAGE } from './gpuconst';
 
 export type SamplerName = 'linear' | 'repeat' | 'nearest' | 'nearest-repeat' | 'shadow' | 'mirror';
@@ -13,8 +26,10 @@ export type Bindable = object | SamplerName;
 
 export class BindError extends Error {}
 
+/** what bind groups are set on: a render or compute pass, a render bundle */
+export interface BindTarget { setBindGroup(index: number, bindGroup: GPUBindGroup): void }
 /** set a bind group unless the pass already has that one at that index (WebGPU keeps them across draws) */
-type Tracked = (GPURenderPassEncoder | GPUComputePassEncoder) & { __weftGroups?: (GPUBindGroup | undefined)[] };
+type Tracked = BindTarget & { __weftGroups?: (GPUBindGroup | undefined)[] };
 function setGroup(enc: Tracked, i: number, bg: GPUBindGroup) {
   const s = (enc.__weftGroups ??= []);
   if (s[i] === bg) return;
@@ -22,9 +37,9 @@ function setGroup(enc: Tracked, i: number, bg: GPUBindGroup) {
   enc.setBindGroup(i, bg);
 }
 /** forget what a pass has set (after code outside weft may have changed it) */
-export function forgetBindings(enc: GPURenderPassEncoder | GPUComputePassEncoder) { (enc as Tracked).__weftGroups = undefined; }
+export function forgetBindings(enc: BindTarget) { (enc as Tracked).__weftGroups = undefined; }
 
-interface Resolved { res: GPUBindingResource; key: string; unfilterable?: boolean; format?: GPUTextureFormat }
+interface Resolved { res: GPUBindingResource; unfilterable?: boolean; format?: GPUTextureFormat }
 
 const describe = (v: unknown) => {
   if (v === undefined) return 'undefined';
@@ -34,14 +49,14 @@ const describe = (v: unknown) => {
   return `${o.constructor?.name ?? typeof v}${o.label ? ` "${o.label}"` : ''}`;
 };
 
-function bufferOf(v: unknown): { buf: GPUBuffer; key: string; offset?: number; size?: number } | null {
-  if (v instanceof UniformBuffer || v instanceof StorageBuffer) return { buf: v.gpu, key: `b${v.uid}.${v.version}` };
-  if (typeof GPUBuffer !== 'undefined' && v instanceof GPUBuffer) return { buf: v, key: `g${rawUid(v)}` };
+function bufferOf(v: unknown): { buf: GPUBuffer; offset?: number; size?: number } | null {
+  if (v instanceof UniformBuffer || v instanceof StorageBuffer) return { buf: v.gpu };
+  if (typeof GPUBuffer !== 'undefined' && v instanceof GPUBuffer) return { buf: v };
   if (v && typeof v === 'object' && 'buffer' in v) {
     const r = v as BufferRange;
     const inner = bufferOf(r.buffer);
     if (!inner) return null;
-    return { buf: inner.buf, key: `${inner.key}@${r.offset ?? 0}+${r.size ?? ''}`, offset: r.offset, size: r.size };
+    return { buf: inner.buf, offset: r.offset, size: r.size };
   }
   return null;
 }
@@ -57,7 +72,7 @@ export function resolveBinding(kit: Kit, info: BindingInfo, value: unknown, wher
       const res: GPUBufferBinding = { buffer: b.buf };
       if (b.offset !== undefined) res.offset = b.offset;
       if (b.size !== undefined) res.size = b.size;
-      return { res, key: b.key };
+      return { res };
     }
     case 'texture':
     case 'storageTexture': {
@@ -67,19 +82,19 @@ export function resolveBinding(kit: Kit, info: BindingInfo, value: unknown, wher
         const desc: GPUTextureViewDescriptor = { dimension: dim };
         if (info.kind === 'storageTexture') { desc.baseMipLevel = 0; desc.mipLevelCount = 1; }
         if (depth) desc.aspect = 'depth-only';
-        return { res: v.view(desc), key: `t${v.uid}.${v.version}:${dim}`, unfilterable: v.unfilterable || (depth && info.texture?.sample !== 'depth'), format: v.format };
+        return { res: v.view(desc), unfilterable: v.unfilterable || (depth && info.texture?.sample !== 'depth'), format: v.format };
       }
       if (v instanceof TexView) {
         const depth = isDepthFormat(v.texture.format);
         const desc = { ...v.desc };
         if (!desc.dimension) desc.dimension = dim;
-        return { res: v.texture.view(desc), key: v.key + dim, unfilterable: v.texture.unfilterable || (depth && info.texture?.sample !== 'depth'), format: v.texture.format };
+        return { res: v.texture.view(desc), unfilterable: v.texture.unfilterable || (depth && info.texture?.sample !== 'depth'), format: v.texture.format };
       }
-      if (typeof GPUTextureView !== 'undefined' && v instanceof GPUTextureView) return { res: v, key: `v${rawUid(v)}` };
+      if (typeof GPUTextureView !== 'undefined' && v instanceof GPUTextureView) return { res: v };
       if (typeof GPUTexture !== 'undefined' && v instanceof GPUTexture) {
         let view = kit.rawViews.get(v);
         if (!view) kit.rawViews.set(v, (view = v.createView({ dimension: dim })));
-        return { res: view, key: `v${rawUid(v)}`, format: v.format };
+        return { res: view, format: v.format };
       }
       throw fail('a Texture (kit.texture)');
     }
@@ -88,16 +103,100 @@ export function resolveBinding(kit: Kit, info: BindingInfo, value: unknown, wher
       if (typeof v === 'string') {
         const s = kit.namedSampler(v as SamplerName);
         if (!s) throw fail(`a sampler (one of linear, repeat, nearest, nearest-repeat, mirror, shadow)`);
-        return { res: s, key: `s${rawUid(s)}` };
+        return { res: s };
       }
-      if (typeof GPUSampler !== 'undefined' && v instanceof GPUSampler) return { res: v, key: `s${rawUid(v)}` };
+      if (typeof GPUSampler !== 'undefined' && v instanceof GPUSampler) return { res: v };
       throw fail('a sampler');
     }
     case 'externalTexture': {
-      if (typeof GPUExternalTexture !== 'undefined' && v instanceof GPUExternalTexture) return { res: v, key: `x${rawUid(v)}` };
+      if (typeof GPUExternalTexture !== 'undefined' && v instanceof GPUExternalTexture) return { res: v };
       throw fail('a GPUExternalTexture');
     }
   }
+}
+
+// ---------------------------------------------------------------- identities
+/** numbers per binding in an identity: [kind, uid, version, view description or offset, size] */
+const STRIDE = 5;
+const scratch: number[] = [];
+
+/** writes the identity of what `value` binds into out[at…]; true when it can move without notice (a Ref, a range) */
+function identify(kit: Kit, value: unknown, out: number[], at: number): boolean {
+  let v = value, moves = false;
+  while (v instanceof Ref) { v = v.get(); moves = true; }
+  let kind = -1, id = 0, version = 0, x = 0, y = 0;
+  if (v instanceof UniformBuffer || v instanceof StorageBuffer || v instanceof Texture) { kind = 1; id = v.uid; version = v.version; }
+  else if (v instanceof TexView) { kind = 2; id = v.texture.uid; version = v.texture.version; x = v.descId; }
+  else if (typeof v === 'string') { const s = kit.namedSampler(v as SamplerName); kind = 3; id = s ? rawUid(s) : -1; }
+  else if (v && typeof v === 'object') {
+    if ('buffer' in v) {
+      const r = v as BufferRange, b = r.buffer;
+      kind = 4; moves = true;
+      if (b instanceof UniformBuffer || b instanceof StorageBuffer) { id = b.uid; version = b.version; } else id = rawUid(b);
+      x = r.offset ?? 0; y = r.size ?? -1;
+    } else { kind = 5; id = rawUid(v); }
+  }
+  out[at] = kind; out[at + 1] = id; out[at + 2] = version; out[at + 3] = x; out[at + 4] = y;
+  return moves;
+}
+const same = (a: number[], b: number[], n: number) => {
+  if (a.length !== n) return false;
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
+/** a group's last bind group, the identity of what it holds, and when that was last checked */
+class Memo {
+  bg: GPUBindGroup | null = null;
+  ids: number[] = [];
+  gen = -1;
+  vgen = -1;
+  epoch = -1;
+  /** a value can move without notice (a Ref, a range): checked once per run epoch rather than only on changes */
+  moves = false;
+  /** the last few bind groups made (the two sides of a ping-pong…) */
+  recent: { ids: number[]; bg: GPUBindGroup }[] = [];
+}
+
+/** a group's bind group now: `vgen` is its owner's count of value changes */
+function groupOf(kit: Kit, m: Memo, infos: BindingInfo[], values: Record<string, unknown>, overrides: Record<string, unknown> | undefined, vgen: number, layout: GPUBindGroupLayout, label: string): GPUBindGroup {
+  if (m.bg && m.gen === kit.resourceGen && m.vgen === vgen && (!m.moves || m.epoch === kit.bindEpoch)) return m.bg;
+  const n = infos.length * STRIDE;
+  let moves = !!overrides;
+  for (let i = 0; i < infos.length; i++) {
+    const name = infos[i].name;
+    if (identify(kit, overrides && name in overrides ? overrides[name] : values[name], scratch, i * STRIDE)) moves = true;
+  }
+  let bg = m.bg && same(m.ids, scratch, n) ? m.bg : null;
+  if (!bg) {
+    const hit = m.recent.find((r) => same(r.ids, scratch, n));
+    if (hit) { bg = hit.bg; m.ids = hit.ids; }
+  }
+  if (!bg) {
+    const ids = scratch.slice(0, n);
+    bg = kit.device.createBindGroup({
+      label, layout,
+      entries: infos.map((info) => ({ binding: info.binding, resource: resolveBinding(kit, info, overrides && info.name in overrides ? overrides[info.name] : values[info.name], label).res })),
+    });
+    m.recent.push({ ids, bg });
+    if (m.recent.length > 8) m.recent.shift();
+    m.ids = ids;
+  }
+  m.bg = bg;
+  m.gen = kit.resourceGen;
+  m.vgen = vgen;
+  m.epoch = kit.bindEpoch;
+  m.moves = moves;
+  return bg;
+}
+
+/** the files whose code declares `index` in a shader (where its `@group(index)` lines come from) */
+function declaringFiles(shader: Shader, index: number) {
+  const at = new RegExp(`@group\\(\\s*${index}\\s*\\)`);
+  const files = new Set<string>();
+  shader.code.split('\n').forEach((line, i) => { if (at.test(line.replace(/\/\/.*$/, ''))) files.add(sourceLine(shader, i + 1).file); });
+  if (!files.size) files.add(shader.id);
+  return files;
 }
 
 function layoutEntry(kit: Kit, info: BindingInfo, r: Resolved, visibility: number): GPUBindGroupLayoutEntry {
@@ -127,18 +226,22 @@ export const FRAME_GROUP: { kind: BindingInfo['kind'] }[] = [
   { kind: 'uniform' }, { kind: 'uniform' }, { kind: 'sampler' }, { kind: 'sampler' }, { kind: 'sampler' }, { kind: 'samplerComparison' },
 ];
 
-/** A bind group shared by every pipeline that declares it (an environment: lighting, sky, shadows, terrain maps…).
- *  Its layout comes from the declaring include's reflection — every binding of that group, visible to every stage — so
- *  one bind group serves all of them. Draws never pass these bindings themselves. */
+/** A bind group shared by every pipeline whose shader includes its declaration (an environment: lighting, sky, shadows,
+ *  terrain maps…). Its layout comes from the declaring include's reflection — every binding of that group, visible to
+ *  every stage — so one bind group serves all of them. Draws never pass these bindings themselves. */
 export class SharedGroup {
   readonly infos: BindingInfo[];
+  /** the source files that declare it: a shader shares the group when it includes one of them */
+  readonly files: Set<string>;
   bgl!: GPUBindGroupLayout;
-  private lastKey = '';
-  private last: GPUBindGroup | null = null;
-  private cache = new Map<string, GPUBindGroup>();
+  /** bumped by set() */
+  vgen = 0;
+  private memo = new Memo();
+  private memos = new WeakMap<object, Memo>();
   constructor(private kit: Kit, readonly index: number, readonly shader: Shader, readonly values: Record<string, unknown>, readonly label: string) {
     this.infos = Object.values(shader.bindings).filter((b) => b.group === index).sort((a, b) => a.binding - b.binding);
     if (!this.infos.length) throw new BindError(`${label}: ${shader.id} declares nothing in group ${index}`);
+    this.files = declaringFiles(shader, index);
     for (const n of Object.keys(values)) {
       if (!this.infos.some((i) => i.name === n)) throw new BindError(`${label}: group ${index} of ${shader.id} has no binding '${n}' (has: ${this.infos.map((i) => i.name).join(', ')})`);
     }
@@ -156,8 +259,11 @@ export class SharedGroup {
   set(name: string, value: unknown) {
     if (!this.infos.some((i) => i.name === name)) throw new BindError(`${this.label}: no shared binding '${name}'`);
     this.values[name] = value;
+    this.vgen++;
     return this;
   }
+  /** whether `shader` shares this group (it includes the declaration) */
+  serves(shader: Shader) { return shader === this.shader || shader.files.some((f) => this.files.has(f)); }
   /** check a pipeline's own declaration of this group against the shared one */
   check(shader: Shader, where: string) {
     for (const b of Object.values(shader.bindings)) {
@@ -170,25 +276,12 @@ export class SharedGroup {
   }
   /** the bind group (with some values swapped for one pass, e.g. a dummy shadow map while rendering the shadows) */
   bindGroup(overrides?: Record<string, unknown>): GPUBindGroup {
-    let key = '';
-    const res: Resolved[] = [];
-    for (const info of this.infos) {
-      const v = overrides && info.name in overrides ? overrides[info.name] : this.values[info.name];
-      const r = resolveBinding(this.kit, info, v, this.label);
-      res.push(r);
-      key += r.key + ',';
+    let m = this.memo;
+    if (overrides) {
+      const o = this.memos.get(overrides);
+      if (o) m = o; else this.memos.set(overrides, (m = new Memo()));
     }
-    if (key !== this.lastKey || !this.last) {
-      let bg = this.cache.get(key);
-      if (!bg) {
-        bg = this.kit.device.createBindGroup({ label: this.label, layout: this.bgl, entries: this.infos.map((info, i) => ({ binding: info.binding, resource: res[i].res })) });
-        if (this.cache.size > 8) this.cache.clear();
-        this.cache.set(key, bg);
-      }
-      this.last = bg;
-      this.lastKey = key;
-    }
-    return this.last;
+    return groupOf(this.kit, m, this.infos, this.values, overrides, this.vgen, this.bgl, this.label);
   }
 }
 
@@ -196,9 +289,8 @@ interface Group {
   index: number;
   infos: BindingInfo[];
   bgl: GPUBindGroupLayout;
-  lastKey: string;
-  last: GPUBindGroup | null;
-  cache: Map<string, GPUBindGroup>;
+  label: string;
+  memo: Memo;
   shared?: SharedGroup;
 }
 
@@ -207,6 +299,8 @@ export class Binder {
   layout!: GPUPipelineLayout;
   /** layout identity: a pipeline must be rebuilt when this changes */
   layoutKey = '';
+  /** bumped whenever its values or its groups change */
+  vgen = 0;
   constructor(private kit: Kit, public shader: Shader, public entries: string[], public values: Record<string, unknown>, public label: string) {
     this.build();
   }
@@ -244,13 +338,14 @@ export class Binder {
         continue;
       }
       const sh = this.kit.sharedGroups.get(info.group);
-      if (sh) {
+      if (sh?.serves(this.shader)) {
         if (name in this.values) throw new BindError(`${this.label}: '${name}' belongs to shared group ${info.group} (${sh.label}); set it there, not per draw`);
         sharedUsed.add(info.group);
         continue;
       }
       if (!(name in this.values) || this.values[name] === undefined) {
-        throw new BindError(`${this.label}: binding '${name}' (@group(${info.group}) @binding(${info.binding}) ${info.kind} ${info.type}) is used by ${this.entries.join('/')} but not provided`);
+        const hint = sh ? ` (group ${info.group} is shared as '${sh.label}' only with shaders that include ${[...sh.files].join(' or ')})` : '';
+        throw new BindError(`${this.label}: binding '${name}' (@group(${info.group}) @binding(${info.binding}) ${info.kind} ${info.type}) is used by ${this.entries.join('/')} but not provided${hint}`);
       }
       const r = resolveBinding(this.kit, info, this.values[name], this.label);
       let list = byGroup.get(info.group);
@@ -267,7 +362,7 @@ export class Binder {
       if (sh) {
         bgls.push(sh.bgl);
         keyParts.push(`shared:${sh.label}`);
-        groups.push({ index: g, infos: [], bgl: sh.bgl, lastKey: '', last: null, cache: new Map(), shared: sh });
+        groups.push({ index: g, infos: [], bgl: sh.bgl, label: sh.label, memo: new Memo(), shared: sh });
         continue;
       }
       const list = (byGroup.get(g) ?? []).sort((a, b) => a.info.binding - b.info.binding);
@@ -276,7 +371,7 @@ export class Binder {
       keyParts.push(key);
       const bgl = this.kit.bindGroupLayout(entries, `${this.label} g${g}`, key);
       bgls.push(bgl);
-      groups.push({ index: g, infos: list.map((x) => x.info), bgl, lastKey: '', last: null, cache: new Map() });
+      groups.push({ index: g, infos: list.map((x) => x.info), bgl, label: `${this.label} g${g}`, memo: new Memo() });
     }
     const layoutKey = keyParts.join('/');
     if (layoutKey !== this.layoutKey || !this.layout) {
@@ -284,40 +379,28 @@ export class Binder {
       this.layoutKey = layoutKey;
     }
     this.groups = groups;
+    this.vgen++;
   }
 
   /** change one binding's value (the layout stays; bind groups follow) */
   set(name: string, value: unknown) {
     if (!(name in this.shader.bindings)) throw new BindError(`${this.label}: no binding named '${name}'`);
     this.values[name] = value;
+    this.vgen++;
   }
 
-  apply(enc: GPURenderPassEncoder | GPUComputePassEncoder, view: View, shared?: Record<number, Record<string, unknown>>) {
+  /** one of its groups' bind group now (`shared`: a pass's swapped shared values) */
+  groupFor(g: Group, shared?: Record<number, Record<string, unknown>>): GPUBindGroup {
+    if (g.shared) return g.shared.bindGroup(shared?.[g.index]);
+    if (!g.infos.length) return this.kit.emptyGroup;
+    return groupOf(this.kit, g.memo, g.infos, this.values, undefined, this.vgen, g.bgl, g.label);
+  }
+
+  /** whether a value of its own can move without notice (a Ref or a buffer range, as last resolved) */
+  get moves() { return this.groups.some((g) => !g.shared && g.memo.moves); }
+
+  apply(enc: BindTarget, view: View, shared?: Record<number, Record<string, unknown>>) {
     setGroup(enc, 0, view.group0());
-    for (const g of this.groups) {
-      if (g.shared) { setGroup(enc, g.index, g.shared.bindGroup(shared?.[g.index])); continue; }
-      if (!g.infos.length) { setGroup(enc, g.index, this.kit.emptyGroup); continue; }
-      let key = '';
-      const res: Resolved[] = [];
-      for (const info of g.infos) {
-        const r = resolveBinding(this.kit, info, this.values[info.name], this.label);
-        res.push(r);
-        key += r.key + ',';
-      }
-      if (key !== g.lastKey || !g.last) {
-        let bg = g.cache.get(key);
-        if (!bg) {
-          bg = this.kit.device.createBindGroup({
-            label: `${this.label} g${g.index}`, layout: g.bgl,
-            entries: g.infos.map((info, i) => ({ binding: info.binding, resource: res[i].res })),
-          });
-          if (g.cache.size > 8) g.cache.clear();
-          g.cache.set(key, bg);
-        }
-        g.last = bg;
-        g.lastKey = key;
-      }
-      setGroup(enc, g.index, g.last);
-    }
+    for (const g of this.groups) setGroup(enc, g.index, this.groupFor(g, shared));
   }
 }

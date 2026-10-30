@@ -105,6 +105,7 @@ export class Painter {
   readonly pass: RenderPass;
   readonly target: Texture | 'screen';
   readonly atlas: Atlas;
+  private ownTarget: boolean;
   readonly width: number;
   readonly height: number;
   camera = { x: 0, y: 0, zoom: 1 };
@@ -118,6 +119,7 @@ export class Painter {
     this.height = o.height;
     this.atlas = atlasOf(kit);
     const label = o.label ?? 'painter';
+    this.ownTarget = !o.target;
     this.target = o.target ?? kit.texture({ label, format: o.format ?? 'rgba16float', size: [o.width, o.height], mips: o.mips ? 'full' : 1 });
     this.prims = new Float32Array(1024 * FLOATS);
     this.u32 = new Uint32Array(this.prims.buffer);
@@ -210,6 +212,14 @@ export class Painter {
     return w;
   }
   textWidth(str: string, size = 1, spacing = 0) { return Math.max(0, [...str].length * (6 + spacing) * size - (1 + spacing) * size); }
+
+  /** free it for good: its pass, its buffers, and the texture it made for itself (the shared atlas stays) */
+  dispose() {
+    this.pass.dispose();
+    this.buf.destroy();
+    this.view.destroy();
+    if (this.ownTarget && this.target !== 'screen') this.target.destroy();
+  }
 
   /** upload this frame's primitives (call before kit.run) */
   end() {

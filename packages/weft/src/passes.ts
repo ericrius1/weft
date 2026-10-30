@@ -1,10 +1,13 @@
 // The units of work. A Compute is one dispatch; a RenderPass is one set of attachments with an ordered list of
-// Draws. Every pipeline is created (async) the moment its compute / draw is declared, so `await kit.ready()` behind a
-// loading screen means nothing compiles mid-game. A hot shader edit rebuilds just the pipelines made from it.
+// Draws (and DrawBundles: static draws baked once, bundle.ts). Every pipeline is created (async) the moment its
+// compute / draw is declared, so `await kit.ready()` behind a loading screen means nothing compiles mid-game — unless
+// an app sets a compile scheduler (kit.compiler), which then says when each compiles. A hot shader edit rebuilds just
+// the pipelines made from it.
 import type { Kit, View } from './kit';
 import type { Shader } from './shader';
 import { Binder, BindError, forgetBindings, type Bindable } from './binder';
 import { Ref, deref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat } from './resources';
+import { DrawBundle } from './bundle';
 
 type Num = number | (() => number);
 type Nums = number[] | (() => number[]);
@@ -30,21 +33,55 @@ export class RawItem implements RunItem {
 }
 
 // ---------------------------------------------------------------- pipelines
+export type AnyPipelineRecord = PipelineRecord<GPURenderPipeline | GPUComputePipeline>;
+
+/** An app's compile scheduler (kit.compiler), for browsers that compile pipelines one at a time (WebKit): weft asks it
+ *  when each record may compile. While it `holding`, a record built is `deferred` (kit.ready() doesn't wait for it);
+ *  one needed before it compiled — its draw encoded, or its pipeline read — is made on the spot by `now`. */
+export interface Compiler {
+  readonly holding: boolean;
+  /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result */
+  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>): Promise<unknown>;
+  /** `rec` is needed now: make it on the spot (rec.makeNow with kit.moduleNow) */
+  now(rec: AnyPipelineRecord): void;
+}
+
 export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
-  pipeline: P | null = null;
+  /** the pipeline as it is (read `pipeline`, which a compile scheduler may make on the spot) */
+  _pipe: P | null = null;
   pending: Promise<void> | null = null;
   error: string | null = null;
   ms = 0;
   builds = 0;
-  constructor(readonly kit: Kit, readonly label: string, readonly shader: Shader, readonly make: (module: GPUShaderModule) => Promise<P>) {
-    kit.pipelines.push(this as PipelineRecord<GPURenderPipeline | GPUComputePipeline>);
+  /** waiting for kit.compiler to say when (kit.ready() doesn't wait for it) */
+  deferred = false;
+  /** drawn only while this says so (a scheduler holding a feature back until all of it has compiled) */
+  gate: (() => boolean) | null = null;
+  /** called when its pipeline changes (a compile landing, a hot reload) */
+  changed: (() => void) | null = null;
+  constructor(readonly kit: Kit, readonly label: string, readonly shader: Shader, readonly make: (module: GPUShaderModule) => Promise<P>,
+    readonly makeNow: ((module: GPUShaderModule) => P) | null = null) {
+    kit.pipelines.push(this as AnyPipelineRecord);
+  }
+  get pipeline(): P | null {
+    if (!this._pipe && this.deferred && this.kit.compiler) this.kit.compiler.now(this as AnyPipelineRecord);
+    return this._pipe;
+  }
+  set pipeline(p: P | null) {
+    if (p === this._pipe) return;
+    this._pipe = p;
+    this.changed?.();
   }
   build() {
     const t0 = performance.now();
+    // (one built while the scheduler holds is deferred at once: its module's compile info comes first, and can wait
+    // behind the GPU's compiles, and kit.ready() mustn't wait for it meanwhile)
+    if (this.kit.compiler?.holding) this.deferred = true;
     const p = (async () => {
       try {
         const module = await this.kit.module(this.shader);
-        const pipe = await this.make(module);
+        const c = this.kit.compiler;
+        const pipe = (await (c ? c.compile(this as AnyPipelineRecord, () => this.make(module)) : this.make(module))) as P;
         this.pipeline = pipe;
         this.error = null;
         this.ms = performance.now() - t0;
@@ -58,6 +95,12 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
     this.pending = p.finally(() => { if (this.pending === wrapped) this.pending = null; });
     const wrapped = this.pending;
     return this.pending;
+  }
+  /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) */
+  dispose() {
+    const list = this.kit.pipelines, i = list.indexOf(this as AnyPipelineRecord);
+    if (i >= 0) list.splice(i, 1);
+    this.changed = null;
   }
 }
 
@@ -114,10 +157,11 @@ export class Compute<S extends Shader = Shader> implements RunItem {
     this.enabled = opts.enabled ?? true;
     this.entry = pickEntry(shader, 'compute', opts.entry, this.label);
     this.binder = new Binder(kit, shader, [this.entry], { ...(opts.bind ?? {}) } as Record<string, unknown>, this.label);
-    this.pipe = new PipelineRecord(kit, this.label, shader, (module) => kit.device.createComputePipelineAsync({
+    const desc = (module: GPUShaderModule): GPUComputePipelineDescriptor => ({
       label: this.label, layout: this.binder.layout,
       compute: { module, entryPoint: this.entry, constants: constantsFor(shader, this.entry, opts.constants) },
-    }));
+    });
+    this.pipe = new PipelineRecord(kit, this.label, shader, (m) => kit.device.createComputePipelineAsync(desc(m)), (m) => kit.device.createComputePipeline(desc(m)));
     this.pipe.build();
     this.unsub = shader.onChange(() => this.rebuild());
   }
@@ -134,7 +178,7 @@ export class Compute<S extends Shader = Shader> implements RunItem {
   get workgroupSize() { return this.shader.reflect.entries.find((e) => e.name === this.entry)?.workgroupSize ?? [1, 1, 1]; }
   encode(enc: GPUCommandEncoder, ts?: GPUComputePassTimestampWrites) {
     const p = this.pipe.pipeline;
-    if (!p) return;
+    if (!p || (this.pipe.gate && !this.pipe.gate())) return;
     const pass = enc.beginComputePass({ label: this.label, timestampWrites: ts });
     pass.setPipeline(p);
     this.binder.apply(pass, this.opts.view ?? this.kit.mainView, this.opts.shared);
@@ -152,7 +196,8 @@ export class Compute<S extends Shader = Shader> implements RunItem {
     }
     pass.end();
   }
-  dispose() { this.unsub(); }
+  /** stop it for good: no more hot rebuilds, and its pipeline leaves the kit */
+  dispose() { this.unsub(); this.pipe.dispose(); }
 }
 
 // ---------------------------------------------------------------- render passes
@@ -175,6 +220,24 @@ export interface RenderPassOptions {
   shared?: Record<number, Record<string, unknown>>;
   viewport?: Nums;
   enabled?: boolean | (() => boolean);
+}
+
+/** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
+export interface DrawEncoder {
+  setPipeline(pipeline: GPURenderPipeline): void;
+  setBindGroup(index: number, bindGroup: GPUBindGroup): void;
+  setVertexBuffer(slot: number, buffer: GPUBuffer, offset?: number): void;
+  setIndexBuffer(buffer: GPUBuffer, format: GPUIndexFormat, offset?: number): void;
+  draw(count: number, instances?: number, first?: number, firstInstance?: number): void;
+  drawIndexed(count: number, instances?: number, first?: number, baseVertex?: number, firstInstance?: number): void;
+  drawIndirect(buffer: GPUBuffer, offset: number): void;
+  drawIndexedIndirect(buffer: GPUBuffer, offset: number): void;
+}
+type TrackedEncoder = DrawEncoder & { __weftPipeline?: GPURenderPipeline | null };
+/** forget the pipeline and groups a pass has set (after a bundle or code outside weft changed them) */
+export function forgetPassState(enc: DrawEncoder) {
+  (enc as TrackedEncoder).__weftPipeline = null;
+  forgetBindings(enc);
 }
 
 export type BlendMode = 'opaque' | 'alpha' | 'premultiplied' | 'add' | 'add-alpha' | 'multiply' | 'max' | GPUBlendState;
@@ -225,21 +288,33 @@ export interface DrawOptions<S extends Shader = Shader> {
 const gpuBuf = (b: unknown) => { const v = deref(b); return v instanceof StorageBuffer ? v.gpu : (v as GPUBuffer); };
 
 export class Draw<S extends Shader = Shader> {
+  /** (a compile scheduler checks this: weft's records support deferral) */
+  static scheduled = true;
   readonly label: string;
-  enabled: boolean | (() => boolean);
   binder: Binder;
   pipe: PipelineRecord<GPURenderPipeline>;
   private vs!: string;
   private fs!: string | null;
   private unsub: () => void;
-  constructor(private kit: Kit, readonly pass: RenderPass, readonly shader: S, readonly opts: DrawOptions<S>) {
+  private on_: boolean | (() => boolean);
+  /** `bundle`: the DrawBundle it's baked into (pass.bundle().draw makes these) */
+  constructor(private kit: Kit, readonly pass: RenderPass, readonly shader: S, readonly opts: DrawOptions<S>, readonly bundle: DrawBundle | null = null) {
     this.label = opts.label ?? shader.label;
-    this.enabled = opts.enabled ?? true;
+    if (bundle && opts.encode) throw new BindError(`${this.label}: a bundled draw can't issue its own calls (encode)`);
+    this.on_ = opts.enabled ?? true;
     this.pickEntries();
     this.binder = new Binder(kit, shader, this.fs ? [this.vs, this.fs] : [this.vs], { ...(opts.bind ?? {}) } as Record<string, unknown>, this.label);
-    this.pipe = new PipelineRecord(kit, this.label, shader, (module) => kit.device.createRenderPipelineAsync(this.descriptor(module)));
+    this.pipe = new PipelineRecord(kit, this.label, shader, (m) => kit.device.createRenderPipelineAsync(this.descriptor(m)), (m) => kit.device.createRenderPipeline(this.descriptor(m)));
+    this.pipe.changed = () => this.bundle?.invalidate();
     this.pipe.build();
     this.unsub = shader.onChange(() => this.rebuild());
+  }
+  /** drawn or not (a function is asked each frame) */
+  get enabled() { return this.on_; }
+  set enabled(v: boolean | (() => boolean)) {
+    if (v === this.on_) return;
+    this.on_ = v;
+    this.bundle?.invalidate();
   }
   private pickEntries() {
     this.vs = pickEntry(this.shader, 'vertex', this.opts.vertex, this.label);
@@ -250,10 +325,15 @@ export class Draw<S extends Shader = Shader> {
       this.pickEntries();
       this.binder.entries = this.fs ? [this.vs, this.fs] : [this.vs];
       this.binder.build();
+      this.bundle?.invalidate();
       this.pipe.build();
     } catch (e) { this.kit.report('bind', this.label, (e as Error).message); }
   }
-  set(name: keyof NonNullable<DrawOptions<S>['bind']> & string, value: Bindable) { this.binder.set(name, value); return this; }
+  set(name: keyof NonNullable<DrawOptions<S>['bind']> & string, value: Bindable) {
+    this.binder.set(name, value);
+    this.bundle?.invalidate();
+    return this;
+  }
 
   private descriptor(module: GPUShaderModule): GPURenderPipelineDescriptor {
     const o = this.opts;
@@ -267,8 +347,10 @@ export class Draw<S extends Shader = Shader> {
       layout: this.binder.layout,
       vertex: { module, entryPoint: this.vs, constants: constantsFor(this.shader, this.vs, o.constants), buffers: o.vertexBuffers?.map((v) => v.layout) },
       primitive: { topology: o.topology ?? 'triangle-list', cullMode: o.cull ?? 'back', frontFace: o.frontFace ?? 'ccw', unclippedDepth: o.unclippedDepth && this.kit.features.has('depth-clip-control') ? true : undefined },
-      multisample: { count: f.samples, alphaToCoverageEnabled: o.alphaToCoverage ?? false },
+      // (WebGPU refuses alpha to coverage without multisampling: such a pipeline would fail and never draw)
+      multisample: { count: f.samples, alphaToCoverageEnabled: !!o.alphaToCoverage && f.samples > 1 },
     };
+    if (o.alphaToCoverage && f.samples <= 1) this.kit.warnOnce(`a2c:${this.label}`, `${this.label}: alphaToCoverage needs a multisampled pass (${this.pass.label} has 1 sample): drawn without it`);
     if (o.topology === 'triangle-strip' || o.topology === 'line-strip') desc.primitive!.stripIndexFormat = o.indices ? (o.indices.format ?? 'uint32') : undefined;
     if (this.fs) desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, o.constants), targets };
     if (f.depth) {
@@ -282,41 +364,74 @@ export class Draw<S extends Shader = Shader> {
     return desc;
   }
 
-  encode(pe: GPURenderPassEncoder) {
+  encode(pe: GPURenderPassEncoder) { this.encodeInto(pe); }
+  /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready) */
+  encodeInto(enc: DrawEncoder) {
+    // (enabled first: a compile scheduler makes a deferred pipeline on the spot when it's read)
+    if (!on(this.on_)) return;
     const p = this.pipe.pipeline;
-    if (!p || !on(this.enabled)) return;
+    if (!p || (this.pipe.gate && !this.pipe.gate())) return;
     const o = this.opts;
     // (consecutive draws with one pipeline set it once)
-    const tracked = pe as GPURenderPassEncoder & { __weftPipeline?: GPURenderPipeline | null };
-    if (tracked.__weftPipeline !== p) { tracked.__weftPipeline = p; pe.setPipeline(p); }
-    this.binder.apply(pe, this.pass.opts.view ?? this.kit.mainView, this.pass.opts.shared);
-    o.vertexBuffers?.forEach((v, i) => pe.setVertexBuffer(i, gpuBuf(v.buffer), v.offset ?? 0));
-    if (o.indices) pe.setIndexBuffer(gpuBuf(o.indices.buffer), o.indices.format ?? 'uint32', o.indices.offset ?? 0);
+    const tracked = enc as TrackedEncoder;
+    if (tracked.__weftPipeline !== p) { tracked.__weftPipeline = p; enc.setPipeline(p); }
+    this.binder.apply(enc, this.pass.opts.view ?? this.kit.mainView, this.pass.opts.shared);
+    const vb = o.vertexBuffers;
+    if (vb) for (let i = 0; i < vb.length; i++) enc.setVertexBuffer(i, gpuBuf(vb[i].buffer), vb[i].offset ?? 0);
+    if (o.indices) enc.setIndexBuffer(gpuBuf(o.indices.buffer), o.indices.format ?? 'uint32', o.indices.offset ?? 0);
     if (o.encode) {
-      o.encode(pe, this);
+      o.encode(enc as GPURenderPassEncoder, this);
       // (the callback may have set its own pipeline or groups)
-      tracked.__weftPipeline = null;
-      forgetBindings(pe);
+      forgetPassState(enc);
       return;
     }
     if (o.indirect) {
-      if (o.indices) pe.drawIndexedIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
-      else pe.drawIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
+      if (o.indices) enc.drawIndexedIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
+      else enc.drawIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
       return;
     }
     const count = val(o.count, 3), inst = val(o.instances, 1);
     if (count <= 0 || inst <= 0) return;
-    if (o.indices) pe.drawIndexed(count, inst, val(o.first, 0), val(o.baseVertex, 0), val(o.firstInstance, 0));
-    else pe.draw(count, inst, val(o.first, 0), val(o.firstInstance, 0));
+    if (o.indices) enc.drawIndexed(count, inst, val(o.first, 0), val(o.baseVertex, 0), val(o.firstInstance, 0));
+    else enc.draw(count, inst, val(o.first, 0), val(o.firstInstance, 0));
   }
-  dispose() { this.unsub(); this.pass.draws.splice(this.pass.draws.indexOf(this as unknown as Draw), 1); }
+  /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset, a scheduler's gate */
+  get watched() {
+    const o = this.opts, fn = (x: unknown) => typeof x === 'function';
+    return fn(this.on_) || fn(o.count) || fn(o.instances) || fn(o.first) || fn(o.firstInstance) || fn(o.baseVertex) || fn(o.indirect?.offset) || !!this.pipe.gate;
+  }
+  /** (bundles) those options' values now, into out */
+  state(out: number[]) {
+    const o = this.opts;
+    out[0] = on(this.on_) ? 1 : 0; out[1] = val(o.count, 3); out[2] = val(o.instances, 1); out[3] = val(o.first, 0);
+    out[4] = val(o.firstInstance, 0); out[5] = val(o.baseVertex, 0); out[6] = val(o.indirect?.offset, 0);
+    out[7] = this.pipe.gate && !this.pipe.gate() ? 0 : 1;
+    return out;
+  }
+  /** (bundles) whether a vertex, index or indirect buffer is given through a Ref */
+  get refBuffers() {
+    const o = this.opts;
+    return !!(o.vertexBuffers?.some((v) => v.buffer instanceof Ref) || o.indices?.buffer instanceof Ref || o.indirect?.buffer instanceof Ref);
+  }
+  /** stop drawing it for good: it leaves its pass (or bundle), and its pipeline leaves the kit */
+  dispose() {
+    this.unsub();
+    const list: unknown[] = this.bundle ? this.bundle.draws : this.pass.draws;
+    const i = list.indexOf(this);
+    if (i >= 0) list.splice(i, 1);
+    this.bundle?.invalidate();
+    this.pipe.dispose();
+  }
 }
+
+/** what a pass draws, in order: draws, and bundles of static draws */
+export type PassItem = Draw | DrawBundle;
 
 export class RenderPass implements RunItem {
   readonly label: string;
   readonly timed = true;
   enabled: boolean | (() => boolean);
-  draws: Draw[] = [];
+  draws: PassItem[] = [];
   constructor(private kit: Kit, readonly opts: RenderPassOptions) {
     this.label = opts.label ?? 'pass';
     this.enabled = opts.enabled ?? true;
@@ -325,6 +440,17 @@ export class RenderPass implements RunItem {
     const d = new Draw(this.kit, this, shader, opts);
     this.draws.push(d as unknown as Draw);
     return d;
+  }
+  /** a bundle of static draws at this point of the pass's order: its draws are recorded once into a GPURenderBundle
+   *  and replayed with one call a frame (see bundle.ts for what re-records it) */
+  bundle(label = `${this.label}.bundle`): DrawBundle {
+    const b = new DrawBundle(this.kit, this, label);
+    this.draws.push(b);
+    return b;
+  }
+  /** stop it for good: every draw and bundle in it is disposed */
+  dispose() {
+    for (const d of [...this.draws]) if (d instanceof Draw || d instanceof DrawBundle) d.dispose();
   }
   /** a fullscreen triangle (the shader includes weft/fullscreen and has a fragment entry) */
   fullscreen<S extends Shader>(shader: S, opts: DrawOptions<S> = {}): Draw<S> {

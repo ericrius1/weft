@@ -1,6 +1,7 @@
-// The debug overlay (backquote ` or ?debug): frame stats, the passes that ran with on/off switches (ablation — the
-// honest way to price a pass on a tiler) and GPU ms, pipelines and their compile times, a viewer for any texture,
-// tweak sliders built from `// @range(…)` annotations in WGSL structs, and every error with its file:line.
+// The debug overlay (backquote ` or ?debug): frame stats and the GPU memory the kit holds, the passes that ran with
+// on/off switches (ablation — the honest way to price a pass on a tiler) and GPU ms, pipelines and their compile times,
+// a viewer for any texture, tweak sliders built from `// @range(…)` annotations in WGSL structs, and every error with
+// its file:line. Whatever goes wrong in it is reported, never thrown into the frame.
 import type { Kit } from './kit';
 import type { UniformBuffer } from './resources';
 import { Texture, TexView, isDepthFormat } from './resources';
@@ -108,6 +109,7 @@ export class DebugOverlay {
     }
     const r = this.root;
     r.innerHTML = `<div class="row"><b>weft</b><span class="k"></span><span id="wo-stats"></span></div>
+      <div class="row"><span id="wo-mem"></span></div>
       <div id="wo-custom"></div>
       <h4>passes <span style="text-transform:none;font-weight:400">(click to switch off)</span></h4><table id="wo-passes"></table>
       <h4>pipelines</h4><div id="wo-pipes"></div>
@@ -141,8 +143,11 @@ export class DebugOverlay {
     const r = this.root!;
     const p = this.kit.profiler;
     const s = this.kit.size;
+    const mem = this.kit.memory();
     r.querySelector('#wo-stats')!.textContent = `${(1000 / this.cpuMs).toFixed(0)} fps · cpu ${this.cpuMs.toFixed(1)} · gpu ${p.available ? p.frameMs.toFixed(2) : 'n/a'} ms · ${s.render[0]}×${s.render[1]}`;
-    r.querySelector('#wo-custom')!.innerHTML = this.stats.map((x) => `<div class="row"><span class="k">${esc(x.name)}</span><span>${esc(x.fn())}</span></div>`).join('');
+    r.querySelector('#wo-mem')!.textContent = `gpu memory ${mb(mem.total)} (textures ${mb(mem.textures)}, buffers ${mb(mem.buffers)})`;
+    const stat = (fn: () => string) => { try { return fn(); } catch (e) { return `⚠ ${(e as Error).message}`; } };
+    r.querySelector('#wo-custom')!.innerHTML = this.stats.map((x) => `<div class="row"><span class="k">${esc(x.name)}</span><span>${esc(stat(x.fn))}</span></div>`).join('');
     const names = [...new Set([...ran, ...this.disabled])];
     if (ran.length) {
       const t = r.querySelector('#wo-passes')!;
@@ -213,9 +218,14 @@ export class DebugOverlay {
   }
 
   // ------------------------------------------------------------ texture viewer
+  /** draws the chosen texture over the frame (a texture it can't show is reported and let go) */
   encodeViewer(enc: GPUCommandEncoder) {
     const t = this.viewer.tex;
     if (!t) return;
+    if (t.destroyed) { this.viewer.tex = null; return; }
+    try { this.viewTexture(enc, t); } catch (e) { this.kit.report('viewer', t.label, (e as Error).message); this.viewer.tex = null; }
+  }
+  private viewTexture(enc: GPUCommandEncoder, t: Texture) {
     const kind = isDepthFormat(t.format) ? 'depth' : /uint/.test(t.format) ? 'uint' : 'float';
     if (!this.viewerPass) {
       const k = this.kit;
@@ -245,8 +255,9 @@ export class DebugOverlay {
     this.viewerU!.set({ lo: this.viewer.lo, hi: this.viewer.hi, channel: this.viewer.channel, mip });
     this.viewerU!.upload();
     if (!d.pipe.pipeline) return;
-    try { this.viewerPass.encode(enc); } catch (e) { this.kit.report('viewer', t.label, (e as Error).message); this.viewer.tex = null; }
+    this.viewerPass.encode(enc);
   }
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+const mb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
