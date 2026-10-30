@@ -1,0 +1,41 @@
+# Publishes @ericrius1/weft and @ericrius1/loom whenever a push to main carries a version npm hasn't seen: bump a
+# package's version (and its CHANGELOG), push, and this builds, tests and publishes it, weft before loom. npm trusts
+# this workflow directly (trusted publishing over OIDC, set once per package on npmjs.com): no token is stored anywhere
+# and no 2FA prompt is needed. Each release carries a provenance statement linking it to the commit that built it.
+name: publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # (trusted publishing needs npm 11.5.1 or later)
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm run build
+      - run: npm test -w @ericrius1/weft
+      - name: Publish what npm hasn't seen
+        run: |
+          for pkg in packages/weft packages/loom; do
+            name=$(node -p "require('./$pkg/package.json').name")
+            version=$(node -p "require('./$pkg/package.json').version")
+            if npm view "$name@$version" version > /dev/null 2>&1; then
+              echo "$name@$version is already on npm"
+            else
+              echo "publishing $name@$version"
+              npm publish -w "$name" --access public --provenance
+            fi
+          done

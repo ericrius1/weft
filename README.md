@@ -78,6 +78,13 @@ WEFT_SRC=1 npm run dev   # the lab on the kit's source: engine edits without a r
 Working on the engine and a game together: `npm link` the packages into the game, or point its dependency at a
 local path (`"@ericrius1/weft": "file:../weft/packages/weft"`), then rebuild here as you go.
 
+## Releasing
+
+Bump the package's `version` (and its CHANGELOG), push to `main`: `.github/workflows/publish.yml` builds, tests and
+publishes every package whose version npm hasn't seen, weft before loom. npm trusts that workflow directly (trusted
+publishing, set once per package on npmjs.com: GitHub Actions, `ericrius1/weft`, workflow `publish.yml`), so no token
+is kept anywhere and there's no 2FA prompt; each release carries provenance linking it to its commit.
+
 ## License
 
 MIT © Eric Levin
