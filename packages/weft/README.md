@@ -71,10 +71,12 @@ out.fullscreen(post, { bind: { hdr }, constants: { HDR: kit.hdr.enabled ? 1 : 0,
 override HDR: bool = false;
 override P3: bool = false;
 @fragment fn fs(i: FullscreenOut) -> @location(0) vec4f {
-  let mapped = tonemap(scene(i.uv), select(1.0, 4.0, HDR));   // to [0, 1] on SDR, [0, peak] on HDR
+  let mapped = myTonemap(myScene(i.uv), select(1.0, 4.0, HDR));   // yours: to [0, 1] on SDR, [0, peak] on HDR
   return vec4f(canvasEncode(mapped, P3), 1.0);
 }
 ```
+
+(The lab's `post.wgsl` is a whole one: `npm run dev`, then `?hdr`.)
 
 Freeing what a streamed-out chunk made (a resize no longer brings a destroyed texture back), and what's held:
 
