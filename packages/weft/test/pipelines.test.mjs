@@ -217,7 +217,7 @@ test('kit.ready(...items) waits for those alone; kit.ready() for everything', as
   assert.ok(slow.pipe.pipeline);
 });
 
-test('a compile scheduler: asked once per distinct pipeline; one made on the spot is made for all sharing it', async () => {
+test('a compile scheduler: asked for each record sharing a compile, compiled once; one made on the spot is made for all', async () => {
   const kit = fakeKit(), sh = shader('test/sched.wgsl', FILL);
   const parked = new Map();
   kit.compiler = {
@@ -235,7 +235,7 @@ test('a compile scheduler: asked once per distinct pipeline; one made on the spo
   const c = (label) => new Compute(kit, sh, { label, entry: 'fill', bind: { data: buffer(kit) } });
   const a = c('a'), b = c('b');
   const r = await kit.ready();
-  assert.equal(parked.size, 1, 'asked once');
+  assert.equal(parked.size, 2, 'asked for each record (one compile between them)');
   assert.ok(a.pipe.deferred && b.pipe.deferred && !a.pipe._pipe && r.pipelines === 2);
   // (the second read first: made on the spot for both)
   const p = b.pipe.pipeline;
@@ -243,4 +243,24 @@ test('a compile scheduler: asked once per distinct pipeline; one made on the spo
   await Promise.all([a.pipe.pending, b.pipe.pending]);
   assert.equal(kit.compiled.length, 1);
   assert.ok(!a.pipe.error && !b.pipe.error);
+});
+
+test("a compile scheduler holding one record back doesn't hold back a twin it lets through", async () => {
+  // (a mirror's draw, not in the first frame, declared first and held; the scene's own draw of the same pipeline, which
+  // the first frame waits on, let through: it compiles, once, and the mirror has it too)
+  const kit = fakeKit(), sh = shader('test/twin.wgsl', FILL);
+  const held = new Set();
+  kit.compiler = {
+    holding: false,
+    compile: (rec, start) => (rec.label.startsWith('mirror') ? new Promise(() => held.add(rec)) : start()),
+    now() {},
+  };
+  const c = (label) => new Compute(kit, sh, { label, entry: 'fill', bind: { data: buffer(kit) } });
+  const mirror = c('mirror.house'), scene = c('house');
+  const r = await Promise.race([scene.ready().then(() => 'compiled'), new Promise((res) => setTimeout(() => res('stuck'), 500))]);
+  assert.equal(r, 'compiled');
+  assert.equal(kit.compiled.length, 1, 'one compile');
+  assert.ok(held.has(mirror.pipe), "the mirror's own ask is still held");
+  await mirror.pipe.pending;
+  assert.ok(scene.pipe.pipeline && mirror.pipe.pipeline === scene.pipe.pipeline);
 });
