@@ -3,7 +3,11 @@
 ## Unreleased
 
 - **A compile scheduler is asked for every record sharing a compile** while it hasn't landed, the first ask it lets through starting the one compile. Asked only for the record that started it, a compile the scheduler held back for that one (a mirror's view of a house, not in the first frame) kept its twin, which the first frame waits on, waiting too: boulder's load never finished in Chrome.
-
+- **A multi-draw indirect** (`indirect: { buffer, offset, count, stride }` on a draw): `count` indirect draws (default
+  1), `stride` bytes apart (default 20 indexed, 16 not), each reading its own arguments — a GPU cull's one draw per
+  piece, those it culled with no instances. Still one Draw (one pipeline, one bind, one record in a bundle) however
+  many pieces, so a bundle replays them all with one call a frame; `count` may be a function (asked each frame, as
+  the other counts are: a bundle records again when it moves). Without `count`, one draw, as before.
 - **`kit.sibling(canvas, opts)`**: a kit for another canvas, drawn with this kit's device: an overlay at the display's
   full resolution over a world drawn at less (ericlevin.dev's way in: the page's words handed to the GPU over the
   world as it comes in), a second view. Its own size, frame, passes and resources; drive it by hand (beginFrame, run,

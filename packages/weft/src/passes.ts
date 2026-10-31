@@ -449,7 +449,11 @@ export interface DrawOptions<S extends Shader = Shader> {
   firstInstance?: Num;
   baseVertex?: Num;
   indices?: { buffer: StorageBuffer | GPUBuffer | Ref; format?: GPUIndexFormat; offset?: number };
-  indirect?: { buffer: StorageBuffer | GPUBuffer | Ref; offset?: Num };
+  /** the draw's arguments read from a buffer (the GPU's: a cull's) at `offset`; `count` such draws (default 1),
+   *  `stride` bytes apart (default 20 indexed, 16 not): a multi-draw, each draw's arguments its own — a cull's one draw
+   *  per piece, those it culled with no instances. With `count` it's still one Draw (one pipeline, one bind, one
+   *  record in a bundle), however many pieces */
+  indirect?: { buffer: StorageBuffer | GPUBuffer | Ref; offset?: Num; count?: Num; stride?: number };
   vertexBuffers?: { layout: GPUVertexBufferLayout; buffer: StorageBuffer | GPUBuffer | Ref; offset?: number }[];
   enabled?: boolean | (() => boolean);
   /** issue the draw calls yourself (after the pipeline and bind groups are set) */
@@ -559,8 +563,12 @@ export class Draw<S extends Shader = Shader> {
       return;
     }
     if (o.indirect) {
-      if (o.indices) enc.drawIndexedIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
-      else enc.drawIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
+      const b = gpuBuf(o.indirect.buffer), at = val(o.indirect.offset, 0), n = val(o.indirect.count, 1);
+      const stride = o.indirect.stride ?? (o.indices ? 20 : 16);
+      for (let k = 0; k < n; k++) {
+        if (o.indices) enc.drawIndexedIndirect(b, at + k * stride);
+        else enc.drawIndirect(b, at + k * stride);
+      }
       return;
     }
     const count = val(o.count, 3), inst = val(o.instances, 1);
@@ -568,17 +576,19 @@ export class Draw<S extends Shader = Shader> {
     if (o.indices) enc.drawIndexed(count, inst, val(o.first, 0), val(o.baseVertex, 0), val(o.firstInstance, 0));
     else enc.draw(count, inst, val(o.first, 0), val(o.firstInstance, 0));
   }
-  /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset, a scheduler's gate */
+  /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset and count, a
+   *  scheduler's gate */
   get watched() {
     const o = this.opts, fn = (x: unknown) => typeof x === 'function';
-    return fn(this.on_) || fn(o.count) || fn(o.instances) || fn(o.first) || fn(o.firstInstance) || fn(o.baseVertex) || fn(o.indirect?.offset) || !!this.pipe.gate;
+    return fn(this.on_) || fn(o.count) || fn(o.instances) || fn(o.first) || fn(o.firstInstance) || fn(o.baseVertex) || fn(o.indirect?.offset)
+      || fn(o.indirect?.count) || !!this.pipe.gate;
   }
   /** (bundles) those options' values now, into out */
   state(out: number[]) {
     const o = this.opts;
     out[0] = on(this.on_) ? 1 : 0; out[1] = val(o.count, 3); out[2] = val(o.instances, 1); out[3] = val(o.first, 0);
     out[4] = val(o.firstInstance, 0); out[5] = val(o.baseVertex, 0); out[6] = val(o.indirect?.offset, 0);
-    out[7] = this.pipe.gate && !this.pipe.gate() ? 0 : 1;
+    out[7] = this.pipe.gate && !this.pipe.gate() ? 0 : 1; out[8] = val(o.indirect?.count, 1);
     return out;
   }
   /** (bundles) whether a vertex, index or indirect buffer is given through a Ref */

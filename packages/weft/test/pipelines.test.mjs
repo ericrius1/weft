@@ -264,3 +264,42 @@ test("a compile scheduler holding one record back doesn't hold back a twin it le
   await mirror.pipe.pending;
   assert.ok(scene.pipe.pipeline && mirror.pipe.pipeline === scene.pipe.pipeline);
 });
+
+const PIECES = `
+@vertex fn vs(@builtin(vertex_index) i: u32, @builtin(instance_index) k: u32) -> @builtin(position) vec4f { return vec4f(f32(i), f32(k), 0.0, 1.0); }
+@fragment fn fs() -> @location(0) vec4f { return vec4f(1.0); }`;
+
+test('a multi-draw indirect: `count` draws `stride` bytes apart, one Draw; in a bundle recorded once, again when the count moves', async () => {
+  const kit = fakeKit(), sh = shader('test/pieces.wgsl', PIECES);
+  const encoder = (into) => ({
+    setPipeline() {}, setBindGroup() {}, setVertexBuffer() {}, setIndexBuffer() {}, draw() {}, drawIndexed() {}, executeBundles() {},
+    drawIndirect: (b, at) => into.push(['drawIndirect', at]), drawIndexedIndirect: (b, at) => into.push(['drawIndexedIndirect', at]), finish: () => ({}),
+  });
+  const recorded = [];
+  kit.mainView = { group0: () => 'g0' };
+  kit.device.createRenderBundleEncoder = () => encoder(recorded);
+  const pass = new RenderPass(kit, { color: [{ target: 'screen' }] });
+  const args = buffer(kit), idx = buffer(kit);
+  const one = pass.draw(sh, { indices: { buffer: idx, format: 'uint16' }, indirect: { buffer: args, offset: 40 } });
+  let n = 3;
+  const bundle = pass.bundle('pieces');
+  bundle.draw(sh, { indices: { buffer: idx, format: 'uint16' }, indirect: { buffer: args, offset: 20, count: () => n } });
+  bundle.draw(sh, { indirect: { buffer: args, count: 2 } });
+  bundle.draw(sh, { indirect: { buffer: args, offset: 8, count: 2, stride: 32 } });
+  await pass.ready();
+  // (without a count: one draw, as before)
+  const direct = [];
+  one.encodeInto(encoder(direct));
+  assert.deepEqual(direct, [['drawIndexedIndirect', 40]]);
+  const pe = encoder([]);
+  bundle.encode(pe);
+  assert.deepEqual(recorded, [['drawIndexedIndirect', 20], ['drawIndexedIndirect', 40], ['drawIndexedIndirect', 60],
+    ['drawIndirect', 0], ['drawIndirect', 16], ['drawIndirect', 8], ['drawIndirect', 40]]);
+  bundle.encode(pe);
+  assert.equal(bundle.records, 1, 'replayed, not recorded again');
+  recorded.length = 0;
+  n = 1;
+  bundle.encode(pe);
+  assert.equal(bundle.records, 2, 'recorded again: the count moved');
+  assert.deepEqual(recorded.slice(0, 2), [['drawIndexedIndirect', 20], ['drawIndirect', 0]]);
+});
