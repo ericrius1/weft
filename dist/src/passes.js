@@ -1,5 +1,5 @@
 import { Binder, BindError, forgetBindings } from './binder';
-import { Ref, deref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat } from './resources';
+import { Ref, deref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat, rawUid } from './resources';
 import { DrawBundle } from './bundle';
 const val = (x, d) => (x === undefined ? d : typeof x === 'function' ? x() : x);
 const vals = (x) => (typeof x === 'function' ? x() : x);
@@ -15,16 +15,93 @@ export class RawItem {
     }
     encode(enc) { this.fn(enc); }
 }
+/** (a descriptor's module, filled in once the module is made) */
+const NO_MODULE = null;
+/** a value as text, every object's keys sorted and undefined left out (as JSON does): the same descriptor gives the same
+ *  text however its objects were spelled. Anything but plain data (a GPU object) is written as its identity. */
+export function stableKey(v) {
+    if (v === undefined || v === null)
+        return 'null';
+    if (typeof v === 'number')
+        return Number.isFinite(v) ? String(v) : `"${v}"`;
+    if (typeof v !== 'object')
+        return JSON.stringify(typeof v === 'string' || typeof v === 'boolean' ? v : String(v));
+    if (Array.isArray(v))
+        return `[${v.map(stableKey).join(',')}]`;
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null)
+        return `"#${rawUid(v)}"`;
+    const o = v;
+    return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${stableKey(o[k])}`).join(',')}}`;
+}
+/** what tells one pipeline from another: its descriptor with the label left out, the layout as the description of its
+ *  bind group layouts (Binder.layoutKey: equal descriptions are the same layouts, kit.bindGroupLayout) and each stage's
+ *  module as the shader and version it's made from */
+export function pipelineKey(desc, layout, module) {
+    const d = { ...desc, label: undefined, layout };
+    for (const s of ['vertex', 'fragment', 'compute'])
+        if (d[s])
+            d[s] = { ...d[s], module };
+    return stableKey(d);
+}
+const shaderTag = (s) => `${s.id}@${s.version}#${rawUid(s)}`;
+/** a pipeline from a descriptor and its module: asynchronously, or on the spot */
+function makePipeline(kit, desc, module, async) {
+    const d = { ...desc }, dev = kit.device;
+    for (const s of ['vertex', 'fragment', 'compute'])
+        if (d[s])
+            d[s] = { ...d[s], module };
+    if ('compute' in desc)
+        return async ? dev.createComputePipelineAsync(d) : dev.createComputePipeline(d);
+    return async ? dev.createRenderPipelineAsync(d) : dev.createRenderPipeline(d);
+}
+/** One GPU pipeline and its compile, shared by every record whose descriptor is the same (kit.pipelineCache, by
+ *  pipelineKey). It leaves the cache when its last record lets it go (disposed, or rebuilt into another: a hot shader
+ *  edit makes new keys), or when its compile fails (so the next record asking tries again). */
+export class SharedPipeline {
+    key;
+    pipeline = null;
+    error = null;
+    /** its compile's ms, from its module made to the pipeline made */
+    ms = 0;
+    /** the records using it */
+    users = new Set();
+    /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
+    done;
+    settle;
+    constructor(key) {
+        this.key = key;
+        this.done = new Promise((ok, fail) => { this.settle = { ok, fail }; });
+        this.done.catch(() => { });
+    }
+    /** its pipeline is made: every record using it has it (a later one, a compile finishing after one was made on the
+     *  spot, is let go) */
+    land(p) {
+        if (this.pipeline)
+            return;
+        this.pipeline = p;
+        this.settle.ok(p);
+        for (const u of this.users)
+            u.pipeline = p;
+    }
+    failed(e) {
+        if (this.pipeline)
+            return;
+        this.error = e?.message ?? String(e);
+        this.settle.fail(e);
+    }
+}
 export class PipelineRecord {
     kit;
     label;
     shader;
-    make;
-    makeNow;
+    describe;
+    layoutKey;
     /** the pipeline as it is (read `pipeline`, which a compile scheduler may make on the spot) */
     _pipe = null;
     pending = null;
     error = null;
+    /** ms from declared (or rebuilt) to its pipeline made: its own compile, or its wait for the one it shares */
     ms = 0;
     builds = 0;
     /** waiting for kit.compiler to say when (kit.ready() doesn't wait for it) */
@@ -33,17 +110,26 @@ export class PipelineRecord {
     gate = null;
     /** called when its pipeline changes (a compile landing, a hot reload) */
     changed = null;
-    constructor(kit, label, shader, make, makeNow = null) {
+    /** the compile it uses, shared with every record of the same descriptor */
+    entry = null;
+    // (its builds counted: a build overtaken by a newer one, or by dispose, lets go; `joined`, the build that joined entry;
+    // `started`, the compile it started last)
+    serial = 0;
+    joined = 0;
+    started = null;
+    /** `describe`: its descriptor now (modules left out); `layoutKey`: its layout's description (Binder.layoutKey) */
+    constructor(kit, label, shader, describe, layoutKey) {
         this.kit = kit;
         this.label = label;
         this.shader = shader;
-        this.make = make;
-        this.makeNow = makeNow;
-        kit.pipelines.push(this);
+        this.describe = describe;
+        this.layoutKey = layoutKey;
+        kit.pipelines.push(this.self);
     }
+    get self() { return this; }
     get pipeline() {
         if (!this._pipe && this.deferred && this.kit.compiler)
-            this.kit.compiler.now(this);
+            this.kit.compiler.now(this.self);
         return this._pipe;
     }
     set pipeline(p) {
@@ -51,9 +137,20 @@ export class PipelineRecord {
             return;
         this._pipe = p;
         this.changed?.();
+        // (made on the spot by a compile scheduler: the records sharing its compile have it too)
+        if (p && this.entry && !this.entry.pipeline && this.joined === this.serial)
+            this.entry.land(p);
     }
+    /** whether its pipeline is one another record compiled (it shares that one's compile) */
+    get shared() { return !!this.entry && this.entry !== this.started; }
+    /** its pipeline from `module`, compiled asynchronously */
+    make(module) { return makePipeline(this.kit, this.describe(), module, true); }
+    /** its pipeline from `module`, on the spot (a compile scheduler's `now`) */
+    makeNow(module) { return makePipeline(this.kit, this.describe(), module, false); }
+    /** wait for its pipeline (see kit.ready) */
+    ready() { return this.kit.ready(this.self); }
     build() {
-        const t0 = performance.now();
+        const t0 = performance.now(), b = ++this.serial;
         // (one built while the scheduler holds is deferred at once: its module's compile info comes first, and can wait
         // behind the GPU's compiles, and kit.ready() mustn't wait for it meanwhile)
         if (this.kit.compiler?.holding)
@@ -61,8 +158,12 @@ export class PipelineRecord {
         const p = (async () => {
             try {
                 const module = await this.kit.module(this.shader);
-                const c = this.kit.compiler;
-                const pipe = (await (c ? c.compile(this, () => this.make(module)) : this.make(module)));
+                if (b !== this.serial)
+                    return;
+                const e = this.join(module);
+                const pipe = (e.pipeline ?? await e.done);
+                if (b !== this.serial)
+                    return;
                 this.pipeline = pipe;
                 this.error = null;
                 this.ms = performance.now() - t0;
@@ -70,6 +171,8 @@ export class PipelineRecord {
                 this.kit.clearError(this.label);
             }
             catch (e) {
+                if (b !== this.serial)
+                    return;
                 this.error = e.message ?? String(e);
                 this.kit.report('pipeline', this.label, this.error);
             }
@@ -79,13 +182,73 @@ export class PipelineRecord {
         const wrapped = this.pending;
         return this.pending;
     }
-    /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) */
+    /** the compile of its descriptor as it is now: the one made or under way for the same key, or a new one */
+    join(module) {
+        const kit = this.kit, desc = this.describe();
+        const key = pipelineKey(desc, this.layoutKey(), shaderTag(this.shader));
+        let e = kit.pipelineCache.get(key);
+        if (!e || e !== this.entry) {
+            this.leave();
+            if (!e) {
+                const made = this.started = e = new SharedPipeline(key);
+                kit.pipelineCache.set(key, made);
+                const t0 = performance.now(), c = kit.compiler, start = () => makePipeline(kit, desc, module, true);
+                new Promise((r) => r(c ? c.compile(this.self, start) : start())).then((pipe) => { made.ms = performance.now() - t0; made.land(pipe); }, (err) => { made.failed(err); if (kit.pipelineCache.get(key) === made)
+                    kit.pipelineCache.delete(key); });
+            }
+            e.users.add(this.self);
+            this.entry = e;
+        }
+        this.joined = this.serial;
+        return e;
+    }
+    /** let go of its compile (the last record using it takes it out of the cache) */
+    leave() {
+        const e = this.entry;
+        if (!e)
+            return;
+        e.users.delete(this.self);
+        if (!e.users.size && this.kit.pipelineCache.get(e.key) === e)
+            this.kit.pipelineCache.delete(e.key);
+        this.entry = null;
+    }
+    /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) and lets go of its compile */
     dispose() {
-        const list = this.kit.pipelines, i = list.indexOf(this);
+        const list = this.kit.pipelines, i = list.indexOf(this.self);
         if (i >= 0)
             list.splice(i, 1);
+        this.serial++;
+        this.leave();
         this.changed = null;
     }
+}
+/** the pipeline records of passes (their draws and bundles), computes, draws, bundles and lists of them, once each */
+export function pipelinesOf(items, out = new Set()) {
+    for (const it of items) {
+        if (!it || typeof it !== 'object')
+            continue;
+        if (Array.isArray(it))
+            pipelinesOf(it, out);
+        else if (it instanceof PipelineRecord)
+            out.add(it);
+        else if ('pipe' in it && it.pipe instanceof PipelineRecord)
+            out.add(it.pipe);
+        else if ('draws' in it && Array.isArray(it.draws))
+            pipelinesOf(it.draws, out);
+    }
+    return [...out];
+}
+/** wait till none of `records()` is compiling, asking again after each wait (up to 20 times) for those declared or
+ *  rebuilt meanwhile; those a compile scheduler holds back (deferred) aren't waited for */
+export async function settle(records) {
+    for (let i = 0; i < 20; i++) {
+        const pend = records().filter((p) => !p.deferred).map((p) => p.pending).filter(Boolean);
+        if (!pend.length)
+            break;
+        await Promise.allSettled(pend);
+    }
+    const all = records();
+    return { pipelines: all.length, distinct: new Set(all.map((p) => p.entry ?? p)).size, failed: all.filter((p) => p.error).length };
 }
 function pickEntry(shader, stage, name, label) {
     const list = shader.reflect.entries.filter((e) => e.stage === stage);
@@ -115,7 +278,8 @@ function constantsFor(shader, entry, constants) {
         if (e?.overrides.includes(k))
             out[k] = v;
     }
-    return out;
+    // (none this entry reads: as if none were given, so it's the same pipeline as one given none)
+    return Object.keys(out).length ? out : undefined;
 }
 export class Compute {
     kit;
@@ -136,14 +300,16 @@ export class Compute {
         this.enabled = opts.enabled ?? true;
         this.entry = pickEntry(shader, 'compute', opts.entry, this.label);
         this.binder = new Binder(kit, shader, [this.entry], { ...(opts.bind ?? {}) }, this.label);
-        const desc = (module) => ({
+        const desc = () => ({
             label: this.label, layout: this.binder.layout,
-            compute: { module, entryPoint: this.entry, constants: constantsFor(shader, this.entry, opts.constants) },
+            compute: { module: NO_MODULE, entryPoint: this.entry, constants: constantsFor(shader, this.entry, opts.constants) },
         });
-        this.pipe = new PipelineRecord(kit, this.label, shader, (m) => kit.device.createComputePipelineAsync(desc(m)), (m) => kit.device.createComputePipeline(desc(m)));
+        this.pipe = new PipelineRecord(kit, this.label, shader, desc, () => this.binder.layoutKey);
         this.pipe.build();
         this.unsub = shader.onChange(() => this.rebuild());
     }
+    /** wait for its pipeline alone (see kit.ready) */
+    ready() { return this.kit.ready(this); }
     /** recompute bindings + pipeline (hot reload) */
     rebuild() {
         try {
@@ -230,11 +396,13 @@ export class Draw {
         this.on_ = opts.enabled ?? true;
         this.pickEntries();
         this.binder = new Binder(kit, shader, this.fs ? [this.vs, this.fs] : [this.vs], { ...(opts.bind ?? {}) }, this.label);
-        this.pipe = new PipelineRecord(kit, this.label, shader, (m) => kit.device.createRenderPipelineAsync(this.descriptor(m)), (m) => kit.device.createRenderPipeline(this.descriptor(m)));
+        this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(), () => this.binder.layoutKey);
         this.pipe.changed = () => this.bundle?.invalidate();
         this.pipe.build();
         this.unsub = shader.onChange(() => this.rebuild());
     }
+    /** wait for its pipeline alone (see kit.ready) */
+    ready() { return this.pipe.ready(); }
     /** drawn or not (a function is asked each frame) */
     get enabled() { return this.on_; }
     set enabled(v) {
@@ -264,8 +432,8 @@ export class Draw {
         this.bundle?.invalidate();
         return this;
     }
-    descriptor(module) {
-        const o = this.opts;
+    descriptor() {
+        const o = this.opts, module = NO_MODULE;
         const f = this.pass.formats();
         const outs = this.fs ? (this.shader.reflect.entries.find((e) => e.name === this.fs)?.targets ?? 1) : 0;
         const blends = Array.isArray(o.blend) ? o.blend : f.colors.map(() => o.blend);
@@ -404,6 +572,8 @@ export class RenderPass {
             if (d instanceof Draw || d instanceof DrawBundle)
                 d.dispose();
     }
+    /** wait for the pipelines of its draws (and bundles') alone (see kit.ready) */
+    ready() { return this.kit.ready(this); }
     /** a fullscreen triangle (the shader includes weft/fullscreen and has a fragment entry) */
     fullscreen(shader, opts = {}) {
         return this.draw(shader, { vertex: 'vs_fullscreen', cull: 'none', count: 3, depthWrite: false, depthCompare: 'always', ...opts });

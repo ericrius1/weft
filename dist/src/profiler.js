@@ -5,8 +5,11 @@ export class Profiler {
     available;
     /** keep timing even with the overlay closed (e.g. for dynamic resolution) */
     force = false;
-    /** ms per pass label, smoothed */
+    /** ms per pass label, smoothed: only passes seen in the last `stale` frames read back (one run while loading, or
+     *  switched off, isn't shown as a current cost) */
     ms = new Map();
+    /** frames read back a pass may go unseen before it leaves `ms` */
+    stale = 60;
     /** whole-frame GPU time (first pass start → last pass end), smoothed */
     frameMs = 0;
     /** the newest completed frame's GPU time, raw */
@@ -23,12 +26,20 @@ export class Profiler {
     labels = [];
     pending = false;
     on = false;
+    // (frames read back, and the last one each pass was in)
+    reads = 0;
+    seen = new Map();
     constructor(kit) {
         this.kit = kit;
         this.available = kit.features.has('timestamp-query');
     }
     get active() { return this.available && (this.force || this.kit.overlay.open); }
     beginFrame() {
+        // (timing again after a while off: what it had is old)
+        if (this.active && !this.on) {
+            this.ms.clear();
+            this.seen.clear();
+        }
         this.on = this.active;
         this.next = 0;
         this.resolved = 0;
@@ -88,8 +99,16 @@ export class Profiler {
                 last = Math.max(last, b);
             }
             this.lastMs = frame;
-            for (const [k, v] of frame)
+            const r = ++this.reads;
+            for (const [k, v] of frame) {
                 this.ms.set(k, (this.ms.get(k) ?? v) * 0.9 + v * 0.1);
+                this.seen.set(k, r);
+            }
+            for (const k of this.ms.keys())
+                if (r - (this.seen.get(k) ?? 0) > this.stale) {
+                    this.ms.delete(k);
+                    this.seen.delete(k);
+                }
             if (last > first) {
                 const total = (last - first) / 1e6;
                 this.lastFrameMs = total;

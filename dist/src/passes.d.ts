@@ -22,9 +22,12 @@ export declare class RawItem implements RunItem {
     encode(enc: GPUCommandEncoder): void;
 }
 export type AnyPipelineRecord = PipelineRecord<GPURenderPipeline | GPUComputePipeline>;
+type AnyPipeline = GPURenderPipeline | GPUComputePipeline;
 /** An app's compile scheduler (kit.compiler), for browsers that compile pipelines one at a time (WebKit): weft asks it
  *  when each record may compile. While it `holding`, a record built is `deferred` (kit.ready() doesn't wait for it);
- *  one needed before it compiled — its draw encoded, or its pipeline read — is made on the spot by `now`. */
+ *  one needed before it compiled — its draw encoded, or its pipeline read — is made on the spot by `now`. It's asked
+ *  once per distinct pipeline, with the record that first needed it; the records sharing that compile wait for it, and
+ *  one of them made on the spot is made for all of them. */
 export interface Compiler {
     readonly holding: boolean;
     /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result */
@@ -32,16 +35,45 @@ export interface Compiler {
     /** `rec` is needed now: make it on the spot (rec.makeNow with kit.moduleNow) */
     now(rec: AnyPipelineRecord): void;
 }
+type PipelineDesc = GPURenderPipelineDescriptor | GPUComputePipelineDescriptor;
+/** a value as text, every object's keys sorted and undefined left out (as JSON does): the same descriptor gives the same
+ *  text however its objects were spelled. Anything but plain data (a GPU object) is written as its identity. */
+export declare function stableKey(v: unknown): string;
+/** what tells one pipeline from another: its descriptor with the label left out, the layout as the description of its
+ *  bind group layouts (Binder.layoutKey: equal descriptions are the same layouts, kit.bindGroupLayout) and each stage's
+ *  module as the shader and version it's made from */
+export declare function pipelineKey(desc: PipelineDesc, layout: string, module: string): string;
+/** One GPU pipeline and its compile, shared by every record whose descriptor is the same (kit.pipelineCache, by
+ *  pipelineKey). It leaves the cache when its last record lets it go (disposed, or rebuilt into another: a hot shader
+ *  edit makes new keys), or when its compile fails (so the next record asking tries again). */
+export declare class SharedPipeline {
+    readonly key: string;
+    pipeline: AnyPipeline | null;
+    error: string | null;
+    /** its compile's ms, from its module made to the pipeline made */
+    ms: number;
+    /** the records using it */
+    readonly users: Set<AnyPipelineRecord>;
+    /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
+    readonly done: Promise<AnyPipeline>;
+    private settle;
+    constructor(key: string);
+    /** its pipeline is made: every record using it has it (a later one, a compile finishing after one was made on the
+     *  spot, is let go) */
+    land(p: AnyPipeline): void;
+    failed(e: unknown): void;
+}
 export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
     readonly kit: Kit;
     readonly label: string;
     readonly shader: Shader;
-    readonly make: (module: GPUShaderModule) => Promise<P>;
-    readonly makeNow: ((module: GPUShaderModule) => P) | null;
+    readonly describe: () => PipelineDesc;
+    readonly layoutKey: () => string;
     /** the pipeline as it is (read `pipeline`, which a compile scheduler may make on the spot) */
     _pipe: P | null;
     pending: Promise<void> | null;
     error: string | null;
+    /** ms from declared (or rebuilt) to its pipeline made: its own compile, or its wait for the one it shares */
     ms: number;
     builds: number;
     /** waiting for kit.compiler to say when (kit.ready() doesn't wait for it) */
@@ -50,13 +82,48 @@ export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipe
     gate: (() => boolean) | null;
     /** called when its pipeline changes (a compile landing, a hot reload) */
     changed: (() => void) | null;
-    constructor(kit: Kit, label: string, shader: Shader, make: (module: GPUShaderModule) => Promise<P>, makeNow?: ((module: GPUShaderModule) => P) | null);
+    /** the compile it uses, shared with every record of the same descriptor */
+    entry: SharedPipeline | null;
+    private serial;
+    private joined;
+    private started;
+    /** `describe`: its descriptor now (modules left out); `layoutKey`: its layout's description (Binder.layoutKey) */
+    constructor(kit: Kit, label: string, shader: Shader, describe: () => PipelineDesc, layoutKey: () => string);
+    private get self();
     get pipeline(): P | null;
     set pipeline(p: P | null);
+    /** whether its pipeline is one another record compiled (it shares that one's compile) */
+    get shared(): boolean;
+    /** its pipeline from `module`, compiled asynchronously */
+    make(module: GPUShaderModule): Promise<P>;
+    /** its pipeline from `module`, on the spot (a compile scheduler's `now`) */
+    makeNow(module: GPUShaderModule): P;
+    /** wait for its pipeline (see kit.ready) */
+    ready(): Promise<{
+        pipelines: number;
+        distinct: number;
+        failed: number;
+    }>;
     build(): Promise<void>;
-    /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) */
+    /** the compile of its descriptor as it is now: the one made or under way for the same key, or a new one */
+    private join;
+    /** let go of its compile (the last record using it takes it out of the cache) */
+    private leave;
+    /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) and lets go of its compile */
     dispose(): void;
 }
+/** what kit.ready() waits for: passes, computes, draws, bundles, pipeline records and lists of them (a run list:
+ *  what has no pipeline in it is passed over) */
+export type Waitable = RunItem | RunAction | PassItem | AnyPipelineRecord | null | undefined | false | readonly Waitable[];
+/** the pipeline records of passes (their draws and bundles), computes, draws, bundles and lists of them, once each */
+export declare function pipelinesOf(items: readonly Waitable[], out?: Set<AnyPipelineRecord>): AnyPipelineRecord[];
+/** wait till none of `records()` is compiling, asking again after each wait (up to 20 times) for those declared or
+ *  rebuilt meanwhile; those a compile scheduler holds back (deferred) aren't waited for */
+export declare function settle(records: () => AnyPipelineRecord[]): Promise<{
+    pipelines: number;
+    distinct: number;
+    failed: number;
+}>;
 export interface ComputeOptions<S extends Shader = Shader> {
     label?: string;
     entry?: string;
@@ -85,6 +152,12 @@ export declare class Compute<S extends Shader = Shader> implements RunItem {
     private entry;
     private unsub;
     constructor(kit: Kit, shader: S, opts: ComputeOptions<S>);
+    /** wait for its pipeline alone (see kit.ready) */
+    ready(): Promise<{
+        pipelines: number;
+        distinct: number;
+        failed: number;
+    }>;
     /** recompute bindings + pipeline (hot reload) */
     rebuild(): void;
     set(name: keyof NonNullable<ComputeOptions<S>['bind']> & string, value: Bindable): this;
@@ -192,6 +265,12 @@ export declare class Draw<S extends Shader = Shader> {
     private on_;
     /** `bundle`: the DrawBundle it's baked into (pass.bundle().draw makes these) */
     constructor(kit: Kit, pass: RenderPass, shader: S, opts: DrawOptions<S>, bundle?: DrawBundle | null);
+    /** wait for its pipeline alone (see kit.ready) */
+    ready(): Promise<{
+        pipelines: number;
+        distinct: number;
+        failed: number;
+    }>;
     /** drawn or not (a function is asked each frame) */
     get enabled(): boolean | (() => boolean);
     set enabled(v: boolean | (() => boolean));
@@ -227,6 +306,12 @@ export declare class RenderPass implements RunItem {
     bundle(label?: string): DrawBundle;
     /** stop it for good: every draw and bundle in it is disposed */
     dispose(): void;
+    /** wait for the pipelines of its draws (and bundles') alone (see kit.ready) */
+    ready(): Promise<{
+        pipelines: number;
+        distinct: number;
+        failed: number;
+    }>;
     /** a fullscreen triangle (the shader includes weft/fullscreen and has a fragment entry) */
     fullscreen<S extends Shader>(shader: S, opts?: DrawOptions<S>): Draw<S>;
     private targetFormat;

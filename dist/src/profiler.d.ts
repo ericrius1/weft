@@ -4,8 +4,11 @@ export declare class Profiler {
     readonly available: boolean;
     /** keep timing even with the overlay closed (e.g. for dynamic resolution) */
     force: boolean;
-    /** ms per pass label, smoothed */
+    /** ms per pass label, smoothed: only passes seen in the last `stale` frames read back (one run while loading, or
+     *  switched off, isn't shown as a current cost) */
     readonly ms: Map<string, number>;
+    /** frames read back a pass may go unseen before it leaves `ms` */
+    stale: number;
     /** whole-frame GPU time (first pass start → last pass end), smoothed */
     frameMs: number;
     /** the newest completed frame's GPU time, raw */
@@ -22,6 +25,8 @@ export declare class Profiler {
     private labels;
     private pending;
     private on;
+    private reads;
+    private seen;
     constructor(kit: Kit);
     get active(): boolean;
     beginFrame(): void;

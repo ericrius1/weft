@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+- **Draws and computes that would make the same pipeline share one** (`kit.pipelineCache`, `SharedPipeline`;
+  `src/passes.ts`). A pipeline was made per draw and compute even when its descriptor was another's, and concurrent
+  asynchronous creates of one descriptor each compiled from scratch: Seven Havens declares 206 at load — a character's
+  near and far meshes, each classic, drawn and inked, in the scene and its shadow cascades; a mip chain's levels;
+  bloom's steps — of which 108 are distinct. Now each record (`kit.pipelines`: a draw's or compute's label, errors,
+  `ms`, wait) joins the compile of its descriptor's key: the descriptor with the label left out, the layout as the
+  description of its bind group layouts (`Binder.layoutKey`: equal descriptions are already the same
+  `GPUBindGroupLayout`s; a shared group's is now its structure, not its label) and each stage's module as its shader
+  and version. Identical pipelines share one compile, in flight or done, and one GPU pipeline (labelled as the first
+  record that asked for it). A hot edit makes new keys (the shader's version), so its records compile anew; a compile
+  leaves the cache with its last record (disposed, or rebuilt into another) or when it fails — each record sharing it
+  reports the failure under its own label, and the next record asking tries again. `record.shared` says a record
+  waited on another's compile (its `ms` is that wait); the overlay counts the distinct pipelines and leaves those out of
+  its slowest, marking how many records share each (`×n`). A compile scheduler is asked once per distinct pipeline,
+  and a record made on the spot is made for all sharing its compile. Constants an entry doesn't read are left out of
+  its descriptor, as if none were given. `PipelineRecord` takes a describe function now; `make` and `makeNow` are
+  methods (a scheduler's `rec.makeNow(module)` as before).
+
+  Seven Havens' production build on the PC (the 5090, headless Chrome, D3D12; median of three cold loads each, the
+  0.2.1 engine and this one alternated; the same picture but for the film's grain):
+
+  | | 0.2.1 | this |
+  | --- | --- | --- |
+  | GPU pipelines made at load | 206 | 108 |
+  | their compiles' ms, summed | 110 s | 69 s |
+  | the slowest compile | 2.3 s | 1.8 s |
+  | `load.world` | 4.35 s | 4.01 s |
+  | `load.ready` | 5.37 s | 5.00 s |
+- **`kit.ready(...items)` waits for those alone**: computes, passes (their draws and bundles), draws, bundles, records,
+  and lists of them, so a run list can be given as it is (`await kit.ready(items); kit.run(items)`; an empty list waits
+  for nothing); `pass.ready()`, `compute.ready()`, `draw.ready()`, `bundle.ready()` for one. `kit.ready()` with nothing
+  given is, as before, the whole app — every pipeline declared so far, and those declared while it waits — and its
+  doc comment and the README say so: Seven Havens' canyon, awaiting it to run one fill, waited 2.5 to 3 s for every
+  other shader. Both resolve with `distinct` beside `pipelines` and `failed`. loom's terrain waits for its own passes.
+- **The profiler's smoothed times drop passes that stopped running** (`Profiler.stale`, 60 frames read back): a perf
+  readout showed passes run only while loading as current costs. Timing again after a while off starts afresh.
+- `npm test` covers the key and the sharing, the waits and the profiler without a GPU (a stand-in device;
+  `test/hooks.mjs` lets Node load dist's extensionless imports).
+
 ## 0.2.1
 
 - **Fulldome** (`Fulldome`, `domeLayout`; `src/dome.ts`, `shaders/dome.wgsl`): a planetarium's domemaster, a 180-degree

@@ -53,6 +53,8 @@ export declare class SharedGroup {
     /** the source files that declare it: a shader shares the group when it includes one of them */
     readonly files: Set<string>;
     bgl: GPUBindGroupLayout;
+    /** its layout's description (kit.bindGroupLayout's key) */
+    bglKey: string;
     /** bumped by set() */
     vgen: number;
     private memo;
@@ -83,7 +85,9 @@ export declare class Binder {
     label: string;
     groups: Group[];
     layout: GPUPipelineLayout;
-    /** layout identity: a pipeline must be rebuilt when this changes */
+    /** layout identity, the description of each group's layout after the frame's (a shared group's too): a pipeline must
+     *  be rebuilt when this changes, and binders with the same one have the same bind group layouts (kit.bindGroupLayout
+     *  makes one per description), so their pipelines can be one (kit.pipelineCache) */
     layoutKey: string;
     /** bumped whenever its values or its groups change */
     vgen: number;

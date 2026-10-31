@@ -2,7 +2,7 @@ export { createKit, Kit, View, AutoResolution, WebGPUUnavailable, type KitOption
 export { defineShader, sourceLine, type Shader, type StructDef, type Vec2, type Vec3, type Vec4, type Mat3, type Mat4 } from './shader';
 export { StructView, StructArray, type DeepPartial } from './struct';
 export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction, type TextureDesc, type StorageOptions } from './resources';
-export { Compute, RenderPass, Draw, RawItem, type ComputeOptions, type RenderPassOptions, type DrawOptions, type BlendMode, type RunItem, type PassItem, type DrawEncoder, type Compiler, type PipelineRecord, type AnyPipelineRecord } from './passes';
+export { Compute, RenderPass, Draw, RawItem, type ComputeOptions, type RenderPassOptions, type DrawOptions, type BlendMode, type RunItem, type PassItem, type DrawEncoder, type Compiler, type PipelineRecord, type AnyPipelineRecord, type SharedPipeline, type Waitable } from './passes';
 export { DrawBundle } from './bundle';
 export { BindError, SharedGroup, type Bindable, type SamplerName } from './binder';
 export { Camera } from './camera';

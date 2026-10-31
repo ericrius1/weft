@@ -1,7 +1,7 @@
 import type { Shader, StructDef } from './shader';
 import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction, type StorageOptions, type TextureDesc } from './resources';
-import { Compute, RenderPass, RawItem, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem } from './passes';
+import { Compute, RenderPass, RawItem, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem, type SharedPipeline, type Waitable } from './passes';
 import { SharedGroup, type SamplerName } from './binder';
 import { Profiler } from './profiler';
 import { DebugOverlay } from './debug';
@@ -83,7 +83,10 @@ export declare class Kit {
     readonly samplers: Record<'linear' | 'repeat' | 'nearest' | 'shadow' | 'nearest-repeat' | 'mirror', GPUSampler>;
     readonly nonFiltering: WeakSet<GPUSampler>;
     readonly rawViews: WeakMap<GPUTexture, GPUTextureView>;
+    /** a record per compute and draw (its label, errors and wait), whether or not its pipeline is shared */
     readonly pipelines: AnyPipelineRecord[];
+    /** the GPU pipelines the records share, one per distinct descriptor (passes.ts pipelineKey) */
+    readonly pipelineCache: Map<string, SharedPipeline>;
     readonly uniformBuffers: Set<UniformBuffer<any>>;
     readonly textures: Set<Texture>;
     /** the storage buffers made by kit.storage (for the memory tally) */
@@ -191,10 +194,24 @@ export declare class Kit {
     /** the shader's module now, made if it isn't yet (null if the shader has an error): a compile scheduler making a
      *  pipeline on the spot doesn't wait for the module's compile info */
     moduleNow(shader: Shader): GPUShaderModule | null;
-    /** wait until every pipeline declared so far has finished compiling (call behind the loading screen); pipelines a
-     *  compile scheduler holds back (deferred) aren't waited for */
-    ready(): Promise<{
+    /** wait for pipelines to finish compiling.
+     *
+     *  `kit.ready()`, with nothing given, waits for the whole app: every pipeline declared so far, and any declared while
+     *  it waits (it looks again after each wait, up to 20 times). Call it once, behind the loading screen, so nothing
+     *  compiles mid-game. It is not the way to wait for one pass: a canyon fill awaiting it waits for every shader the
+     *  page has declared by then.
+     *
+     *  `kit.ready(fill, scene, items)` waits only for what it's given: computes, passes (their draws and bundles), draws,
+     *  bundles, and lists of them, so a run list can be given as it is (`await kit.ready(items); kit.run(items)`; what has
+     *  no pipeline is passed over, and an empty list waits for nothing). `pass.ready()`, `compute.ready()`,
+     *  `draw.ready()` and `bundle.ready()` are the same for one.
+     *
+     *  Either way pipelines a compile scheduler holds back (deferred) aren't waited for: they're made on the spot when
+     *  first used. Resolves with the records waited for, the distinct GPU pipelines among them (records with the same
+     *  descriptor share one) and the failures. */
+    ready(...items: Waitable[]): Promise<{
         pipelines: number;
+        distinct: number;
         failed: number;
     }>;
     report(kind: string, label: string, message: string): void;

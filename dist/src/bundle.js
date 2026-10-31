@@ -87,6 +87,8 @@ export class DrawBundle {
     }
     /** record it again at its next use (after changing a draw's plain options in place) */
     invalidate() { this.dirty = true; }
+    /** wait for its draws' pipelines alone (see kit.ready) */
+    ready() { return this.kit.ready(this); }
     encode(pe) {
         if (!on(this.enabled))
             return;
