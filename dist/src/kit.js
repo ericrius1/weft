@@ -89,6 +89,7 @@ export class Kit {
     adapter;
     device;
     canvas;
+    parent;
     features;
     queue;
     format;
@@ -152,10 +153,12 @@ export class Kit {
     lastNow = 0;
     lastTick = 0;
     ran = [];
-    constructor(adapter, device, canvas, opts) {
+    /** `parent`: the kit whose device this one shares (see sibling) */
+    constructor(adapter, device, canvas, opts, parent = null) {
         this.adapter = adapter;
         this.device = device;
         this.canvas = canvas;
+        this.parent = parent;
         this.queue = device.queue;
         this.features = new Set([...device.features]);
         this.debug = opts.debug ?? new URLSearchParams(location.search).has('debug');
@@ -215,15 +218,18 @@ export class Kit {
         this.nonFiltering.add(this.samplers['nearest-repeat']);
         this.mainView = new View(this, new Camera(), null, 'main');
         this.profiler = new Profiler(this);
-        this.overlay = new DebugOverlay(this);
-        device.lost.then((info) => {
-            if (info.reason !== 'destroyed')
-                this.report('device', 'device lost', `${info.message || 'the GPU device was lost'} — reload the page`);
-        });
-        device.addEventListener('uncapturederror', (e) => {
-            const msg = e.error.message;
-            this.report('gpu', 'uncaptured', msg);
-        });
+        // (a sibling has no overlay of its own, and leaves the device's errors and its loss to the kit that made it)
+        this.overlay = new DebugOverlay(this, !parent);
+        if (!parent) {
+            device.lost.then((info) => {
+                if (info.reason !== 'destroyed')
+                    this.report('device', 'device lost', `${info.message || 'the GPU device was lost'} — reload the page`);
+            });
+            device.addEventListener('uncapturederror', (e) => {
+                const msg = e.error.message;
+                this.report('gpu', 'uncaptured', msg);
+            });
+        }
         this.resizeObs = new ResizeObserver((entries) => {
             for (const e of entries) {
                 const box = e.contentBoxSize?.[0];
@@ -241,6 +247,14 @@ export class Kit {
         this.applySize();
     }
     get camera() { return this.mainView.camera; }
+    /** a kit for another canvas, drawn with this kit's device: an overlay over this one (crisp type at the display's
+     *  full resolution over a world drawn at less), a second view. It has its own size, frame, passes and resources
+     *  (each kit's resources are its own); drive its frames by hand (beginFrame, run, endFrame) or with its own loop.
+     *  No debug overlay; the device's errors and its loss are reported by this kit. The device's features and limits
+     *  are this kit's. */
+    sibling(canvas, opts = {}) {
+        return new Kit(this.adapter, this.device, canvas, opts, this);
+    }
     // ------------------------------------------------------------ factories
     uniforms(def, label = def.name) {
         const u = new UniformBuffer(this, def, label);

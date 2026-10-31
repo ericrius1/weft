@@ -132,6 +132,19 @@ export declare class Texture implements Resource {
         bytesPerRow?: number;
         origin?: [number, number];
     }): this;
+    /** copy an image in (a canvas, an ImageBitmap, a video frame…): all of it at the origin, or a part of it
+     *  (`from`: its x, y; `size`: how much) at `origin`. `premultiply`: alpha multiplied in, as filtering and mips want
+     *  for anything with transparent edges (text, sprites); `flipY` turns it upside down. The texture needs 'copy-dst'
+     *  and 'render' in its usage (the browser renders the copy). */
+    writeImage(source: GPUCopyExternalImageSource, o?: {
+        from?: [number, number];
+        size?: [number, number];
+        origin?: [number, number];
+        mip?: number;
+        layer?: number;
+        premultiply?: boolean;
+        flipY?: boolean;
+    }): this;
     /** copy one mip level back to the CPU (rows tightly packed) */
     read(mip?: number, layer?: number): Promise<ArrayBuffer>;
     private stagings;

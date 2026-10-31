@@ -31,8 +31,11 @@ export class DebugOverlay {
     viewerDraws = {};
     viewerU = null;
     errorsDismissed = false;
-    constructor(kit) {
+    /** `toggles`: opened with ` (and by kit.debug); without it (a sibling kit) only its errors ever show */
+    constructor(kit, toggles = true) {
         this.kit = kit;
+        if (!toggles)
+            return;
         if (kit.debug)
             this.open = true;
         addEventListener('keydown', (e) => {

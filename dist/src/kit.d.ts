@@ -73,6 +73,7 @@ export declare class Kit {
     readonly adapter: GPUAdapter;
     readonly device: GPUDevice;
     readonly canvas: HTMLCanvasElement;
+    readonly parent: Kit | null;
     readonly features: Set<string>;
     readonly queue: GPUQueue;
     readonly format: GPUTextureFormat;
@@ -145,8 +146,15 @@ export declare class Kit {
     private lastNow;
     private lastTick;
     private ran;
-    constructor(adapter: GPUAdapter, device: GPUDevice, canvas: HTMLCanvasElement, opts: KitOptions);
+    /** `parent`: the kit whose device this one shares (see sibling) */
+    constructor(adapter: GPUAdapter, device: GPUDevice, canvas: HTMLCanvasElement, opts: KitOptions, parent?: Kit | null);
     get camera(): Camera;
+    /** a kit for another canvas, drawn with this kit's device: an overlay over this one (crisp type at the display's
+     *  full resolution over a world drawn at less), a second view. It has its own size, frame, passes and resources
+     *  (each kit's resources are its own); drive its frames by hand (beginFrame, run, endFrame) or with its own loop.
+     *  No debug overlay; the device's errors and its loss are reported by this kit. The device's features and limits
+     *  are this kit's. */
+    sibling(canvas: HTMLCanvasElement, opts?: Omit<KitOptions, 'features' | 'requiredFeatures' | 'limits' | 'powerPreference' | 'debug'>): Kit;
     uniforms<T>(def: StructDef<T>, label?: string): UniformBuffer<T>;
     storage(o: StorageOptions): StorageBuffer;
     texture(desc: TextureDesc): Texture;

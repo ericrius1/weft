@@ -16,7 +16,8 @@ export declare class DebugOverlay {
     private viewerDraws;
     private viewerU;
     private errorsDismissed;
-    constructor(kit: Kit);
+    /** `toggles`: opened with ` (and by kit.debug); without it (a sibling kit) only its errors ever show */
+    constructor(kit: Kit, toggles?: boolean);
     isEnabled(label: string): boolean;
     get viewerActive(): boolean;
     /** a uniform buffer whose annotated fields get sliders */

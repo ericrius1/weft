@@ -40,7 +40,9 @@ export class DebugOverlay {
   private viewerU: UniformBuffer<any> | null = null;
   private errorsDismissed = false;
 
-  constructor(private kit: Kit) {
+  /** `toggles`: opened with ` (and by kit.debug); without it (a sibling kit) only its errors ever show */
+  constructor(private kit: Kit, toggles = true) {
+    if (!toggles) return;
     if (kit.debug) this.open = true;
     addEventListener('keydown', (e) => {
       if (e.code === 'Backquote' && !e.repeat) { this.open = !this.open; this.render(); }
