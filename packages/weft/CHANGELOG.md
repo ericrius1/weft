@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`kit.sibling(canvas, opts)`**: a kit for another canvas, drawn with this kit's device: an overlay at the display's
+  full resolution over a world drawn at less (ericlevin.dev's way in: the page's words handed to the GPU over the
+  world as it comes in), a second view. Its own size, frame, passes and resources; drive it by hand (beginFrame, run,
+  endFrame) or with its own loop. The device's errors and its loss are reported by the kit that made it (it used to
+  take a second `new Kit` on the same device, which reported every error twice), and a sibling has no debug overlay of
+  its own (its errors still show).
+- **`Texture.writeImage(source, o)`**: an image into a texture (a canvas, an ImageBitmap, a video or a VideoFrame, its
+  own size read off it), all of it or a part (`from`, `size`, at `origin`), with `premultiply` (as filtering and mips
+  want for anything with transparent edges) and `flipY`.
 - **Draws and computes that would make the same pipeline share one** (`kit.pipelineCache`, `SharedPipeline`;
   `src/passes.ts`). A pipeline was made per draw and compute even when its descriptor was another's, and concurrent
   asynchronous creates of one descriptor each compiled from scratch: Seven Havens declares 206 at load — a character's

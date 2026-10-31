@@ -258,6 +258,20 @@ export class Texture implements Resource {
       data as GPUAllowSharedBufferSource, { bytesPerRow: o.bytesPerRow ?? w * bpp, rowsPerImage: h }, [w, h, 1]);
     return this;
   }
+  /** copy an image in (a canvas, an ImageBitmap, a video frame…): all of it at the origin, or a part of it
+   *  (`from`: its x, y; `size`: how much) at `origin`. `premultiply`: alpha multiplied in, as filtering and mips want
+   *  for anything with transparent edges (text, sprites); `flipY` turns it upside down. The texture needs 'copy-dst'
+   *  and 'render' in its usage (the browser renders the copy). */
+  writeImage(source: GPUCopyExternalImageSource, o: { from?: [number, number]; size?: [number, number]; origin?: [number, number]; mip?: number; layer?: number; premultiply?: boolean; flipY?: boolean } = {}) {
+    // (a video's own size is its videoWidth, a VideoFrame's its displayWidth: their width is something else or absent)
+    const s = source as { width?: number; height?: number; videoWidth?: number; videoHeight?: number; displayWidth?: number; displayHeight?: number };
+    const size = o.size ?? [s.videoWidth || s.displayWidth || s.width || 1, s.videoHeight || s.displayHeight || s.height || 1];
+    this.kit.queue.copyExternalImageToTexture(
+      { source, origin: o.from ?? [0, 0], flipY: o.flipY ?? false },
+      { texture: this.gpu, mipLevel: o.mip ?? 0, origin: [o.origin?.[0] ?? 0, o.origin?.[1] ?? 0, o.layer ?? 0], premultipliedAlpha: o.premultiply ?? false },
+      [size[0], size[1], 1]);
+    return this;
+  }
   /** copy one mip level back to the CPU (rows tightly packed) */
   async read(mip = 0, layer = 0): Promise<ArrayBuffer> {
     const w = Math.max(1, this.width >> mip), h = Math.max(1, this.height >> mip);

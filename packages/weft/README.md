@@ -91,6 +91,18 @@ override P3: bool = false;
 
 (The lab's `post.wgsl` is a whole one: `npm run dev`, then `?hdr`.)
 
+A second canvas on the same device (`kit.sibling`): an overlay over the main one at the display's full resolution,
+crisp type over a world drawn at less, say. It has its own size, frame, passes and resources; the device's errors are
+the main kit's to report. Images go into a texture with `writeImage` (a canvas, an ImageBitmap, a video frame):
+
+```ts
+const over = kit.sibling(overlayCanvas, { maxPixelRatio: 3, alphaMode: 'premultiplied' });
+const atlas = over.texture({ format: 'rgba8unorm', size: [2048, 2048], mips: 'full', usage: ['sample', 'render', 'copy-dst'] });
+atlas.writeImage(canvas2d, { premultiply: true });   // (part of it: from, size, origin)
+over.run([new MipChain(over, atlas)]);
+// each frame: over.beginFrame(dt); over.run([overlayPass]); over.endFrame();
+```
+
 Freeing what a streamed-out chunk made (a resize no longer brings a destroyed texture back), and what's held:
 
 ```ts

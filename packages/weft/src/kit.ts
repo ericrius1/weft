@@ -183,7 +183,8 @@ export class Kit {
   private lastTick = 0;
   private ran: string[] = [];
 
-  constructor(readonly adapter: GPUAdapter, readonly device: GPUDevice, readonly canvas: HTMLCanvasElement, opts: KitOptions) {
+  /** `parent`: the kit whose device this one shares (see sibling) */
+  constructor(readonly adapter: GPUAdapter, readonly device: GPUDevice, readonly canvas: HTMLCanvasElement, opts: KitOptions, readonly parent: Kit | null = null) {
     this.queue = device.queue;
     this.features = new Set([...device.features]);
     this.debug = opts.debug ?? new URLSearchParams(location.search).has('debug');
@@ -240,15 +241,18 @@ export class Kit {
 
     this.mainView = new View(this, new Camera(), null, 'main');
     this.profiler = new Profiler(this);
-    this.overlay = new DebugOverlay(this);
+    // (a sibling has no overlay of its own, and leaves the device's errors and its loss to the kit that made it)
+    this.overlay = new DebugOverlay(this, !parent);
 
-    device.lost.then((info) => {
-      if (info.reason !== 'destroyed') this.report('device', 'device lost', `${info.message || 'the GPU device was lost'} — reload the page`);
-    });
-    device.addEventListener('uncapturederror', (e) => {
-      const msg = (e as GPUUncapturedErrorEvent).error.message;
-      this.report('gpu', 'uncaptured', msg);
-    });
+    if (!parent) {
+      device.lost.then((info) => {
+        if (info.reason !== 'destroyed') this.report('device', 'device lost', `${info.message || 'the GPU device was lost'} — reload the page`);
+      });
+      device.addEventListener('uncapturederror', (e) => {
+        const msg = (e as GPUUncapturedErrorEvent).error.message;
+        this.report('gpu', 'uncaptured', msg);
+      });
+    }
 
     this.resizeObs = new ResizeObserver((entries) => {
       for (const e of entries) {
@@ -268,6 +272,15 @@ export class Kit {
   }
 
   get camera() { return this.mainView.camera; }
+
+  /** a kit for another canvas, drawn with this kit's device: an overlay over this one (crisp type at the display's
+   *  full resolution over a world drawn at less), a second view. It has its own size, frame, passes and resources
+   *  (each kit's resources are its own); drive its frames by hand (beginFrame, run, endFrame) or with its own loop.
+   *  No debug overlay; the device's errors and its loss are reported by this kit. The device's features and limits
+   *  are this kit's. */
+  sibling(canvas: HTMLCanvasElement, opts: Omit<KitOptions, 'features' | 'requiredFeatures' | 'limits' | 'powerPreference' | 'debug'> = {}) {
+    return new Kit(this.adapter, this.device, canvas, opts, this);
+  }
 
   // ------------------------------------------------------------ factories
   uniforms<T>(def: StructDef<T>, label = def.name): UniformBuffer<T> {
