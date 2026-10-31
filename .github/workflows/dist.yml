@@ -1,0 +1,62 @@
+# Every push to main, built and on GitHub for the games to take — no version to bump, nothing to publish: both packages
+# built and tested, then each packed exactly as npm would get it (`npm pack`: its `files`) and committed to a branch of
+# its own, dist/weft and dist/loom, the package at its root. A game depends on them by branch,
+#   "@ericrius1/weft": "github:ericrius1/weft#dist/weft",
+#   "@ericrius1/loom": "github:ericrius1/weft#dist/loom",
+# and takes the latest with `npm install @ericrius1/weft@github:ericrius1/weft#dist/weft @ericrius1/loom@github:ericrius1/weft#dist/loom`
+# (its lockfile holds the commit until then). On the branches: no scripts (nothing builds on install) and loom takes
+# whatever weft the game has. Each commit's message names the main commit it was built from. (npm releases still go out
+# from publish.yml when a version is bumped.)
+name: dist
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dist
+  cancel-in-progress: false
+
+jobs:
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run build
+      - run: npm test -w @ericrius1/weft
+      - name: Each package, built, onto its dist branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          sha=$(git rev-parse --short HEAD)
+          subject=$(git log -1 --format=%s | cut -c1-140)
+          for pkg in weft loom; do
+            out="$RUNNER_TEMP/pkg-$pkg" wt="$RUNNER_TEMP/wt-$pkg" branch="dist/$pkg"
+            mkdir -p "$out"
+            npm pack -w "@ericrius1/$pkg" --pack-destination "$RUNNER_TEMP" > /dev/null
+            tar -xzf "$RUNNER_TEMP"/ericrius1-$pkg-*.tgz -C "$out" --strip-components=1
+            node -e "
+              const f = process.argv[1], p = require(f);
+              delete p.scripts; delete p.devDependencies;
+              if (p.peerDependencies?.['@ericrius1/weft']) p.peerDependencies['@ericrius1/weft'] = '*';
+              p.gitHead = process.argv[2];
+              require('fs').writeFileSync(f, JSON.stringify(p, null, 2) + '\n');
+            " "$out/package.json" "$(git rev-parse HEAD)"
+            git branch -D "$branch" > /dev/null 2>&1 || true
+            if git fetch -q origin "$branch:$branch" 2>/dev/null; then
+              git worktree add -q "$wt" "$branch"
+            else
+              git worktree add -q --detach "$wt"
+              (cd "$wt" && git checkout -q --orphan "$branch" && git rm -rq --cached . && git clean -fdq)
+            fi
+            (cd "$wt" && find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} + && cp -R "$out/." .)
+            (cd "$wt" && git add -A && if git diff --cached --quiet; then echo "$pkg: unchanged"; else git commit -q -m "$pkg built from $sha: $subject" && git push -q origin "$branch" && echo "$pkg: pushed $branch"; fi)
+          done
