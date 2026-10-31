@@ -74,7 +74,8 @@ export class HeightTerrain {
     this.splatTex = k.texture({ label: 'terrain.splat', format: 'rgba8unorm', size: [S, S], usage: ['sample', 'storage', 'copy-src'] });
     this.maskTex = k.texture({ label: 'terrain.mask', format: 'rgba8unorm', size: [S, S], usage: ['sample', 'storage', 'copy-src'] });
     const u = k.uniforms(gen.structs.Gen, 'terrain.gen').set({ size: N, splatSize: S, half: this.half, ...(this.o.params ?? {}) });
-    const run = async (items: Parameters<Kit['run']>[0]) => { await k.ready(); k.run(items); await k.queue.onSubmittedWorkDone(); };
+    // (each waits for its own pipelines only: kit.ready() would wait for every shader the app has declared by then)
+    const run = async (items: Parameters<Kit['run']>[0]) => { await k.ready(items); k.run(items); await k.queue.onSubmittedWorkDone(); };
     progress(0.15, 'raising the land…');
     const extra = this.o.bind ?? {};
     const rawPass = k.compute(gen, { label: 'gen.raw', entry: 'rawHeight', bind: { gen: u, heightOut: raw, ...extra }, threads: [N, N] });
