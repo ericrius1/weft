@@ -3,8 +3,8 @@
 # its own, dist/weft and dist/loom, the package at its root. A game depends on them by branch,
 #   "@ericrius1/weft": "git+https://github.com/ericrius1/weft.git#dist/weft",
 #   "@ericrius1/loom": "git+https://github.com/ericrius1/weft.git#dist/loom",
-# and takes the latest with `npm install @ericrius1/weft@git+https://github.com/ericrius1/weft.git#dist/weft @ericrius1/loom@git+https://github.com/ericrius1/weft.git#dist/loom`
-# (its lockfile holds the commit until then). On the branches: no scripts (nothing builds on install) and loom takes
+# and takes the latest with `npm update @ericrius1/weft @ericrius1/loom` (its lockfile holds the commit until then; npm
+# install with the spec would write it back as the github: shorthand). On the branches: no scripts (nothing builds on install) and loom takes
 # whatever weft the game has. Each commit's message names the main commit it was built from. (npm releases still go out
 # from publish.yml when a version is bumped.)
 name: dist
