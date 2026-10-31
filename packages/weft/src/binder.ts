@@ -234,6 +234,8 @@ export class SharedGroup {
   /** the source files that declare it: a shader shares the group when it includes one of them */
   readonly files: Set<string>;
   bgl!: GPUBindGroupLayout;
+  /** its layout's description (kit.bindGroupLayout's key) */
+  bglKey = '';
   /** bumped by set() */
   vgen = 0;
   private memo = new Memo();
@@ -254,7 +256,8 @@ export class SharedGroup {
       const writable = (info.kind === 'storage' && info.access === 'read_write') || (info.kind === 'storageTexture' && info.access !== 'read');
       return layoutEntry(this.kit, info, r, writable ? STAGE.FRAGMENT | STAGE.COMPUTE : STAGE.VERTEX | STAGE.FRAGMENT | STAGE.COMPUTE);
     });
-    this.bgl = this.kit.bindGroupLayout(entries, this.label);
+    this.bglKey = JSON.stringify(entries);
+    this.bgl = this.kit.bindGroupLayout(entries, this.label, this.bglKey);
   }
   set(name: string, value: unknown) {
     if (!this.infos.some((i) => i.name === name)) throw new BindError(`${this.label}: no shared binding '${name}'`);
@@ -297,7 +300,9 @@ interface Group {
 export class Binder {
   groups: Group[] = [];
   layout!: GPUPipelineLayout;
-  /** layout identity: a pipeline must be rebuilt when this changes */
+  /** layout identity, the description of each group's layout after the frame's (a shared group's too): a pipeline must
+   *  be rebuilt when this changes, and binders with the same one have the same bind group layouts (kit.bindGroupLayout
+   *  makes one per description), so their pipelines can be one (kit.pipelineCache) */
   layoutKey = '';
   /** bumped whenever its values or its groups change */
   vgen = 0;
@@ -361,7 +366,7 @@ export class Binder {
       const sh = sharedUsed.has(g) ? this.kit.sharedGroups.get(g)! : null;
       if (sh) {
         bgls.push(sh.bgl);
-        keyParts.push(`shared:${sh.label}`);
+        keyParts.push(sh.bglKey);
         groups.push({ index: g, infos: [], bgl: sh.bgl, label: sh.label, memo: new Memo(), shared: sh });
         continue;
       }

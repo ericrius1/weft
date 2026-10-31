@@ -8,9 +8,12 @@ definition of the data.** The engine under [games.ericlevin.dev](https://games.e
 2. **WGSL is the single definition.** The Vite plugin resolves `#include`s, reflects each shader (struct layouts,
    bindings, entry points, overrides) and writes a `.d.wgsl.ts` beside it, so struct fields and binding names are
    type-checked. Bindings are passed by WGSL variable name.
-3. **Pipelines are created eagerly and asynchronously**; `await kit.ready()` waits for all of them, so nothing compiles
-   mid-game. Variants are WGSL `override`s. (Where pipelines compile one at a time, WebKit, an app can set a compile
-   scheduler, `kit.compiler`, that defers them and makes each on the spot when first needed.)
+3. **Pipelines are created eagerly and asynchronously**; `await kit.ready()` waits for all of them — the whole app's,
+   every one declared so far — so nothing compiles mid-game. To run a pass before then (a bake while loading), wait
+   for its own: `await kit.ready(fill, info)` or `await pass.ready()`. Draws and computes that would make the same
+   pipeline (labels and bound resources aside) share one compile and one GPU pipeline. Variants are WGSL `override`s.
+   (Where pipelines compile one at a time, WebKit, an app can set a compile scheduler, `kit.compiler`, that defers
+   them and makes each on the spot when first needed.)
 4. **Resources own their lifetimes**: render-relative textures follow the render size, bind groups are rebuilt from
    resource versions (nothing ever binds a destroyed texture), ping-pong is built in, `kit.copy()` is a run item.
    `destroy()` / `dispose()` (or `kit.release(...)`) free things for good; `kit.memory()` tallies what's held.
@@ -48,6 +51,16 @@ const out = kit.pass({ color: [{ target: 'screen' }] });
 out.fullscreen(post, { bind: { hdr } });
 await kit.ready();
 kit.loop(() => kit.run([/* your passes… */ out]));
+```
+
+`kit.ready()` with nothing given is the whole app: every pipeline declared so far, and any declared while it waits.
+Awaiting it to run one pass waits for every other shader too. Given passes, computes, draws, bundles or a run list, it
+waits for theirs alone:
+
+```ts
+const bake = [fill, kit.copy(heights, terrain), info];
+await kit.ready(bake);            // or fill.ready(), pass.ready(): what has no pipeline is passed over
+kit.run(bake);
 ```
 
 Static draws (a city, a temple) baked once into a GPURenderBundle; it re-records itself when one of them, its pipeline

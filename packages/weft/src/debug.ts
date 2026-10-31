@@ -161,9 +161,12 @@ export class DebugOverlay {
     }
     const pipes = this.kit.pipelines;
     const failed = pipes.filter((x) => x.error).length;
-    const slow = [...pipes].sort((a, b) => b.ms - a.ms).slice(0, 4);
-    r.querySelector('#wo-pipes')!.innerHTML = `${pipes.length} pipelines${failed ? `, <b style="color:#ff8a8a">${failed} failed</b>` : ''} · slowest: ` +
-      slow.map((x) => `${esc(x.label)} ${x.ms.toFixed(0)}ms`).join(', ');
+    const distinct = new Set(pipes.map((x) => x.entry ?? x)).size;
+    // (the slowest compiles: a record sharing another's compile only waited for it; ×n, the records sharing one)
+    const slow = pipes.filter((x) => !x.shared).sort((a, b) => b.ms - a.ms).slice(0, 4);
+    const users = (x: (typeof pipes)[number]) => (x.entry && x.entry.users.size > 1 ? ` ×${x.entry.users.size}` : '');
+    r.querySelector('#wo-pipes')!.innerHTML = `${pipes.length} pipelines${distinct < pipes.length ? ` (${distinct} distinct)` : ''}${failed ? `, <b style="color:#ff8a8a">${failed} failed</b>` : ''} · slowest: ` +
+      slow.map((x) => `${esc(x.label)} ${x.ms.toFixed(0)}ms${users(x)}`).join(', ');
   }
 
   private renderTweaks(el: HTMLElement) {
