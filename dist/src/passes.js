@@ -504,10 +504,14 @@ export class Draw {
             return;
         }
         if (o.indirect) {
-            if (o.indices)
-                enc.drawIndexedIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
-            else
-                enc.drawIndirect(gpuBuf(o.indirect.buffer), val(o.indirect.offset, 0));
+            const b = gpuBuf(o.indirect.buffer), at = val(o.indirect.offset, 0), n = val(o.indirect.count, 1);
+            const stride = o.indirect.stride ?? (o.indices ? 20 : 16);
+            for (let k = 0; k < n; k++) {
+                if (o.indices)
+                    enc.drawIndexedIndirect(b, at + k * stride);
+                else
+                    enc.drawIndirect(b, at + k * stride);
+            }
             return;
         }
         const count = val(o.count, 3), inst = val(o.instances, 1);
@@ -518,10 +522,12 @@ export class Draw {
         else
             enc.draw(count, inst, val(o.first, 0), val(o.firstInstance, 0));
     }
-    /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset, a scheduler's gate */
+    /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset and count, a
+     *  scheduler's gate */
     get watched() {
         const o = this.opts, fn = (x) => typeof x === 'function';
-        return fn(this.on_) || fn(o.count) || fn(o.instances) || fn(o.first) || fn(o.firstInstance) || fn(o.baseVertex) || fn(o.indirect?.offset) || !!this.pipe.gate;
+        return fn(this.on_) || fn(o.count) || fn(o.instances) || fn(o.first) || fn(o.firstInstance) || fn(o.baseVertex) || fn(o.indirect?.offset)
+            || fn(o.indirect?.count) || !!this.pipe.gate;
     }
     /** (bundles) those options' values now, into out */
     state(out) {
@@ -534,6 +540,7 @@ export class Draw {
         out[5] = val(o.baseVertex, 0);
         out[6] = val(o.indirect?.offset, 0);
         out[7] = this.pipe.gate && !this.pipe.gate() ? 0 : 1;
+        out[8] = val(o.indirect?.count, 1);
         return out;
     }
     /** (bundles) whether a vertex, index or indirect buffer is given through a Ref */

@@ -241,9 +241,15 @@ export interface DrawOptions<S extends Shader = Shader> {
         format?: GPUIndexFormat;
         offset?: number;
     };
+    /** the draw's arguments read from a buffer (the GPU's: a cull's) at `offset`; `count` such draws (default 1),
+     *  `stride` bytes apart (default 20 indexed, 16 not): a multi-draw, each draw's arguments its own — a cull's one draw
+     *  per piece, those it culled with no instances. With `count` it's still one Draw (one pipeline, one bind, one
+     *  record in a bundle), however many pieces */
     indirect?: {
         buffer: StorageBuffer | GPUBuffer | Ref;
         offset?: Num;
+        count?: Num;
+        stride?: number;
     };
     vertexBuffers?: {
         layout: GPUVertexBufferLayout;
@@ -287,7 +293,8 @@ export declare class Draw<S extends Shader = Shader> {
     encode(pe: GPURenderPassEncoder): void;
     /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready) */
     encodeInto(enc: DrawEncoder): void;
-    /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset, a scheduler's gate */
+    /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset and count, a
+     *  scheduler's gate */
     get watched(): boolean;
     /** (bundles) those options' values now, into out */
     state(out: number[]): number[];

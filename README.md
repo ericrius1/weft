@@ -71,6 +71,13 @@ const city = scene.bundle('city');
 for (const m of meshes) city.draw(shader, { bind: { mesh: m.buffer, tex: m.texture }, count: m.count });
 ```
 
+Drawn by the GPU's own numbers: a cull (a compute) writes each piece's draw arguments, instanceCount 0 where it
+culled it, and one draw issues them all (`count` draws `stride` bytes apart; in a bundle, replayed with the rest):
+
+```ts
+city.draw(shader, { indices: { buffer: idx, format: 'uint16' }, indirect: { buffer: args, offset: 0, count: pieces } });
+```
+
 An HDR canvas where the display has one (SDR otherwise, as before). The last pass writes colour in the canvas colour
 space with the sRGB transfer — past 1 brighter than SDR white on an HDR canvas:
 
