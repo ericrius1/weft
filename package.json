@@ -1,0 +1,76 @@
+{
+  "name": "@ericrius1/weft",
+  "version": "0.2.1",
+  "description": "A thin WebGPU kit: a frame is an explicit, ordered list of passes over named resources, and WGSL is the single definition of the data. With a Vite plugin for typed, hot-reloading .wgsl imports.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Eric Levin",
+  "homepage": "https://github.com/ericrius1/weft#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericrius1/weft.git",
+    "directory": "packages/weft"
+  },
+  "bugs": {
+    "url": "https://github.com/ericrius1/weft/issues"
+  },
+  "keywords": [
+    "webgpu",
+    "wgsl",
+    "graphics",
+    "render-graph",
+    "gpu",
+    "vite-plugin",
+    "shaders"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/src/shader.d.ts",
+      "default": "./dist/src/shader.js"
+    },
+    "./vite": {
+      "types": "./dist/plugin/vite.d.ts",
+      "default": "./dist/plugin/vite.js"
+    },
+    "./wgsl": {
+      "types": "./dist/plugin/wgsl.d.ts",
+      "default": "./dist/plugin/wgsl.js"
+    },
+    "./client": {
+      "types": "./client.d.ts"
+    },
+    "./shaders/*": "./dist/shaders/*",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/src/index.d.ts",
+  "weft": {
+    "shaders": "dist/shaders"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "src",
+    "plugin",
+    "shaders",
+    "client.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "wgsl_reflect": "^1.6.0"
+  },
+  "peerDependencies": {
+    "vite": ">=5"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
+  },
+  "gitHead": "07f319d44b5fdafdaa15eae2451129e3fc303635"
+}
