@@ -43,9 +43,11 @@ type AnyPipeline = GPURenderPipeline | GPUComputePipeline;
 
 /** An app's compile scheduler (kit.compiler), for browsers that compile pipelines one at a time (WebKit): weft asks it
  *  when each record may compile. While it `holding`, a record built is `deferred` (kit.ready() doesn't wait for it);
- *  one needed before it compiled — its draw encoded, or its pipeline read — is made on the spot by `now`. It's asked
- *  once per distinct pipeline, with the record that first needed it; the records sharing that compile wait for it, and
- *  one of them made on the spot is made for all of them. */
+ *  one needed before it compiled — its draw encoded, or its pipeline read — is made on the spot by `now`. Records
+ *  sharing a compile are each asked for while it hasn't landed, and the first ask it lets through starts the one
+ *  compile (asked only for the first, a compile it held back for that one — a mirror's view, not in the first frame —
+ *  kept a twin the first frame waits on waiting too, and the load never finished); one made on the spot is made for
+ *  all of them. */
 export interface Compiler {
   readonly holding: boolean;
   /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result */
@@ -101,6 +103,8 @@ export class SharedPipeline {
   readonly users = new Set<AnyPipelineRecord>();
   /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
   readonly done: Promise<AnyPipeline>;
+  /** its compile, started by the first of its records' asks let through (nothing once it's landed) */
+  start: () => Promise<AnyPipeline> = () => Promise.reject(new Error('no compile'));
   private settle!: { ok: (p: AnyPipeline) => void; fail: (e: unknown) => void };
   constructor(readonly key: string) {
     this.done = new Promise<AnyPipeline>((ok, fail) => { this.settle = { ok, fail }; });
@@ -205,16 +209,22 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
       if (!e) {
         const made = this.started = e = new SharedPipeline(key);
         kit.pipelineCache.set(key, made);
-        const t0 = performance.now(), c = kit.compiler, start = () => makePipeline(kit, desc, module, true) as Promise<AnyPipeline>;
-        new Promise((r) => r(c ? c.compile(this.self, start) : start())).then(
-          (pipe) => { made.ms = performance.now() - t0; made.land(pipe as AnyPipeline); },
-          (err) => { made.failed(err); if (kit.pipelineCache.get(key) === made) kit.pipelineCache.delete(key); });
-      }
+        let p: Promise<AnyPipeline> | null = null;
+        made.start = () => (p ??= made.pipeline ? Promise.resolve(made.pipeline) : makePipeline(kit, desc, module, true) as Promise<AnyPipeline>);
+        this.ask(made);
+      } else if (!e.pipeline && kit.compiler) this.ask(e);
       e.users.add(this.self);
       this.entry = e;
     }
     this.joined = this.serial;
     return e;
+  }
+  /** ask for its compile (through the compile scheduler, if there's one): whichever ask is let through first starts it */
+  private ask(e: SharedPipeline) {
+    const kit = this.kit, c = kit.compiler, t0 = performance.now();
+    new Promise((r) => r(c ? c.compile(this.self, e.start) : e.start())).then(
+      (pipe) => { if (!e.pipeline) e.ms = performance.now() - t0; e.land(pipe as AnyPipeline); },
+      (err) => { e.failed(err); if (kit.pipelineCache.get(e.key) === e) kit.pipelineCache.delete(e.key); });
   }
   /** let go of its compile (the last record using it takes it out of the cache) */
   private leave() {

@@ -68,6 +68,8 @@ export class SharedPipeline {
     users = new Set();
     /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
     done;
+    /** its compile, started by the first of its records' asks let through (nothing once it's landed) */
+    start = () => Promise.reject(new Error('no compile'));
     settle;
     constructor(key) {
         this.key = key;
@@ -192,15 +194,24 @@ export class PipelineRecord {
             if (!e) {
                 const made = this.started = e = new SharedPipeline(key);
                 kit.pipelineCache.set(key, made);
-                const t0 = performance.now(), c = kit.compiler, start = () => makePipeline(kit, desc, module, true);
-                new Promise((r) => r(c ? c.compile(this.self, start) : start())).then((pipe) => { made.ms = performance.now() - t0; made.land(pipe); }, (err) => { made.failed(err); if (kit.pipelineCache.get(key) === made)
-                    kit.pipelineCache.delete(key); });
+                let p = null;
+                made.start = () => (p ??= made.pipeline ? Promise.resolve(made.pipeline) : makePipeline(kit, desc, module, true));
+                this.ask(made);
             }
+            else if (!e.pipeline && kit.compiler)
+                this.ask(e);
             e.users.add(this.self);
             this.entry = e;
         }
         this.joined = this.serial;
         return e;
+    }
+    /** ask for its compile (through the compile scheduler, if there's one): whichever ask is let through first starts it */
+    ask(e) {
+        const kit = this.kit, c = kit.compiler, t0 = performance.now();
+        new Promise((r) => r(c ? c.compile(this.self, e.start) : e.start())).then((pipe) => { if (!e.pipeline)
+            e.ms = performance.now() - t0; e.land(pipe); }, (err) => { e.failed(err); if (kit.pipelineCache.get(e.key) === e)
+            kit.pipelineCache.delete(e.key); });
     }
     /** let go of its compile (the last record using it takes it out of the cache) */
     leave() {

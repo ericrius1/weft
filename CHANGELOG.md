@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## Unreleased
+
+- **A compile scheduler is asked for every record sharing a compile** while it hasn't landed, the first ask it lets through starting the one compile. Asked only for the record that started it, a compile the scheduler held back for that one (a mirror's view of a house, not in the first frame) kept its twin, which the first frame waits on, waiting too: boulder's load never finished in Chrome.
 
 - **`kit.sibling(canvas, opts)`**: a kit for another canvas, drawn with this kit's device: an overlay at the display's
   full resolution over a world drawn at less (ericlevin.dev's way in: the page's words handed to the GPU over the

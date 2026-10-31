@@ -25,9 +25,11 @@ export type AnyPipelineRecord = PipelineRecord<GPURenderPipeline | GPUComputePip
 type AnyPipeline = GPURenderPipeline | GPUComputePipeline;
 /** An app's compile scheduler (kit.compiler), for browsers that compile pipelines one at a time (WebKit): weft asks it
  *  when each record may compile. While it `holding`, a record built is `deferred` (kit.ready() doesn't wait for it);
- *  one needed before it compiled — its draw encoded, or its pipeline read — is made on the spot by `now`. It's asked
- *  once per distinct pipeline, with the record that first needed it; the records sharing that compile wait for it, and
- *  one of them made on the spot is made for all of them. */
+ *  one needed before it compiled — its draw encoded, or its pipeline read — is made on the spot by `now`. Records
+ *  sharing a compile are each asked for while it hasn't landed, and the first ask it lets through starts the one
+ *  compile (asked only for the first, a compile it held back for that one — a mirror's view, not in the first frame —
+ *  kept a twin the first frame waits on waiting too, and the load never finished); one made on the spot is made for
+ *  all of them. */
 export interface Compiler {
     readonly holding: boolean;
     /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result */
@@ -56,6 +58,8 @@ export declare class SharedPipeline {
     readonly users: Set<AnyPipelineRecord>;
     /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
     readonly done: Promise<AnyPipeline>;
+    /** its compile, started by the first of its records' asks let through (nothing once it's landed) */
+    start: () => Promise<AnyPipeline>;
     private settle;
     constructor(key: string);
     /** its pipeline is made: every record using it has it (a later one, a compile finishing after one was made on the
@@ -107,6 +111,8 @@ export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipe
     build(): Promise<void>;
     /** the compile of its descriptor as it is now: the one made or under way for the same key, or a new one */
     private join;
+    /** ask for its compile (through the compile scheduler, if there's one): whichever ask is let through first starts it */
+    private ask;
     /** let go of its compile (the last record using it takes it out of the cache) */
     private leave;
     /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) and lets go of its compile */
