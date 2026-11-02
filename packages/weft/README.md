@@ -23,7 +23,7 @@ definition of the data.** The engine under [games.ericlevin.dev](https://games.e
 6. **Shader hot reload keeps state.** Mistakes are loud (file:line, binding names). A debug overlay (`?debug`, or the
    backquote key) lists the passes that ran with GPU timings and on/off switches, any texture, and sliders built from
    `// @range(…)` annotations in WGSL structs.
-7. **A frame budget**: `kit.maxFps` and `AutoResolution` (GPU timestamps → render scale).
+7. **A frame budget**: `kit.maxFps` and `AutoResolution` (GPU timestamps → render scale; the frames' intervals where there are none, as on a phone's Safari).
 8. **Encoding is cheap.** Bind groups are checked by number, not rebuilt as keys: a group of direct resources is reused
    until something is reallocated, and anything else (a `Ref`) is resolved once per run epoch (each `kit.run` and each
    `RunAction` starts one — so a Ref's target changes only between them). Static draws can be baked into a render

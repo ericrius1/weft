@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
 
+- **`AutoResolution` paces by the frames where the GPU can't time itself**: a phone's Safari has no `timestamp-query`, so there it never moved and a phone drew at the scale it started at. With no GPU timing it now watches the frames' intervals (a second's worth at a time, their slower quarter against the display's own interval, 60 Hz at the fastest, times `slack`, 1.25): over, down by about what it'd take to keep up; on time three seconds running, a step up, and a scale that ran late just after it was stepped up to isn't tried again for twenty seconds. `paced: false` keeps the old behaviour (stay put). After Universe's FramePace.
 - **A compile scheduler is asked for every record sharing a compile** while it hasn't landed, the first ask it lets through starting the one compile. Asked only for the record that started it, a compile the scheduler held back for that one (a mirror's view of a house, not in the first frame) kept its twin, which the first frame waits on, waiting too: boulder's load never finished in Chrome.
 - **A multi-draw indirect** (`indirect: { buffer, offset, count, stride }` on a draw): `count` indirect draws (default
   1), `stride` bytes apart (default 20 indexed, 16 not), each reading its own arguments — a GPU cull's one draw per
