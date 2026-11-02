@@ -595,7 +595,8 @@ export class Kit {
 }
 /** dynamic resolution: watches the GPU frame time (timestamp queries) and steps renderScale between min and max to
  *  keep it under `budgetMs` — down quickly when over, up slowly when there's room. Steps are coarse (each one reallocates
- *  the screen-sized targets) and at most one every `interval` seconds. */
+ *  the screen-sized targets) and at most one every `interval` seconds. Where the GPU can't time itself (a phone's Safari
+ *  has no timestamp-query) it paces by the frames' intervals instead — see `paced` — unless `paced` is false. */
 export class AutoResolution {
     budgetMs;
     min = 0.5;
@@ -606,7 +607,21 @@ export class AutoResolution {
     headroom = 0.82;
     t = 0;
     warm = 0;
+    /** with no GPU timing, hold the display's own rate by the frames' intervals (false: stay put there) */
+    paced = true;
+    /** (paced) a frame counts as late past the display's interval (60 Hz at the fastest) times this */
+    slack = 1.25;
     onChange = null;
+    times = [];
+    last = 0;
+    good = 0;
+    /** (paced) the display's interval: the shortest a second's frames have kept to lately */
+    best = 1 / 60;
+    /** (paced) when the scale last stepped up and to what, and a scale that ran late just after, not tried again till */
+    upAt = -Infinity;
+    upTo = 0;
+    ceiling = Infinity;
+    ceilingUntil = 0;
     constructor(budgetMs, opts = {}) {
         this.budgetMs = budgetMs;
         Object.assign(this, opts);
@@ -614,9 +629,14 @@ export class AutoResolution {
     update(kit) {
         const p = kit.profiler;
         p.force = true;
+        if (!p.available) {
+            if (this.paced)
+                this.pace(kit);
+            return;
+        }
         this.t += kit.dt || 1 / 60;
         this.warm++;
-        if (!p.available || p.frameMs <= 0 || this.warm < 30 || this.t < this.interval)
+        if (p.frameMs <= 0 || this.warm < 30 || this.t < this.interval)
             return;
         const ms = p.frameMs, s = kit.renderScale;
         // GPU time ~ pixels: the scale that would just fit the budget
@@ -633,6 +653,49 @@ export class AutoResolution {
             this.warm = 0;
             this.onChange?.(next);
         }
+    }
+    /** the frames' intervals in place of the GPU's time: a second's worth at a time, its slower quarter against the
+     *  display's interval — over, down by about what it'd take to keep up; on time three seconds running, a step up, short
+     *  of a scale that ran late just after it was stepped up to (for twenty seconds) */
+    pace(kit) {
+        const now = performance.now() / 1000, dt = this.last ? now - this.last : 0;
+        this.last = now;
+        // (a hidden tab, a stall while something loads: not the GPU's pace; the first frames stall on pipelines and textures)
+        if (dt <= 0 || dt > 0.25 || ++this.warm < 90)
+            return;
+        this.times.push(dt);
+        this.t += dt;
+        if (this.t < 1 || this.times.length < 30)
+            return;
+        const sorted = this.times.sort((a, b) => a - b);
+        const p25 = sorted[Math.floor(sorted.length * 0.25)], p75 = sorted[Math.floor(sorted.length * 0.75)];
+        this.times = [];
+        this.t = 0;
+        // (a window's quicker frames, not one odd pair: and drifting back up, should the display slow)
+        this.best = Math.min(p25, this.best * 1.02);
+        const s = kit.renderScale, budget = Math.max(this.best, 1 / 60) * this.slack;
+        let next = s;
+        if (p75 > budget) {
+            this.good = 0;
+            if (now - this.upAt < 4) {
+                this.ceiling = this.upTo;
+                this.ceilingUntil = now + 20;
+            }
+            next = Math.max(this.min, Math.min(s - 0.04, s * Math.sqrt(budget / p75)));
+        }
+        else if (++this.good >= 3) {
+            this.good = 0;
+            next = Math.min(this.max, now < this.ceilingUntil ? this.ceiling - 0.02 : Infinity, s + 0.04);
+        }
+        next = Math.round(next / 0.02) * 0.02;
+        if (Math.abs(next - s) < 0.02)
+            return;
+        if (next > s) {
+            this.upAt = now;
+            this.upTo = next;
+        }
+        kit.renderScale = next;
+        this.onChange?.(next);
     }
 }
 export async function createKit(canvas, opts = {}) {

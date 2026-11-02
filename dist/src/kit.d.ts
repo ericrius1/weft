@@ -240,7 +240,8 @@ export declare class Kit {
 }
 /** dynamic resolution: watches the GPU frame time (timestamp queries) and steps renderScale between min and max to
  *  keep it under `budgetMs` — down quickly when over, up slowly when there's room. Steps are coarse (each one reallocates
- *  the screen-sized targets) and at most one every `interval` seconds. */
+ *  the screen-sized targets) and at most one every `interval` seconds. Where the GPU can't time itself (a phone's Safari
+ *  has no timestamp-query) it paces by the frames' intervals instead — see `paced` — unless `paced` is false. */
 export declare class AutoResolution {
     budgetMs: number;
     min: number;
@@ -251,9 +252,27 @@ export declare class AutoResolution {
     headroom: number;
     private t;
     private warm;
+    /** with no GPU timing, hold the display's own rate by the frames' intervals (false: stay put there) */
+    paced: boolean;
+    /** (paced) a frame counts as late past the display's interval (60 Hz at the fastest) times this */
+    slack: number;
     onChange: ((scale: number) => void) | null;
-    constructor(budgetMs: number, opts?: Partial<Pick<AutoResolution, 'min' | 'max' | 'step' | 'interval'>>);
+    private times;
+    private last;
+    private good;
+    /** (paced) the display's interval: the shortest a second's frames have kept to lately */
+    private best;
+    /** (paced) when the scale last stepped up and to what, and a scale that ran late just after, not tried again till */
+    private upAt;
+    private upTo;
+    private ceiling;
+    private ceilingUntil;
+    constructor(budgetMs: number, opts?: Partial<Pick<AutoResolution, 'min' | 'max' | 'step' | 'interval' | 'paced' | 'slack'>>);
     update(kit: Kit): void;
+    /** the frames' intervals in place of the GPU's time: a second's worth at a time, its slower quarter against the
+     *  display's interval — over, down by about what it'd take to keep up; on time three seconds running, a step up, short
+     *  of a scale that ran late just after it was stepped up to (for twenty seconds) */
+    private pace;
 }
 export declare function createKit(canvas: HTMLCanvasElement, opts?: KitOptions): Promise<Kit>;
 //# sourceMappingURL=kit.d.ts.map
