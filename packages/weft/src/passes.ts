@@ -286,6 +286,8 @@ function pickEntry(shader: Shader, stage: 'vertex' | 'fragment' | 'compute', nam
   throw new BindError(`${label}: ${shader.id} has several ${stage} entries (${list.map((e) => e.name).join(', ')}): pick one`);
 }
 
+/** the override a fragment shader may declare to learn whether its draw's alpha to coverage is on (1) or not (0) */
+const A2C = 'ALPHA_TO_COVERAGE';
 function constantsFor(shader: Shader, entry: string, constants?: Record<string, number>) {
   if (!constants) return undefined;
   const e = shader.reflect.entries.find((x) => x.name === entry);
@@ -442,6 +444,9 @@ export interface DrawOptions<S extends Shader = Shader> {
   depthBiasSlopeScale?: number;
   depthBiasClamp?: number;
   unclippedDepth?: boolean;
+  /** alpha to coverage (a multisampled pass only: on a one-sample pass it's drawn without). A fragment shader that
+   *  declares `override ALPHA_TO_COVERAGE: bool` is told whether it's on, so it can cut out by alpha (discard) where
+   *  it isn't */
   alphaToCoverage?: boolean;
   count?: Num;
   instances?: Num;
@@ -519,17 +524,22 @@ export class Draw<S extends Shader = Shader> {
     const blends: (BlendMode | undefined)[] = Array.isArray(o.blend) ? o.blend : f.colors.map(() => o.blend as BlendMode | undefined);
     const masks: number[] = Array.isArray(o.writeMask) ? o.writeMask : f.colors.map(() => (o.writeMask as number | undefined) ?? 0xf);
     const targets: GPUColorTargetState[] = f.colors.map((format, i) => ({ format, blend: blendOf(blends[i]), writeMask: i < outs ? masks[i] : 0 }));
+    const a2c = !!o.alphaToCoverage && f.samples > 1;
+    const tells = !!this.fs && !!this.shader.reflect.entries.find((e) => e.name === this.fs)?.overrides.includes(A2C) && !(o.constants && A2C in o.constants);
+    const fsConstants = tells ? { ...o.constants, [A2C]: a2c ? 1 : 0 } : o.constants;
     const desc: GPURenderPipelineDescriptor = {
       label: this.label,
       layout: this.binder.layout,
       vertex: { module, entryPoint: this.vs, constants: constantsFor(this.shader, this.vs, o.constants), buffers: o.vertexBuffers?.map((v) => v.layout) },
       primitive: { topology: o.topology ?? 'triangle-list', cullMode: o.cull ?? 'back', frontFace: o.frontFace ?? 'ccw', unclippedDepth: o.unclippedDepth && this.kit.features.has('depth-clip-control') ? true : undefined },
       // (WebGPU refuses alpha to coverage without multisampling: such a pipeline would fail and never draw)
-      multisample: { count: f.samples, alphaToCoverageEnabled: !!o.alphaToCoverage && f.samples > 1 },
+      multisample: { count: f.samples, alphaToCoverageEnabled: a2c },
     };
-    if (o.alphaToCoverage && f.samples <= 1) this.kit.warnOnce(`a2c:${this.label}`, `${this.label}: alphaToCoverage needs a multisampled pass (${this.pass.label} has 1 sample): drawn without it`);
+    // (a fragment shader declaring `override ALPHA_TO_COVERAGE` is told whether it's on — to cut out by alpha itself
+    // when its pass has one sample, a phone's — unless the draw sets it; one that doesn't is warned once)
+    if (o.alphaToCoverage && f.samples <= 1 && !tells) this.kit.warnOnce(`a2c:${this.label}`, `${this.label}: alphaToCoverage needs a multisampled pass (${this.pass.label} has 1 sample): drawn without it`);
     if (o.topology === 'triangle-strip' || o.topology === 'line-strip') desc.primitive!.stripIndexFormat = o.indices ? (o.indices.format ?? 'uint32') : undefined;
-    if (this.fs) desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, o.constants), targets };
+    if (this.fs) desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, fsConstants), targets };
     if (f.depth) {
       desc.depthStencil = {
         format: f.depth,

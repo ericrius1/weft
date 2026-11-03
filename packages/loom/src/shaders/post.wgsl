@@ -27,7 +27,8 @@ struct Post {
 @fragment fn fs_depth(i: FullscreenOut) -> @builtin(frag_depth) f32 {
   let c = vec2i(i.pos.xy);
   var d = textureLoad(depthMS, c, 0);
-  for (var k = 1; k < 4; k++) { d = min(d, textureLoad(depthMS, c, k)); }
+  let n = i32(textureNumSamples(depthMS));
+  for (var k = 1; k < n; k++) { d = min(d, textureLoad(depthMS, c, k)); }
   return d;
 }
 

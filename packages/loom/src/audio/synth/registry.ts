@@ -10,6 +10,7 @@ import * as CB from './combat';
 import * as MO from './motor';
 import * as TOY from './toy';
 import * as SM from './smash';
+import * as DR from './dragon';
 import { ir } from './ir';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,6 +46,9 @@ export const RENDERERS: Record<string, Renderer> = {
   knock: SM.knock, crumble: SM.crumble, splinter: SM.splinter, clang: SM.clang, rumble: SM.rumble, laserLoop: SM.laserLoop, holeLoop: SM.holeLoop, incoming: SM.incoming,
   // engines and tyres (Rainline)
   engineLoop: MO.engineLoop, squealLoop: MO.squealLoop, sprayLoop: MO.sprayLoop, roofRain: MO.roofRain, gearShift: MO.gearShift, backfire: MO.backfire,
+  // fire and a dragon (Drake)
+  fireBreath: DR.fireBreath, fireRoar: DR.fireRoar, fireCrackle: DR.fireCrackle, fireIgnite: DR.fireIgnite, fireDouse: DR.fireDouse,
+  dragonRoar: DR.dragonRoar, wingbeat: DR.wingbeat, windRush: DR.windRush,
   // reverbs
   ir,
 };
@@ -117,6 +121,15 @@ export const BANK: BankItem[] = [
   { key: 'loop.flutter', kind: 'flutter', params: {}, variants: 1, sr: 24000 },
   { key: 'fly.up', kind: 'flyWhoosh', params: { dir: 'up' }, variants: 2, sr: 32000 },
   { key: 'fly.down', kind: 'flyWhoosh', params: { dir: 'down' }, variants: 2, sr: 32000 },
+  { key: 'loop.windRush', kind: 'windRush', params: {}, variants: 1, sr: 24000 },
+  // fire (sfx.ts: a state's fire, its breath; the ignite and douse events) and a dragon (its roar and wingbeats)
+  { key: 'loop.fireBreath', kind: 'fireBreath', params: {}, variants: 1, sr: 24000 },
+  { key: 'loop.fireRoar', kind: 'fireRoar', params: {}, variants: 1, sr: 16000 },
+  { key: 'loop.fireCrackle', kind: 'fireCrackle', params: {}, variants: 1, sr: 32000 },
+  { key: 'fire.ignite', kind: 'fireIgnite', params: {}, variants: 2, sr: 24000 },
+  { key: 'fire.douse', kind: 'fireDouse', params: {}, variants: 2, sr: 24000 },
+  { key: 'dragon.roar', kind: 'dragonRoar', params: {}, variants: 2, sr: 22050 },
+  { key: 'dragon.wing', kind: 'wingbeat', params: {}, variants: 3, sr: 16000 },
   // ambience loops
   { key: 'loop.lapCalm', kind: 'lap', params: { choppy: 0 }, variants: 1, sr: 32000 },
   { key: 'loop.lapChoppy', kind: 'lap', params: { choppy: 1 }, variants: 1, sr: 32000 },

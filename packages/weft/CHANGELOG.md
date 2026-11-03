@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.4
+
+- **A texture sized by the canvas, too small for its mips, is made big enough to hold them**: before the canvas is
+  measured the render size is 1×1, and a texture of it with mips (loom's bloom, 6; its AO depth, 3) was a validation
+  error at startup, its mip views errors after. Now such a texture's longer side is at least 2^(mips−1) until the canvas
+  is sized (then it's reallocated at its real size, as before); a fixed size and `mips: 'full'` are as they were.
+- **A shader can be told whether its draw's alpha to coverage is on**: a fragment shader declaring
+  `override ALPHA_TO_COVERAGE: bool` gets 1 or 0 (unless the draw sets it), so on a one-sample pass — a phone's, loom's
+  `msaa: 1` — it can cut out by alpha (discard) instead; such a draw isn't warned about. Tested without a GPU.
+
 ## 0.2.3
 
 - **From GitHub only**: npm is retired — every project takes the `dist/weft` and `dist/loom` branches (README,

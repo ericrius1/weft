@@ -20,7 +20,10 @@ games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
 - **Things that break**: Voronoi fracture of convex cells, bonded rubble, one draw for thousands of pieces, physics on
   [box3d.js](https://github.com/isaac-mason/box3d.js).
 - **Sound**: a procedural audio engine (Web Audio, no samples) — ambience, foley, Minnaert-bubble water, engines,
-  generative scores.
+  fire (a dragon's breath, a blaze, its crackle, ignition, dousing), a dragon's roar and wingbeats, the wind of fast
+  flight, generative scores.
+- **Quality**: Epic, Smooth and a phone's Mobile profile (`quality`): one sample a pixel, smaller shadows, the clouds
+  at a quarter, no AO, shafts or motion blur, a gentle auto resolution.
 
 ```bash
 npm install @ericrius1/weft @ericrius1/loom
@@ -36,6 +39,16 @@ export default defineConfig({ plugins: [weft({ libs: { loom: '@ericrius1/loom' }
 import { Renderer } from '@ericrius1/loom/render/renderer';
 import { Clouds } from '@ericrius1/loom/render/clouds';
 import { AudioEngine } from '@ericrius1/loom/audio';
+```
+
+On a phone, make the renderer with the profile's construction options and apply the rest:
+
+```ts
+import { Renderer } from '@ericrius1/loom/render/renderer';
+import { applyQuality, loadQuality, phoneOr, rendererOptions } from '@ericrius1/loom/quality';
+const q = loadQuality('mygame', phoneOr('smooth'));            // 'mobile' on a phone unless the player picked
+const r = new Renderer(kit, terrain, atmo, half, rendererOptions(q)); // { msaa: 1, shadowSize: 1024, ... } on a phone
+applyQuality(kit, r, q);
 ```
 
 Modules are imported by path (`@ericrius1/loom/<dir>/<module>`); shaders by `@ericrius1/loom/shaders/<name>.wgsl`.

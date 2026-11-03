@@ -303,3 +303,41 @@ test('a multi-draw indirect: `count` draws `stride` bytes apart, one Draw; in a 
   assert.equal(bundle.records, 2, 'recorded again: the count moved');
   assert.deepEqual(recorded.slice(0, 2), [['drawIndexedIndirect', 20], ['drawIndirect', 0]]);
 });
+
+test("alpha to coverage: on a one-sample pass drawn without it, a shader declaring ALPHA_TO_COVERAGE told which", async () => {
+  const kit = fakeKit();
+  const warned = [];
+  kit.warnOnce = (k, m) => warned.push(k);
+  const CUT = `
+override ALPHA_TO_COVERAGE: bool = true;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { return vec4f(f32(i), 0.0, 0.0, 1.0); }
+@fragment fn fs() -> @location(0) vec4f { if (!ALPHA_TO_COVERAGE) { discard; } return vec4f(1.0); }`;
+  const cut = shader('test/cut.wgsl', CUT), plain = shader('test/sprite.wgsl', SPRITE);
+  const one = new RenderPass(kit, { label: 'one', color: [{ target: 'screen' }] });
+  const a = one.draw(cut, { label: 'cut', alphaToCoverage: true });
+  const b = one.draw(plain, { label: 'plain', alphaToCoverage: true, bind: { tex: new GPUTextureView(), samp: 'linear' } });
+  await one.ready();
+  const desc = (d) => kit.compiled.find((x) => x.label === d);
+  assert.equal(desc('cut').multisample.alphaToCoverageEnabled, false);
+  assert.deepEqual(desc('cut').fragment.constants, { ALPHA_TO_COVERAGE: 0 });
+  assert.equal(desc('plain').multisample.alphaToCoverageEnabled, false);
+  // (warned only for the shader that can't tell)
+  assert.deepEqual(warned, ['a2c:plain']);
+  void a; void b;
+});
+
+test('a texture sized by the canvas, too small for its mips (1×1 before the canvas is measured), is made big enough to hold them', async () => {
+  const { Texture } = await import('../dist/src/resources.js');
+  const made = [];
+  const kit = { size: { render: [1, 1], canvas: [1, 1] }, features: new Set(), resourceGen: 0, device: { createTexture: (d) => { made.push(d); return { ...d, destroy() {}, createView: () => ({}) }; } } };
+  const bloom = new Texture(kit, { label: 'bloom', format: 'rgba16float', size: 'render', scale: 0.5, mips: 6 });
+  assert.deepEqual(made[0].size, [32, 1, 1]);
+  assert.equal(made[0].mipLevelCount, 6);
+  // (sized for real once the canvas is)
+  kit.size.render = [1280, 720];
+  assert.equal(bloom.alloc(), true);
+  assert.deepEqual([bloom.width, bloom.height, bloom.mips], [640, 360, 6]);
+  // (a fixed size is as given)
+  const fixed = new Texture(kit, { label: 'fixed', format: 'rgba8unorm', size: [64, 64], mips: 'full' });
+  assert.equal(fixed.mips, 7);
+});
