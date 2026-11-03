@@ -17,9 +17,10 @@
   (m), its rate (m/s), foam, the whitecaps' share (`.x` and `.z` as before). Fields: `damping`, `foamLife`,
   `viscosity`, `crestLife`, `maxHeight`, `active`, `window`.
 - **The sea's foam and mirror over churned water** (`ocean.wgsl`): the ripple sim's foam drawn as lace — threads of
-  bubbles round dark holes (ridges of a warped noise at the window's scale), filling in solid where thick, whitecaps
-  solid while they last — and never darker than the sheen beside it; the planar mirror fades to the sky's sheen where
-  the ripple field is steep (a reflection torn by a wake into its slopes read as shards).
+  bubbles round dark holes (ridges of a warped noise at the window's scale, fine enough that no blots or cells show),
+  filling in where thick, whitecaps solid while they last, the water under it aerated and milky — and never darker
+  than the sheen beside it; the planar mirror fades to the sky's sheen where the ripple field is steep (a reflection
+  torn by a wake into its slopes read as shards).
 - **A world's own water under the surface** (`globals.wgsl` World `uwAbs`, `uwScat`: rgb per metre, w 1 to use it —
   0, the default, keeps the lagoon's): env.wgsl's medium (`uwAbsorb()`, `uwScatter()`, and everything built on them:
   the lens's fog, the shafts, the surface seen from below) takes them — a peaty loch's tea-green.
