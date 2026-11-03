@@ -172,7 +172,7 @@ fn detailNormal(xz: vec2f, t: f32, k: f32) -> vec3f {
     let m = textureSampleLevel(reflTex, samp_linear, ruv, 0.0);
     // (water churned rough by the ripple sim — a wake, a crater — scatters the mirror into a sky-lit sheen: a mirror
     // image torn into its slopes reads as shards)
-    let rough = 1.0 - smoothstep(0.25, 0.9, length(vec2f(rx, rz)) / (2.0 * cell));
+    let rough = 1.0 - smoothstep(0.5, 1.3, length(vec2f(rx, rz)) / (2.0 * cell));
     refl = mix(refl, m.rgb, m.a * rough);
   }
   let spec = ggxSpec(n, v, world.lightDir, 0.07, 1.0) * max(dot(n, world.lightDir), 0.0);
@@ -192,24 +192,26 @@ fn detailNormal(xz: vec2f, t: f32, k: f32) -> vec3f {
     // the ripple sim's foam (a wake's trail, a splash's churn): lace — bubbles gathered into threads round holes at two
     // scales (the window's cell sets them: a wader's centimetres, a dragon's metres) — filling in solid where it's
     // thick, thinning to threads as it ages; a breaking crest's whitecap (rp.w) solid white while it lasts
+    var milk = 0.0;
     if (churn > 0.002) {
-      // (the window's cell sets its scale: a wader's centimetres, a dragon's metres; the cells warped by the patches'
-      // noise so no grid shows)
+      // (the window's cell sets its scale: a wader's centimetres, a dragon's metres; the lace's threads warped by the
+      // patches' noise so no grid or blot shows; under it the water's aerated, milky)
       let sc = 1.0 / max(cell * 2.6, 0.25);
-      let n1 = fbm(wp.xz * sc * 0.55 + vec2f(t * 0.05, -t * 0.03), 4);
-      // (the lace: ridges of a warped noise — threads of bubbles round dark holes, organic, no cells)
-      let q = wp.xz * sc * 1.3 + (vec2f(n1, fbm(wp.xz * sc * 0.4 + 7.3, 2)) - 0.5) * 3.0;
-      let threads = pow(1.0 - abs(fbm(q, 3) * 2.0 - 1.0), 3.0);
-      let body = n1 * 0.7 + threads * 0.5;
-      let thr = 1.0 - min(churn, 1.2) * 0.75;
-      let cover = smoothstep(thr, thr + 0.22, body) * sat(churn * 2.5);
+      let n1 = fbm(wp.xz * sc * 1.1 + vec2f(t * 0.05, -t * 0.03), 4);
+      let q = wp.xz * sc * 2.4 + (vec2f(n1, fbm(wp.xz * sc * 0.5 + 7.3, 2)) - 0.5) * 3.0;
+      let threads = pow(1.0 - abs(fbm(q, 3) * 2.0 - 1.0), 2.5);
+      let body = n1 * 0.55 + threads * 0.6;
+      let thr = 1.0 - min(churn, 1.5) * 0.42;
+      let cover = smoothstep(thr, thr + 0.3, body) * sat(churn * 1.6);
       foam = max(foam, max(cover, sat(churn * rp.w * 2.0) * smoothstep(0.3, 0.6, n1 + 0.15)));
+      milk = sat(churn * 0.5) * 0.3;
     }
     if (foam * ocean.foam > 0.002) {
       // (white water scatters the whole sky's light, and at a glance it's never darker than the sheen beside it)
       let foamLight = lightDiffuse(vec3f(0.88), vec3f(0.0, 1.0, 0.0), wp, i.pos.xy, 1.0, 0.3) + shIrradiance(vec3f(0.0, 1.0, 0.0)) * 0.35;
       col = mix(col, max(foamLight, refl * 0.8), clamp(foam * ocean.foam, 0.0, 1.0));
     }
+    if (milk > 0.0) { col = mix(col, (lightDiffuse(vec3f(0.5, 0.62, 0.6), vec3f(0.0, 1.0, 0.0), wp, i.pos.xy, 1.0, 0.3) + refl * 0.25), milk * ocean.foam * (1.0 - foam)); }
   }
 
   // seen from below: the surface is a bright window up to the sky, a mirror outside it
