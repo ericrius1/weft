@@ -11,7 +11,7 @@
 @group(1) @binding(5) var splatTex: texture_2d<f32>;     // sand, grass, rock, snow
 @group(1) @binding(6) var maskTex: texture_2d<f32>;      // road, forest, flowers, village
 @group(1) @binding(7) var shadowTex: texture_depth_2d_array;
-@group(1) @binding(8) var rippleTex: texture_2d<f32>;    // ripple sim: height, velocity, foam
+@group(1) @binding(8) var rippleTex: texture_2d<f32>;    // ripple sim: height (m), its rate (m/s), foam, the whitecaps' share
 @group(1) @binding(9) var hfShadowTex: texture_2d<f32>;  // the terrain's own shadow toward the key light (hfshadow.wgsl)
 @group(1) @binding(10) var cloudShadowTex: texture_2d<f32>;  // the clouds' shadow map (clouds.wgsl bakeShadow)
 // (a spot when cosOuter > -1: lit within its cone round dir, fading from cosInner to cosOuter — headlights, lamps)
@@ -349,17 +349,20 @@ fn lightDiffuse(albedo: vec3f, n: vec3f, wp: vec3f, px: vec2f, ao: f32, wrap: f3
 }
 
 // ---------------------------------------------------------------- under the sea: the medium
-// The lagoon is clear and the sand under it white: the water drinks the red within metres, scatters a little (bluer);
-// turquoise, ~35 m visibility (world.under.w thickens it). Beer–Lambert extinction per channel + single scattering of
-// the light let in through the surface, which itself fades with depth. (From waterbending's glacial lakes, retuned.)
+// By default the lagoon: clear, the sand under it white: the water drinks the red within metres, scatters a little
+// (bluer); turquoise, ~35 m visibility (world.under.w thickens it). A world's own water through world.uwAbs/uwScat (w
+// 1): a peaty loch's tea. Beer–Lambert extinction per channel + single scattering of the light let in through the
+// surface, which itself fades with depth. (From waterbending's glacial lakes, retuned.)
 const UW_ABS: vec3f = vec3f(0.15, 0.03, 0.013);   // absorption (1/m)
 const UW_SCAT: vec3f = vec3f(0.009, 0.016, 0.022);  // scattering (1/m)
 const UW_ETA: f32 = 1.333;
+fn uwAbsorb() -> vec3f { return select(UW_ABS, world.uwAbs.xyz, world.uwAbs.w > 0.5); }
+fn uwScatter() -> vec3f { return select(UW_SCAT, world.uwScat.xyz, world.uwScat.w > 0.5); }
 fn uwMurk() -> f32 { return max(world.under.w, 0.2); }
-fn uwSigS() -> vec3f { return UW_SCAT * uwMurk(); }
-fn uwSigT() -> vec3f { return UW_ABS + UW_SCAT * uwMurk(); }
+fn uwSigS() -> vec3f { return uwScatter() * uwMurk(); }
+fn uwSigT() -> vec3f { return uwAbsorb() + uwScatter() * uwMurk(); }
 /** how fast the light coming down fades with depth (1/m) */
-fn uwKd() -> vec3f { return (UW_ABS + 0.2 * UW_SCAT * uwMurk()) * 1.15; }
+fn uwKd() -> vec3f { return (uwAbsorb() + 0.2 * uwScatter() * uwMurk()) * 1.15; }
 /** toward the key light, seen from under the surface (refracted: never more than ~49 degrees from the zenith) */
 fn uwLightDir() -> vec3f {
   let l = world.lightDir;

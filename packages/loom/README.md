@@ -9,8 +9,9 @@ games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
 - **Clouds** (`render/clouds`): Nubis-style shape and erosion noise over an evolving weather map, storm cells with
   anvils and lightning, a baked light volume, multiple-scattering octaves, two temporally resolved layers, holes torn
   by things flying through.
-- **Water**: Gerstner seas with a wave-equation ripple sim round the player, refraction absorbed per channel, a planar
-  mirror; under the sea, caustics and shafts.
+- **Water**: Gerstner seas with a dispersive ripple sim round the player (Kelvin wakes, ring trains; any window size),
+  refraction absorbed per channel, a planar mirror; under the sea, caustics and shafts through a medium a world can set
+  (a lagoon, a peaty loch).
 - **Weather & lamps**: rain drawn from index and time (nothing simulated), splashes placed on the depth buffer; spot and
   point lights with headlamp profiles; light in the air sampled equi-angularly (Kulla & Fajardo).
 - **The film**: motion blur, depth of field and tilt-shift, wide bloom, histogram eye adaptation, an AgX grade with

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.3
+
+- **Ripples, dispersive and any size** (`world/ripples.ts`, `shaders/ripple.wgsl`): the wave-equation window round the
+  player is now boulder's iWave — `h'' = -g|k|h`, the `|k|` a 13x13 convolution staged per 16x16 block in workgroup
+  memory — so long waves outrun short ones: a splash spreads as a widening train of rings and a body moving over the
+  water leaves a feathered Kelvin wake (the old field gave single hard rings and a narrow rubbery cone). Stepped at a
+  steady 60 a second (as many steps as the frame took, up to two), slowed in the shallows (`tanh(k d)`), damped on a
+  beach, dry land a wall (the depth read from the terrain's height map as cells come into the window), a sponge at the
+  window's edges. `new Ripples(kit, heights, half, { n, cell })` / `RendererOptions.ripples`; **`r.ripples.configure({
+  n, cell })` any time** (a 27 m dragon's wake: `{ n: 512, cell: 0.6 }`, 307 m of water) — the env group binds
+  `r.ripples.out`, a Ref that follows it. Impulses: `splash(x, z, amount, radius, foam)` and **`line(x, z, x2, z2,
+  amount, radius, foam, crest)`** (a trough ploughed this frame, a wake's arm; a crest's whitecap foam there only a
+  moment), up to 1024 a step; `push(x, z, radius, strength)` kept. Rests (rippleAt reads flat, no compute) with the
+  player more than `reach` (160 m) over the water and nothing pushed for `settle` s. The published texture: height
+  (m), its rate (m/s), foam, the whitecaps' share (`.x` and `.z` as before). Fields: `damping`, `foamLife`,
+  `viscosity`, `crestLife`, `maxHeight`, `active`, `window`.
+- **The sea's foam and mirror over churned water** (`ocean.wgsl`): the ripple sim's foam drawn as lace — threads of
+  bubbles round dark holes (ridges of a warped noise at the window's scale), filling in solid where thick, whitecaps
+  solid while they last — and never darker than the sheen beside it; the planar mirror fades to the sky's sheen where
+  the ripple field is steep (a reflection torn by a wake into its slopes read as shards).
+- **A world's own water under the surface** (`globals.wgsl` World `uwAbs`, `uwScat`: rgb per metre, w 1 to use it —
+  0, the default, keeps the lagoon's): env.wgsl's medium (`uwAbsorb()`, `uwScatter()`, and everything built on them:
+  the lens's fog, the shafts, the surface seen from below) takes them — a peaty loch's tea-green.
+- **`splash.xl`** in the default bank (sfx.ts's splash asked for it at the top of its range and got silence).
+
 ## 0.1.2
 
 - **Renderer options** (`new Renderer(kit, terrain, atmo, half, opts?)`, `RendererOptions`): `msaa: 1 | 4` (default 4)

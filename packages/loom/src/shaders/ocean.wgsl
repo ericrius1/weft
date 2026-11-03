@@ -170,7 +170,10 @@ fn detailNormal(xz: vec2f, t: f32, k: f32) -> vec3f {
     let ofs = vec2f(dot(nd, frame.camRight), -dot(nd, frame.camUp)) * 0.35 * (1.0 - smoothstep(30.0, 600.0, dist)) + vec2f(dot(nd, frame.camRight), -dot(nd, frame.camUp)) * 0.08;
     let ruv = clamp(i.pos.xy / res + ofs, vec2f(0.002), vec2f(0.998));
     let m = textureSampleLevel(reflTex, samp_linear, ruv, 0.0);
-    refl = mix(refl, m.rgb, m.a);
+    // (water churned rough by the ripple sim — a wake, a crater — scatters the mirror into a sky-lit sheen: a mirror
+    // image torn into its slopes reads as shards)
+    let rough = 1.0 - smoothstep(0.25, 0.9, length(vec2f(rx, rz)) / (2.0 * cell));
+    refl = mix(refl, m.rgb, m.a * rough);
   }
   let spec = ggxSpec(n, v, world.lightDir, 0.07, 1.0) * max(dot(n, world.lightDir), 0.0);
   refl += lighting.keyRad.rgb * PI * spec * ocean.glint * sh;
@@ -181,15 +184,31 @@ fn detailNormal(xz: vec2f, t: f32, k: f32) -> vec3f {
   // foam: the shore break, wave crests, the ripple sim's churn (worked out only where there can be any)
   let shore = smoothstep(1.2, 0.0, floorDepth) * smoothstep(-0.2, 0.05, floorDepth);
   let crestF = smoothstep(0.55, 0.95, i.crest) * fade;
-  let churn = clamp(rp.z, 0.0, 1.0);
+  let churn = clamp(rp.z, 0.0, 1.6);
   if (shore + crestF + churn > 0.001) {
     let foamNoise = fbm(wp.xz * 0.7 + vec2f(t * 0.3, 0.0), 4);
     var foam = shore * smoothstep(0.35, 0.7, foamNoise + 0.25 * sin(floorDepth * 6.0 - t * 2.4));
     foam = max(foam, crestF * smoothstep(0.4, 0.75, foamNoise));
-    foam = max(foam, churn * smoothstep(0.3, 0.6, foamNoise));
+    // the ripple sim's foam (a wake's trail, a splash's churn): lace — bubbles gathered into threads round holes at two
+    // scales (the window's cell sets them: a wader's centimetres, a dragon's metres) — filling in solid where it's
+    // thick, thinning to threads as it ages; a breaking crest's whitecap (rp.w) solid white while it lasts
+    if (churn > 0.002) {
+      // (the window's cell sets its scale: a wader's centimetres, a dragon's metres; the cells warped by the patches'
+      // noise so no grid shows)
+      let sc = 1.0 / max(cell * 2.6, 0.25);
+      let n1 = fbm(wp.xz * sc * 0.55 + vec2f(t * 0.05, -t * 0.03), 4);
+      // (the lace: ridges of a warped noise — threads of bubbles round dark holes, organic, no cells)
+      let q = wp.xz * sc * 1.3 + (vec2f(n1, fbm(wp.xz * sc * 0.4 + 7.3, 2)) - 0.5) * 3.0;
+      let threads = pow(1.0 - abs(fbm(q, 3) * 2.0 - 1.0), 3.0);
+      let body = n1 * 0.7 + threads * 0.5;
+      let thr = 1.0 - min(churn, 1.2) * 0.75;
+      let cover = smoothstep(thr, thr + 0.22, body) * sat(churn * 2.5);
+      foam = max(foam, max(cover, sat(churn * rp.w * 2.0) * smoothstep(0.3, 0.6, n1 + 0.15)));
+    }
     if (foam * ocean.foam > 0.002) {
-      let foamLight = lightDiffuse(vec3f(0.85), vec3f(0.0, 1.0, 0.0), wp, i.pos.xy, 1.0, 0.3);
-      col = mix(col, foamLight, clamp(foam * ocean.foam, 0.0, 1.0));
+      // (white water scatters the whole sky's light, and at a glance it's never darker than the sheen beside it)
+      let foamLight = lightDiffuse(vec3f(0.88), vec3f(0.0, 1.0, 0.0), wp, i.pos.xy, 1.0, 0.3) + shIrradiance(vec3f(0.0, 1.0, 0.0)) * 0.35;
+      col = mix(col, max(foamLight, refl * 0.8), clamp(foam * ocean.foam, 0.0, 1.0));
     }
   }
 

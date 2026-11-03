@@ -16,7 +16,7 @@ import postShader from '../shaders/post.wgsl';
 import lensShader from '../shaders/lens.wgsl';
 
 import type { Atmosphere } from '../world/sky';
-import { Ripples } from '../world/ripples';
+import { Ripples, type RippleOptions } from '../world/ripples';
 import { TerrainShadow } from './hfshadow';
 import { Clouds } from './clouds';
 import { Cinema } from './cinema';
@@ -60,6 +60,8 @@ export interface RendererOptions {
   shadowSize?: number;
   /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */
   terrainShadowSize?: number;
+  /** the ripple window: cells across, metres a cell (default 256 at 0.22 m; `ripples.configure` changes it later) */
+  ripples?: RippleOptions;
 }
 
 export class Renderer {
@@ -169,7 +171,7 @@ export class Renderer {
     this.bloom = k.texture({ label: 'bloom', format: 'rgba16float', size: 'render', scale: 0.5, mips: BLOOM_LEVELS, usage: ['render', 'sample'] });
     this.shadow = k.texture({ label: 'shadow', format: 'depth32float', size: [SZ, SZ, 3], usage: ['render', 'sample'] });
     this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
-    this.ripples = new Ripples(k);
+    this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
     this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
     this.clouds = new Clouds(k, terrain.heightTex, this.depth, half);
 
@@ -177,7 +179,7 @@ export class Renderer {
     k.shareGroup(1, envShader, {
       lighting: atmo.lighting, skyTex: atmo.skyView, aerialTex: atmo.aerial,
       heightTex: terrain.heightTex, normalTex: terrain.normalTex, splatTex: terrain.splatTex, maskTex: terrain.maskTex,
-      shadowTex: this.shadow, rippleTex: this.ripples.pp.read, hfShadowTex: this.hf.shown, cloudShadowTex: this.clouds.smap,
+      shadowTex: this.shadow, rippleTex: this.ripples.out, hfShadowTex: this.hf.shown, cloudShadowTex: this.clouds.smap,
       plights: this.lights,
     }, 'env');
     this.clouds.build();
