@@ -1,6 +1,7 @@
 // loom's frame (the cinematic renderer the games share), as an explicit list (the cinematic chain ported from waterbending onto weft):
 //   compute: atmosphere, the terrain's shadow (a band a frame), the clouds' bakes, the ripple sim, sims
-//   shadow cascades → the planar reflection (half res, a mirrored view) → the MSAA opaque scene → depth resolve
+//   shadow cascades → the planar reflection (half res, a mirrored view) → the MSAA opaque scene → depth resolve (at
+//   msaa: 1 the scene draws straight into hdr and depth, no resolve)
 //   → AO (half res, into the scene) → a copy of the scene → the water (refracting that copy, reflecting the mirror)
 //   → the clouds (march, resolve, composite) → mist + shafts → glows and particles → underwater → motion blur
 //   → bloom (down, eye adaptation, up) → the film grade to the screen (or, with the lens on, to a display-space
@@ -21,6 +22,7 @@ import { Clouds } from './clouds';
 import { Cinema } from './cinema';
 import { Underwater } from './underwater';
 
+/** the defaults: the opaque scene's samples a pixel, a shadow cascade's size (texels a side) */
 export const MSAA = 4;
 export const SHADOW_SIZE = 2048;
 const MAX_LIGHTS = 32;
@@ -47,7 +49,25 @@ export function noTerrain(kit: Kit): TerrainMaps {
   return { heightTex, normalTex: tex('terrain.none.normal', 'rgba16float'), splatTex: tex('terrain.none.splat', 'rgba8unorm'), maskTex: tex('terrain.none.mask', 'rgba8unorm') };
 }
 
+/** what's fixed when the renderer is made (each optional: the defaults are the desktop's) — see quality.ts
+ *  `rendererOptions(quality)` for a profile's */
+export interface RendererOptions {
+  /** the opaque scene's samples a pixel: 4 (MSAA, resolved: the default) or 1 (a phone's: the scene draws straight
+   *  into `hdr` and `depth`, no multisampled targets and no depth resolve; an `alphaToCoverage` draw is drawn without
+   *  it — a shader declaring `override ALPHA_TO_COVERAGE: bool` is told which, to cut out by alpha instead) */
+  msaa?: 1 | 4;
+  /** each of the three shadow cascades' size, texels a side (default SHADOW_SIZE, 2048) */
+  shadowSize?: number;
+  /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */
+  terrainShadowSize?: number;
+}
+
 export class Renderer {
+  /** the opaque scene's samples a pixel (RendererOptions.msaa) */
+  readonly msaa: 1 | 4;
+  /** a shadow cascade's size, texels a side (RendererOptions.shadowSize) */
+  readonly shadowSize: number;
+  /** the scene's colour and depth as drawn: multisampled at msaa 4; at msaa 1 the same textures as `hdr` and `depth` */
   hdrMS: Texture;
   depthMS: Texture;
   hdr: Texture;
@@ -81,7 +101,8 @@ export class Renderer {
   compute: RunEntry[] = [];
   post: UniformBuffer<any>;
   private postFirst: UniformBuffer<any>;
-  private resolve: RenderPass;
+  /** the depth resolve (MSAA only) */
+  private resolve: RenderPass | null = null;
   private copy: RunEntry;
   private copyMB: RunEntry;
   private mb: RunEntry;
@@ -96,6 +117,12 @@ export class Renderer {
   lightCount = 0;
   expo: StorageBuffer;
   cascades = [24, 90, 320];
+  /** how each cascade's light view is fitted (updateShadows): its eye at least `back` m toward the light from the
+   *  cascade's centre and always its bounding sphere's radius plus `reach` (casters that far past the sphere toward the
+   *  light still shadow it: hills, towers, a dragon overhead); its depth to at least `far` m and always past the
+   *  sphere's far side. At the default cascades this is the old fixed 600 m back, 1400 m deep; a flight game's long
+   *  cascades ([40, 160, 600] m, more) push both out with their radius. */
+  shadowFit = { back: 600, reach: 180, far: 1400 };
   shadowsOn = true;
   /** the sea's mirror of the scene (a night scene may not need it) */
   mirror = true;
@@ -128,20 +155,22 @@ export class Renderer {
   private lensPass: RenderPass;
   lensU: UniformBuffer<any>;
 
-  constructor(private kit: Kit, terrain: TerrainMaps, atmo: Atmosphere, half: number) {
+  constructor(private kit: Kit, terrain: TerrainMaps, atmo: Atmosphere, half: number, opts: RendererOptions = {}) {
     const k = kit;
-    this.hdrMS = k.texture({ label: 'hdr.ms', format: 'rgba16float', size: 'render', samples: MSAA });
-    this.depthMS = k.texture({ label: 'depth.ms', format: 'depth32float', size: 'render', samples: MSAA, usage: ['render', 'sample'] });
+    const msaa = this.msaa = opts.msaa === 1 ? 1 : MSAA;
+    const SZ = this.shadowSize = Math.max(256, Math.round(opts.shadowSize ?? SHADOW_SIZE));
     this.hdr = k.texture({ label: 'hdr', format: 'rgba16float', size: 'render', usage: ['render', 'sample', 'storage', 'copy-src', 'copy-dst'] });
     this.depth = k.texture({ label: 'depth', format: 'depth32float', size: 'render', usage: ['render', 'sample'] });
+    this.hdrMS = msaa > 1 ? k.texture({ label: 'hdr.ms', format: 'rgba16float', size: 'render', samples: msaa }) : this.hdr;
+    this.depthMS = msaa > 1 ? k.texture({ label: 'depth.ms', format: 'depth32float', size: 'render', samples: msaa, usage: ['render', 'sample'] }) : this.depth;
     this.sceneCopy = k.texture({ label: 'scene.copy', format: 'rgba16float', size: 'render', usage: ['sample', 'copy-dst'] });
     this.refl = k.texture({ label: 'refl', format: 'rgba16float', size: 'render', scale: 0.5, usage: ['render', 'sample'] });
     this.reflDepth = k.texture({ label: 'refl.depth', format: 'depth32float', size: 'render', scale: 0.5, usage: ['render'] });
     this.bloom = k.texture({ label: 'bloom', format: 'rgba16float', size: 'render', scale: 0.5, mips: BLOOM_LEVELS, usage: ['render', 'sample'] });
-    this.shadow = k.texture({ label: 'shadow', format: 'depth32float', size: [SHADOW_SIZE, SHADOW_SIZE, 3], usage: ['render', 'sample'] });
+    this.shadow = k.texture({ label: 'shadow', format: 'depth32float', size: [SZ, SZ, 3], usage: ['render', 'sample'] });
     this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
     this.ripples = new Ripples(k);
-    this.hf = new TerrainShadow(k, terrain.heightTex, half);
+    this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
     this.clouds = new Clouds(k, terrain.heightTex, this.depth, half);
 
     // the environment, shared by every surface shader (group 1)
@@ -156,7 +185,7 @@ export class Renderer {
     // (a shadow pass can't have the shadow map it writes bound for sampling: those passes see a 1×1 stand-in)
     const noShadow = k.texture({ label: 'shadow.none', format: 'depth32float', size: [1, 1, 3], usage: ['render', 'sample'] });
     for (let c = 0; c < 3; c++) {
-      const view = k.view(new Camera(), [SHADOW_SIZE, SHADOW_SIZE], `shadow${c}`);
+      const view = k.view(new Camera(), [SZ, SZ], `shadow${c}`);
       this.shadowViews.push(view);
       this.shadowPasses.push(k.pass({ label: `shadow${c}`, depth: { target: this.shadow.layer(c), clear: 0 }, view, shared: { 1: { shadowTex: noShadow } }, enabled: () => this.shadowsOn }));
     }
@@ -167,13 +196,17 @@ export class Renderer {
       label: 'reflection', view: this.reflView, enabled: () => this.reflOn,
       color: [{ target: this.refl, clear: [0, 0, 0, 0] }], depth: { target: this.reflDepth, clear: 0, store: false },
     });
-    this.scene = k.pass({
+    // (MSAA: into the multisampled targets, the colour resolved into hdr, the depth resolved by a pass of its own; one
+    // sample: straight into hdr and depth)
+    this.scene = msaa > 1 ? k.pass({
       label: 'scene',
       color: [{ target: this.hdrMS, resolve: this.hdr, clear: [0, 0, 0, 1], store: false }],
       depth: { target: this.depthMS, clear: 0 },
-    });
-    this.resolve = k.pass({ label: 'depth.resolve', depth: { target: this.depth, clear: 0 } });
-    this.resolve.fullscreen(postShader, { label: 'depth.resolve', fragment: 'fs_depth', bind: { depthMS: this.depthMS }, depthWrite: true, depthCompare: 'always' });
+    }) : k.pass({ label: 'scene', color: [{ target: this.hdr, clear: [0, 0, 0, 1] }], depth: { target: this.depth, clear: 0 } });
+    if (msaa > 1) {
+      this.resolve = k.pass({ label: 'depth.resolve', depth: { target: this.depth, clear: 0 } });
+      this.resolve.fullscreen(postShader, { label: 'depth.resolve', fragment: 'fs_depth', bind: { depthMS: this.depthMS }, depthWrite: true, depthCompare: 'always' });
+    }
     this.copy = k.copy(this.hdr, this.sceneCopy, 'scene.copy');
     this.water = k.pass({ label: 'water', color: [{ target: this.hdr, clear: false }], depth: { target: this.depth, readOnly: true } });
     this.cinema = new Cinema(k, this.depth, this.hdr, this.clouds.outTex);
@@ -234,10 +267,12 @@ export class Renderer {
     this.lightCount = sorted.length;
   }
 
-  /** fit the three cascades around the camera's view for a key light direction */
+  /** fit the three cascades around the camera's view for a key light direction (each a sphere round its stretch of the
+   *  view, the light's eye and depth from its radius: shadowFit), texel-snapped so they don't crawl */
   updateShadows(cam: Camera, light: V3) {
     const near = [0, ...this.cascades];
     const mats: Float32Array[] = [];
+    const F = this.shadowFit;
     for (let c = 0; c < 3; c++) {
       const d0 = near[c], d1 = near[c + 1];
       const mid = (d0 + d1) / 2;
@@ -245,17 +280,20 @@ export class Renderer {
       const centre: V3 = [cam.position[0] + f[0] * mid, cam.position[1] + f[1] * mid, cam.position[2] + f[2] * mid];
       const tanH = Math.tan(cam.fovY / 2) * Math.max(1, cam.aspect);
       const r = Math.hypot((d1 - d0) / 2, d1 * tanH * 1.2);
-      const view = lookAt([centre[0] + light[0] * 600, centre[1] + light[1] * 600, centre[2] + light[2] * 600], centre, Math.abs(light[1]) > 0.99 ? [1, 0, 0] : [0, 1, 0]);
-      const texel = (2 * r) / SHADOW_SIZE;
+      // (the eye far enough back that casters `reach` past the sphere are in front of it; the depth past its far side)
+      const back = Math.max(F.back, r + F.reach);
+      const far = Math.max(F.far, back + r + 50);
+      const view = lookAt([centre[0] + light[0] * back, centre[1] + light[1] * back, centre[2] + light[2] * back], centre, Math.abs(light[1]) > 0.99 ? [1, 0, 0] : [0, 1, 0]);
+      const texel = (2 * r) / this.shadowSize;
       view[12] = Math.round(view[12] / texel) * texel;
       view[13] = Math.round(view[13] / texel) * texel;
-      const proj = orthoReversed(-r, r, -r, r, 1, 1400);
+      const proj = orthoReversed(-r, r, -r, r, 1, far);
       mats.push(mat4Mul(proj, view));
       const sc = this.shadowViews[c].camera;
       sc.viewOverride = view;
       sc.ortho = { halfWidth: r, halfHeight: r };
       sc.near = 1;
-      sc.far = 1400;
+      sc.far = far;
     }
     return mats;
   }

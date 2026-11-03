@@ -19,6 +19,8 @@ export declare class Sfx {
     private lantern;
     /** a fire's loops (its roar and crackle, a dragon's breath) */
     private fireL;
+    /** the breath's ignition: armed while it's out, played as it catches */
+    private igniteArmed;
     constructor(core: Core);
     /** a small soft bell (sine partials), non-positional but panned toward `pan` */
     private chime;

@@ -6,6 +6,7 @@ import { TerrainShadow } from './hfshadow';
 import { Clouds } from './clouds';
 import { Cinema } from './cinema';
 import { Underwater } from './underwater';
+/** the defaults: the opaque scene's samples a pixel, a shadow cascade's size (texels a side) */
 export declare const MSAA = 4;
 export declare const SHADOW_SIZE = 2048;
 /** a point light, or a spot when it has a direction and a cone (half-angles, radians: full within `inner`, nothing
@@ -34,8 +35,25 @@ export interface TerrainMaps {
 }
 /** flat stand-in maps: ground at -5000 m everywhere */
 export declare function noTerrain(kit: Kit): TerrainMaps;
+/** what's fixed when the renderer is made (each optional: the defaults are the desktop's) — see quality.ts
+ *  `rendererOptions(quality)` for a profile's */
+export interface RendererOptions {
+    /** the opaque scene's samples a pixel: 4 (MSAA, resolved: the default) or 1 (a phone's: the scene draws straight
+     *  into `hdr` and `depth`, no multisampled targets and no depth resolve; an `alphaToCoverage` draw is drawn without
+     *  it — a shader declaring `override ALPHA_TO_COVERAGE: bool` is told which, to cut out by alpha instead) */
+    msaa?: 1 | 4;
+    /** each of the three shadow cascades' size, texels a side (default SHADOW_SIZE, 2048) */
+    shadowSize?: number;
+    /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */
+    terrainShadowSize?: number;
+}
 export declare class Renderer {
     private kit;
+    /** the opaque scene's samples a pixel (RendererOptions.msaa) */
+    readonly msaa: 1 | 4;
+    /** a shadow cascade's size, texels a side (RendererOptions.shadowSize) */
+    readonly shadowSize: number;
+    /** the scene's colour and depth as drawn: multisampled at msaa 4; at msaa 1 the same textures as `hdr` and `depth` */
     hdrMS: Texture;
     depthMS: Texture;
     hdr: Texture;
@@ -69,6 +87,7 @@ export declare class Renderer {
     compute: RunEntry[];
     post: UniformBuffer<any>;
     private postFirst;
+    /** the depth resolve (MSAA only) */
     private resolve;
     private copy;
     private copyMB;
@@ -84,6 +103,16 @@ export declare class Renderer {
     lightCount: number;
     expo: StorageBuffer;
     cascades: number[];
+    /** how each cascade's light view is fitted (updateShadows): its eye at least `back` m toward the light from the
+     *  cascade's centre and always its bounding sphere's radius plus `reach` (casters that far past the sphere toward the
+     *  light still shadow it: hills, towers, a dragon overhead); its depth to at least `far` m and always past the
+     *  sphere's far side. At the default cascades this is the old fixed 600 m back, 1400 m deep; a flight game's long
+     *  cascades ([40, 160, 600] m, more) push both out with their radius. */
+    shadowFit: {
+        back: number;
+        reach: number;
+        far: number;
+    };
     shadowsOn: boolean;
     /** the sea's mirror of the scene (a night scene may not need it) */
     mirror: boolean;
@@ -158,12 +187,13 @@ export declare class Renderer {
     private compositeLdr;
     private lensPass;
     lensU: UniformBuffer<any>;
-    constructor(kit: Kit, terrain: TerrainMaps, atmo: Atmosphere, half: number);
+    constructor(kit: Kit, terrain: TerrainMaps, atmo: Atmosphere, half: number, opts?: RendererOptions);
     /** the sky goes last in the opaque passes, where nothing wrote depth (a game's own sky shader, or loom's) */
     addSky(shader?: any, bind?: Record<string, unknown>): void;
     /** small point lights (fallen stars, lamps, blooms): the nearest MAX_LIGHTS to the camera are kept */
     setPointLights(list: PointLight[], cam: ArrayLike<number>): void;
-    /** fit the three cascades around the camera's view for a key light direction */
+    /** fit the three cascades around the camera's view for a key light direction (each a sphere round its stretch of the
+     *  view, the light's eye and depth from its radius: shadowFit), texel-snapped so they don't crawl */
     updateShadows(cam: Camera, light: V3): Float32Array<ArrayBufferLike>[];
     /** the mirrored camera for the sea's reflection (call after the main camera has been updated) */
     updateReflection(cam: Camera, seaLevel: number): void;

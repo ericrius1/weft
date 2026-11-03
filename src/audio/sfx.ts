@@ -26,6 +26,8 @@ export class Sfx {
 
   /** a fire's loops (its roar and crackle, a dragon's breath) */
   private fireL: LayerSet;
+  /** the breath's ignition: armed while it's out, played as it catches */
+  private igniteArmed = true;
 
   constructor(private core: Core) { this.fireL = new LayerSet(core); }
 
@@ -141,6 +143,12 @@ export class Sfx {
       const crk = this.fireL.layer('crackle', 'loop.fireCrackle', { bus: 'sfx', positional: true, rev: 0.2 }, 0.42 * Math.min(1, lvl) * gF, 0.5);
       const jet = this.fireL.layer('breath', 'loop.fireBreath', { bus: 'sfx', positional: true, rev: 0.3, echo: 0.15 }, 0.8 * br * gB, 0.12);
       if (F) { roar?.pos(F.pos); crk?.pos(F.pos); jet?.pos(F.breathPos); }
+      // (the breath catching: the whump of its ignition, once each time it starts from nothing)
+      if (br < 0.04) this.igniteArmed = true;
+      else if (F && br > 0.15 && this.igniteArmed) {
+        this.igniteArmed = false;
+        c.play(this.buf('fire.ignite'), { bus: 'sfx', pos: F.breathPos, gain: 0.75, rate: c.rng.range(0.94, 1.06), rev: 0.3, echo: 0.2 * this.echoScale, ref: 16, group: 'ignite' });
+      }
     }
 
     // plunge / emerge (with hysteresis: bobbing at the surface doesn't chatter; not again within a moment)
@@ -312,6 +320,11 @@ export class Sfx {
       case 'wingbeat': {
         const a = clamp(e.size, 0, 1);
         c.play(this.buf('dragon.wing'), { bus: 'sfx', pos: e.pos, gain: 0.3 + 0.45 * a, rate: r(0.92, 1.05) * (1.1 - 0.2 * a), rev: 0.2, ref: 18, group: 'wing' });
+        break;
+      }
+      case 'ignite': {
+        const a = clamp(e.amount, 0, 1);
+        c.play(this.buf('fire.ignite'), { bus: 'sfx', pos: e.pos, gain: 0.45 + 0.45 * a, rate: r(0.94, 1.06) * (1.08 - 0.12 * a), rev: 0.3, echo: 0.2 * a * this.echoScale, ref: 16, group: 'ignite' });
         break;
       }
       case 'douse': {

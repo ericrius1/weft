@@ -171,7 +171,9 @@ fn shadowCascadeCoord(wp: vec3f, i: i32) -> vec3f {
   let lp = m * vec4f(wp, 1.0);
   return vec3f(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5, lp.z);
 }
+// (the cascades' size, texels a side: RendererOptions.shadowSize; SHADOW_RES the default's, kept for shaders that read it)
 const SHADOW_RES: f32 = 2048.0;
+fn shadowRes() -> f32 { return f32(textureDimensions(shadowTex).x); }
 fn cascadeReach(wp: vec3f) -> f32 {
   let d = dot(wp - frame.camPos, frame.camFwd);
   return 1.0 - smoothstep(world.cascades.z * 0.6, world.cascades.z * 0.98, d);
@@ -182,12 +184,13 @@ fn cascadeShadow(wp: vec3f, n: vec3f, px: vec2f) -> f32 {
   if (d > world.cascades.x) { ci = 1; }
   if (d > world.cascades.y) { ci = 2; }
   if (d > world.cascades.z) { return 1.0; }
-  let texelW = select(select(world.cascades.z, world.cascades.y, ci == 1), world.cascades.x, ci == 0) * 2.2 / SHADOW_RES;
+  let res = shadowRes();
+  let texelW = select(select(world.cascades.z, world.cascades.y, ci == 1), world.cascades.x, ci == 0) * 2.2 / res;
   let off = n * texelW * 1.5 + world.lightDir * texelW * 1.0;
   let sc = shadowCascadeCoord(wp + off, ci);
   if (any(sc.xy < vec2f(0.0)) || any(sc.xy > vec2f(1.0)) || sc.z > 1.0 || sc.z < 0.0) { return 1.0; }
   let rot = rot2(ign(px) * TAU);
-  let r = world.cascades.w / SHADOW_RES * select(1.0, 0.6, ci > 0);
+  let r = world.cascades.w / res * select(1.0, 0.6, ci > 0);
   var POISSON = array<vec2f, 8>(
     vec2f(-0.326, -0.406), vec2f(-0.840, -0.074), vec2f(-0.696, 0.457), vec2f(-0.203, 0.621),
     vec2f(0.962, -0.195), vec2f(0.473, -0.480), vec2f(0.519, 0.767), vec2f(0.185, -0.893));

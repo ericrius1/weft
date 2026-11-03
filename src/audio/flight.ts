@@ -17,6 +17,9 @@ export class Flight {
   private skim = { level: 0, target: 0, last: -10, pos: [0, 0, 0] as V3, speed: 0 };
   /** 0..1, read by the music (adventure layer) */
   intensity = 0;
+  /** the rendered wind of fast flight (loop.windRush) over the rest, rising with the speed past ~15 m/s, its rate with
+   *  it: its level (0, the default: off — a dragon's flight wants about 1) */
+  windRush = 0;
 
   constructor(private core: Core) { this.layers = new LayerSet(core); this.ph = [0, 1, 2, 3].map(() => core.rng.range(0, 50)); }
 
@@ -63,6 +66,10 @@ export class Flight {
     L.layer('tbRoar', 'noise.brown', { bus: 'sfx', filter: 'lowpass', freq: 120, q: 0.9, offset: 0.45 }, f * 0.32 * tb * (0.75 + 0.5 * buffet), 0.25)
       ?.freq(90 + 260 * tb, 0.3);
     L.layer('tbTear', 'noise.white', { bus: 'sfx', filter: 'highpass', freq: 3500, q: 0.5, offset: 0.55 }, f * 0.07 * tb * tb * (0.7 + 0.6 * gL), 0.25);
+    // the rendered rush of fast flight (opt-in)
+    const wr = L.layer('windRush', 'loop.windRush', { bus: 'sfx', filter: 'lowpass', freq: 2000, q: 0.5, offset: 0.3, rev: 0.08 },
+      f * this.windRush * 0.42 * sstep(12, 70, sp) * (0.8 + 0.4 * buffet) * (1 - 0.25 * high), 0.2);
+    wr?.rate(0.82 + 0.3 * Math.min(v, 1.4), 0.25); wr?.freq(900 + 7000 * Math.pow(Math.min(v, 1.3), 1.2), 0.2);
     // spacious air when high
     L.layer('airy', 'noise.pink', { bus: 'sfx', filter: 'bandpass', freq: 3200, q: 0.4, rev: 0.7, offset: 0.8 }, f * 0.03 * high * (0.5 + 0.5 * v), 0.6);
 

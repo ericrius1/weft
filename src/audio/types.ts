@@ -88,6 +88,9 @@ export type AudioEvent =
   | { type: 'dragonRoar'; pos: V3; size: number; pitch?: number }
   /** one of a dragon's wingbeats (size 0..1: a cruising stroke .. a hover's heavy push) */
   | { type: 'wingbeat'; pos: V3; size: number }
+  /** a fire catching: a hiss of gas, a whump, the flare (amount 0..1). A state's fire breath plays one by itself each
+   *  time it starts from nothing */
+  | { type: 'ignite'; pos: V3; amount: number }
   /** a fire drowned by a mass of water: the crash, a great hiss of steam, the sputter (amount 0..1) */
   | { type: 'douse'; pos: V3; amount: number }
   /** the score: start the next piece now, or rest a while (a scene's cue — logged with the rest, so a film's offline
