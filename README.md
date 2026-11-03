@@ -89,8 +89,32 @@ of its own, `dist/weft` and `dist/loom`. Every project depends on those branches
 "@ericrius1/loom": "git+https://github.com/ericrius1/weft.git#dist/loom"
 ```
 
-and takes the latest with `npm update @ericrius1/weft @ericrius1/loom` (its lockfile holds the commit it has till
-then). Bump the package's `version` and its CHANGELOG with what changed, so a project's lockfile says which it has.
+and never has to be bumped by hand: the next dev server, build or deploy of every project takes the branches' tips.
+Each project has the same small script, [`tools/engine-latest.mjs`](tools/engine-latest.mjs) (this copy is the
+canonical one; copy it over the projects' when it changes), wired in as
+
+```json
+"predev":   "node tools/engine-latest.mjs",
+"prebuild": "node tools/engine-latest.mjs --strict",
+"weft":     "node tools/engine-latest.mjs --strict"
+```
+
+and wherever a deploy builds without `npm run build`: the Vercel projects' `installCommand` (`npm ci && node
+tools/engine-latest.mjs --strict`: PortfolioII, Universe), Boulder's Dockerfile (Railway: after `npm ci`), and the
+deploy scripts that call `vite build` themselves (Seven Havens, Aether, Cell, Universe). It reads the tips of
+`dist/weft` and `dist/loom` over HTTPS (no git needed, ~0.3 s; nothing else happens when the project is already
+there), and when the installed or locked commit is behind, moves it: `npm update` where git is installed (the lockfile
+moves too: commit it), or `npm install --no-save` of the tip's commit where it isn't (Railway's slim Node image; npm
+takes the commit's tarball from GitHub). It checks the result. `--strict` fails the build when the tip can't be
+confirmed; without it (dev) an offline machine is told so and runs on what it has. `ENGINE_LATEST=0` skips it.
+
+So a fix propagates by pushing weft's `main`: once dist.yml has pushed the branches (a minute or two), every project's
+next `npm run dev` or build has it. A project only *changes* when it is next built: Vercel/Railway projects on their
+next deploy, the builds copied into PortfolioII's `public/` (Cell, The Gem Dancers, Gong Bong) when they're rebuilt
+and copied, Seven Havens and Aether when their `tools/deploy.sh` runs again. Dev servers use the dist builds too, the
+same bits a deploy ships (loom's audio worker only loads from dist); `WEFT_LOCAL=1 npm run dev`, where a project has
+it, compiles `../weft`'s source in for live engine work. Bump the package's `version` and its CHANGELOG with what
+changed, so a project's lockfile says which it has.
 
 ## License
 
