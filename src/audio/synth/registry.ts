@@ -90,6 +90,8 @@ export const BANK: BankItem[] = [
   { key: 'splash.s', kind: 'splash', params: { size: 0.22 }, variants: 3 },
   { key: 'splash.m', kind: 'splash', params: { size: 0.48 }, variants: 3 },
   { key: 'splash.l', kind: 'splash', params: { size: 0.75 }, variants: 3 },
+  // (a dragon going in, a boulder: sfx.ts's splash takes it for the biggest)
+  { key: 'splash.xl', kind: 'splash', params: { size: 1.0 }, variants: 2 },
   { key: 'slap', kind: 'slap', params: { size: 0.5 }, variants: 3 },
   { key: 'drop', kind: 'drop', params: {}, variants: 6 },
   // the glove's magic

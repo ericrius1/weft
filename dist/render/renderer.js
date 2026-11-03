@@ -133,14 +133,14 @@ export class Renderer {
         this.bloom = k.texture({ label: 'bloom', format: 'rgba16float', size: 'render', scale: 0.5, mips: BLOOM_LEVELS, usage: ['render', 'sample'] });
         this.shadow = k.texture({ label: 'shadow', format: 'depth32float', size: [SZ, SZ, 3], usage: ['render', 'sample'] });
         this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
-        this.ripples = new Ripples(k);
+        this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
         this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
         this.clouds = new Clouds(k, terrain.heightTex, this.depth, half);
         // the environment, shared by every surface shader (group 1)
         k.shareGroup(1, envShader, {
             lighting: atmo.lighting, skyTex: atmo.skyView, aerialTex: atmo.aerial,
             heightTex: terrain.heightTex, normalTex: terrain.normalTex, splatTex: terrain.splatTex, maskTex: terrain.maskTex,
-            shadowTex: this.shadow, rippleTex: this.ripples.pp.read, hfShadowTex: this.hf.shown, cloudShadowTex: this.clouds.smap,
+            shadowTex: this.shadow, rippleTex: this.ripples.out, hfShadowTex: this.hf.shown, cloudShadowTex: this.clouds.smap,
             plights: this.lights,
         }, 'env');
         this.clouds.build();

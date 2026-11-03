@@ -59,6 +59,8 @@ export interface World {
   misc: Vec4;
   under: Vec4;
   lights: Vec4;
+  uwAbs: Vec4;
+  uwScat: Vec4;
 }
 
 declare const shader: Shader<{ Frame: Frame; World: World }, 'frame' | 'world' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;

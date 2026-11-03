@@ -59,6 +59,8 @@ export interface World {
   misc: Vec4;
   under: Vec4;
   lights: Vec4;
+  uwAbs: Vec4;
+  uwScat: Vec4;
 }
 export interface HF {
   win: Vec4;

@@ -1,7 +1,7 @@
 import type { Kit, Texture, RenderPass, RunEntry, View, UniformBuffer, StorageBuffer, V3 } from '@ericrius1/weft';
 import { Camera } from '@ericrius1/weft';
 import type { Atmosphere } from '../world/sky';
-import { Ripples } from '../world/ripples';
+import { Ripples, type RippleOptions } from '../world/ripples';
 import { TerrainShadow } from './hfshadow';
 import { Clouds } from './clouds';
 import { Cinema } from './cinema';
@@ -46,6 +46,8 @@ export interface RendererOptions {
     shadowSize?: number;
     /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */
     terrainShadowSize?: number;
+    /** the ripple window: cells across, metres a cell (default 256 at 0.22 m; `ripples.configure` changes it later) */
+    ripples?: RippleOptions;
 }
 export declare class Renderer {
     private kit;

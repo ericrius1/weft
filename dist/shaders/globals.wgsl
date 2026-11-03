@@ -31,5 +31,7 @@ struct World {
   misc: vec4f,                         // x terrain shadow ready, y cloud shadow strength, z low-cloud cover, w aerial layering
   under: vec4f,                        // x how far under the water the camera is (0..1, eased), y camera depth (m), z surface y, w murk
   lights: vec4f,                       // x point lights in use
+  uwAbs: vec4f,                        // the water's absorption (1/m, rgb) under the surface, w 1 to use it (0: the lagoon's)
+  uwScat: vec4f,                       // its scattering (1/m, rgb), w 1 to use it
 }
 @group(0) @binding(1) var<uniform> world: World;
