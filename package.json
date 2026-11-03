@@ -1,6 +1,6 @@
 {
   "name": "@ericrius1/weft",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A thin WebGPU kit: a frame is an explicit, ordered list of passes over named resources, and WGSL is the single definition of the data. With a Vite plugin for typed, hot-reloading .wgsl imports.",
   "type": "module",
   "license": "MIT",
@@ -72,5 +72,5 @@
       "optional": true
     }
   },
-  "gitHead": "87e97cabb81effd03eb295391655c9172b18f1e5"
+  "gitHead": "8de4870fc4bce5e66a3a40f0b57ef003c3e2c32f"
 }

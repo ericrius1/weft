@@ -595,8 +595,9 @@ export class Kit {
 }
 /** dynamic resolution: watches the GPU frame time (timestamp queries) and steps renderScale between min and max to
  *  keep it under `budgetMs` — down quickly when over, up slowly when there's room. Steps are coarse (each one reallocates
- *  the screen-sized targets) and at most one every `interval` seconds. Where the GPU can't time itself (a phone's Safari
- *  has no timestamp-query) it paces by the frames' intervals instead — see `paced` — unless `paced` is false. */
+ *  the screen-sized targets) and at most one every `interval` seconds. Where the GPU can't time itself (no
+ *  timestamp-query, or timestamps that don't add up: profiler.trusted) it paces by the frames' intervals instead — see
+ *  `paced` — unless `paced` is false. */
 export class AutoResolution {
     budgetMs;
     min = 0.5;
@@ -629,7 +630,7 @@ export class AutoResolution {
     update(kit) {
         const p = kit.profiler;
         p.force = true;
-        if (!p.available) {
+        if (!p.available || !p.trusted) {
             if (this.paced)
                 this.pace(kit);
             return;

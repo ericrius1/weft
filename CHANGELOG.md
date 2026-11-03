@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.3
+
+- **From GitHub only**: npm is retired — every project takes the `dist/weft` and `dist/loom` branches (README,
+  Releasing), built from each push to main; the npm publishing workflow is gone (0.2.2 never made it there: npm refused
+  the publish).
+- **`profiler.trusted`**: whether the device's timestamps add up. A frame's GPU time can't stay far past the time
+  between its frames, and an iPhone's (WebKit, iOS 26; Chrome there is WebKit too) came out at seconds a frame at 12
+  frames a second — `AutoResolution` read that as hopelessly over budget and held the render at its least. Of the first
+  60 frames read back, more than half over 200 ms and four times the frames' interval (`wallMs`, by the clock) and
+  they're not trusted, for good (a warning says so); `AutoResolution` then paces by the frames' intervals, as it does
+  with no timestamp-query at all.
+- **`SerialCompiler`** (`src/compile.ts`), a compile scheduler for `kit.compiler`: one pipeline at a time, a frame
+  apart. WebKit compiles them one by one and answers nothing else meanwhile: a hundred asked for at once — a world built
+  in the background while another shows (Universe building Seven Havens' gardens) — showed no frame for ten seconds on
+  an iPhone 16e. Nothing held back (kit.ready() waits for them all); one needed before its turn is made on the spot.
+
 ## 0.2.2
 
 - **`AutoResolution` paces by the frames where the GPU can't time itself**: a phone's Safari has no `timestamp-query`, so there it never moved and a phone drew at the scale it started at. With no GPU timing it now watches the frames' intervals (a second's worth at a time, their slower quarter against the display's own interval, 60 Hz at the fastest, times `slack`, 1.25): over, down by about what it'd take to keep up; on time three seconds running, a step up, and a scale that ran late just after it was stepped up to isn't tried again for twenty seconds. `paced: false` keeps the old behaviour (stay put). After Universe's FramePace.

@@ -4,6 +4,7 @@ export { StructView, StructArray, type DeepPartial } from './struct';
 export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction, type TextureDesc, type StorageOptions } from './resources';
 export { Compute, RenderPass, Draw, RawItem, type ComputeOptions, type RenderPassOptions, type DrawOptions, type BlendMode, type RunItem, type PassItem, type DrawEncoder, type Compiler, type PipelineRecord, type AnyPipelineRecord, type SharedPipeline, type Waitable } from './passes';
 export { DrawBundle } from './bundle';
+export { SerialCompiler } from './compile';
 export { BindError, SharedGroup, type Bindable, type SamplerName } from './binder';
 export { Camera } from './camera';
 export { Input, PAD, type Device } from './input';

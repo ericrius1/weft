@@ -17,6 +17,15 @@ export declare class Profiler {
     lastMs: Map<string, number>;
     /** bumped with each completed frame's raw numbers (a frame read back is counted once) */
     serial: number;
+    /** whether the device's timestamps add up: a frame's GPU time can't stay far past the time between its frames, and
+     *  an iPhone's Safari (WebKit, iOS 26) gave frames of seconds at 12 a second — most of the first frames read back
+     *  that way and it's false for good, and what steers by it (AutoResolution) paces by the frames' intervals instead */
+    trusted: boolean;
+    /** the time between frames (ms, smoothed), by the clock: what a frame's GPU time is held against */
+    wallMs: number;
+    private lastBegin;
+    private judged;
+    private implausible;
     private qs;
     private resolveBuf;
     private readBuf;
@@ -34,5 +43,8 @@ export declare class Profiler {
     /** resolve what this run wrote (appended to the run's command buffers) */
     resolve(cbs: GPUCommandBuffer[]): void;
     endFrame(): void;
+    /** a frame's GPU time against the clock: over 200 ms and four times the frames' own interval is no GPU's time; of
+     *  the first 60 judged, more than half like that and the timestamps aren't trusted */
+    private judge;
 }
 //# sourceMappingURL=profiler.d.ts.map
