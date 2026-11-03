@@ -25,6 +25,15 @@ export class Profiler {
   lastMs = new Map<string, number>();
   /** bumped with each completed frame's raw numbers (a frame read back is counted once) */
   serial = 0;
+  /** whether the device's timestamps add up: a frame's GPU time can't stay far past the time between its frames, and
+   *  an iPhone's Safari (WebKit, iOS 26) gave frames of seconds at 12 a second — most of the first frames read back
+   *  that way and it's false for good, and what steers by it (AutoResolution) paces by the frames' intervals instead */
+  trusted = true;
+  /** the time between frames (ms, smoothed), by the clock: what a frame's GPU time is held against */
+  wallMs = 0;
+  private lastBegin = 0;
+  private judged = 0;
+  private implausible = 0;
   private qs: GPUQuerySet | null = null;
   private resolveBuf: GPUBuffer | null = null;
   private readBuf: GPUBuffer | null = null;
@@ -43,6 +52,9 @@ export class Profiler {
   get active() { return this.available && (this.force || this.kit.overlay.open); }
 
   beginFrame() {
+    const now = performance.now();
+    if (this.lastBegin) { const d = now - this.lastBegin; if (d < 1000) this.wallMs = this.wallMs ? this.wallMs * 0.9 + d * 0.1 : d; }
+    this.lastBegin = now;
     // (timing again after a while off: what it had is old)
     if (this.active && !this.on) { this.ms.clear(); this.seen.clear(); }
     this.on = this.active;
@@ -107,10 +119,23 @@ export class Profiler {
       for (const k of this.ms.keys()) if (r - (this.seen.get(k) ?? 0) > this.stale) { this.ms.delete(k); this.seen.delete(k); }
       if (last > first) {
         const total = (last - first) / 1e6;
+        this.judge(total);
         this.lastFrameMs = total;
         this.serial++;
         this.frameMs = this.frameMs ? this.frameMs * 0.9 + total * 0.1 : total;
       }
     }).catch(() => { this.pending = false; });
+  }
+
+  /** a frame's GPU time against the clock: over 200 ms and four times the frames' own interval is no GPU's time; of
+   *  the first 60 judged, more than half like that and the timestamps aren't trusted */
+  private judge(total: number) {
+    if (!this.trusted || this.judged >= 60 || !this.wallMs) return;
+    this.judged++;
+    if (total > Math.max(200, 4 * this.wallMs)) this.implausible++;
+    if (this.judged >= 20 && this.implausible > this.judged / 2) {
+      this.trusted = false;
+      console.warn(`[weft] the GPU's timestamps don't add up here (frames of ${Math.round(total)} ms, ${Math.round(this.wallMs)} ms apart): not trusted`);
+    }
   }
 }

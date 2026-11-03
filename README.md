@@ -80,10 +80,17 @@ local path (`"@ericrius1/weft": "file:../weft/packages/weft"`), then rebuild her
 
 ## Releasing
 
-Bump the package's `version` (and its CHANGELOG), push to `main`: `.github/workflows/publish.yml` builds, tests and
-publishes every package whose version npm hasn't seen, weft before loom. npm trusts that workflow directly (trusted
-publishing, set once per package on npmjs.com: GitHub Actions, `ericrius1/weft`, workflow `publish.yml`), so no token
-is kept anywhere and there's no 2FA prompt; each release carries provenance linking it to its commit.
+GitHub is where the packages come from — not npm (retired: nothing goes there any more). Push to `main`:
+`.github/workflows/dist.yml` builds and tests both packages and commits each, packed as npm would pack it, to a branch
+of its own, `dist/weft` and `dist/loom`. Every project depends on those branches,
+
+```json
+"@ericrius1/weft": "git+https://github.com/ericrius1/weft.git#dist/weft",
+"@ericrius1/loom": "git+https://github.com/ericrius1/weft.git#dist/loom"
+```
+
+and takes the latest with `npm update @ericrius1/weft @ericrius1/loom` (its lockfile holds the commit it has till
+then). Bump the package's `version` and its CHANGELOG with what changed, so a project's lockfile says which it has.
 
 ## License
 
