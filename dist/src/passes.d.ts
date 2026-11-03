@@ -230,6 +230,9 @@ export interface DrawOptions<S extends Shader = Shader> {
     depthBiasSlopeScale?: number;
     depthBiasClamp?: number;
     unclippedDepth?: boolean;
+    /** alpha to coverage (a multisampled pass only: on a one-sample pass it's drawn without). A fragment shader that
+     *  declares `override ALPHA_TO_COVERAGE: bool` is told whether it's on, so it can cut out by alpha (discard) where
+     *  it isn't */
     alphaToCoverage?: boolean;
     count?: Num;
     instances?: Num;

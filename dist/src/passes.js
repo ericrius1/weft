@@ -278,6 +278,8 @@ function pickEntry(shader, stage, name, label) {
         return conventional;
     throw new BindError(`${label}: ${shader.id} has several ${stage} entries (${list.map((e) => e.name).join(', ')}): pick one`);
 }
+/** the override a fragment shader may declare to learn whether its draw's alpha to coverage is on (1) or not (0) */
+const A2C = 'ALPHA_TO_COVERAGE';
 function constantsFor(shader, entry, constants) {
     if (!constants)
         return undefined;
@@ -450,20 +452,25 @@ export class Draw {
         const blends = Array.isArray(o.blend) ? o.blend : f.colors.map(() => o.blend);
         const masks = Array.isArray(o.writeMask) ? o.writeMask : f.colors.map(() => o.writeMask ?? 0xf);
         const targets = f.colors.map((format, i) => ({ format, blend: blendOf(blends[i]), writeMask: i < outs ? masks[i] : 0 }));
+        const a2c = !!o.alphaToCoverage && f.samples > 1;
+        const tells = !!this.fs && !!this.shader.reflect.entries.find((e) => e.name === this.fs)?.overrides.includes(A2C) && !(o.constants && A2C in o.constants);
+        const fsConstants = tells ? { ...o.constants, [A2C]: a2c ? 1 : 0 } : o.constants;
         const desc = {
             label: this.label,
             layout: this.binder.layout,
             vertex: { module, entryPoint: this.vs, constants: constantsFor(this.shader, this.vs, o.constants), buffers: o.vertexBuffers?.map((v) => v.layout) },
             primitive: { topology: o.topology ?? 'triangle-list', cullMode: o.cull ?? 'back', frontFace: o.frontFace ?? 'ccw', unclippedDepth: o.unclippedDepth && this.kit.features.has('depth-clip-control') ? true : undefined },
             // (WebGPU refuses alpha to coverage without multisampling: such a pipeline would fail and never draw)
-            multisample: { count: f.samples, alphaToCoverageEnabled: !!o.alphaToCoverage && f.samples > 1 },
+            multisample: { count: f.samples, alphaToCoverageEnabled: a2c },
         };
-        if (o.alphaToCoverage && f.samples <= 1)
+        // (a fragment shader declaring `override ALPHA_TO_COVERAGE` is told whether it's on — to cut out by alpha itself
+        // when its pass has one sample, a phone's — unless the draw sets it; one that doesn't is warned once)
+        if (o.alphaToCoverage && f.samples <= 1 && !tells)
             this.kit.warnOnce(`a2c:${this.label}`, `${this.label}: alphaToCoverage needs a multisampled pass (${this.pass.label} has 1 sample): drawn without it`);
         if (o.topology === 'triangle-strip' || o.topology === 'line-strip')
             desc.primitive.stripIndexFormat = o.indices ? (o.indices.format ?? 'uint32') : undefined;
         if (this.fs)
-            desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, o.constants), targets };
+            desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, fsConstants), targets };
         if (f.depth) {
             desc.depthStencil = {
                 format: f.depth,

@@ -215,13 +215,20 @@ export class Texture implements Resource {
   /** (re)allocate if the wanted size changed; returns true when it did */
   alloc(): boolean {
     if (this.destroyed) return false;
-    const [w, h, l] = this.wanted();
+    let [w, h, l] = this.wanted();
+    const m = this.desc.mips;
+    const dim = this.desc.dimension ?? '2d';
+    // (a size relative to the canvas starts at 1×1, before the canvas is measured — or is that small in a tiny
+    // window — and a mip count it can't hold is a validation error: such a texture is made just big enough to hold
+    // its levels (its longer side 2^(mips-1)), so every mip view still exists; it's sized for real once the canvas is)
+    if (typeof m === 'number' && m > 1 && this.relative && dim === '2d') {
+      const least = 1 << (m - 1);
+      if (Math.max(w, h) < least) { if (w >= h) w = least; else h = least; }
+    }
     if (this.gpu && w === this.width && h === this.height && l === this.layers) return false;
     const first = !this.gpu;
     this.gpu?.destroy();
     this.width = w; this.height = h; this.layers = l;
-    const m = this.desc.mips;
-    const dim = this.desc.dimension ?? '2d';
     this.mips = m === 'full' ? Math.floor(Math.log2(Math.max(w, h, dim === '3d' ? l : 1))) + 1 : (m ?? 1);
     this.gpu = this.kit.device.createTexture({
       label: this.label, format: this.format, size: [w, h, l], dimension: dim, mipLevelCount: this.mips,
