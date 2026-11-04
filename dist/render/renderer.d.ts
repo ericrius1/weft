@@ -42,6 +42,9 @@ export interface RendererOptions {
      *  into `hdr` and `depth`, no multisampled targets and no depth resolve; an `alphaToCoverage` draw is drawn without
      *  it — a shader declaring `override ALPHA_TO_COVERAGE: bool` is told which, to cut out by alpha instead) */
     msaa?: 1 | 4;
+    /** the clouds: loom's volumetric ones (the default), or 'none' — never made, for a game that brings its own
+     *  (r.clouds.use(source)) or wants a clear sky */
+    clouds?: 'volumetric' | 'none';
     /** each of the three shadow cascades' size, texels a side (default SHADOW_SIZE, 2048) */
     shadowSize?: number;
     /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */

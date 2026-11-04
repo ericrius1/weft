@@ -3,6 +3,10 @@
 // flying through tear tunnels into and that heals; lightning in the storm cells. Each frame: a quarter-res march (each
 // texel one of its 2×2 half-res pixels in turn), a temporal resolve into the half-res history, a full-res composite.
 // Weather presets set the mood; `weather` can be eased toward another over time.
+// Or a game brings its own clouds (sprites, layers, anything): `use(source)` runs its passes where the march ran — it
+// fills the shadow map (`smap`: every surface's cloudShadowAt reads it) and says how far the camera is in cloud
+// (`inside`: the exposure's lift, a game's sound) — and the volumetric resources are given back. A renderer made with
+// `clouds: 'none'` never makes them (only the shadow map, the four tiny outputs the composite and the shafts bind).
 import type { Kit, Texture, Compute, UniformBuffer, RunEntry, RenderPass, StorageBuffer, V3 } from '@ericrius1/weft';
 import { blueNoiseTexture } from '@ericrius1/weft';
 import cloudShader from '../shaders/clouds.wgsl';
@@ -16,6 +20,16 @@ const LVOL_N = 160, LVOL_NY = 40, LVOL_SIZE = 8000;
 const WAKE_N = 256;
 const WAKE_SIZE = 2048;
 export const CLOUD_Y0 = 180, CLOUD_Y1 = 7200;
+
+/** a game's own clouds, run by the renderer in place of the volumetric ones (Clouds.use) */
+export interface CloudSource {
+  /** compute before the scene (its noise, its shadow into `smap`): run every frame, the source keeps its own cadence */
+  bakes(): RunEntry[];
+  /** after the scene's depth is complete (the water in), before the mist and the effects: its draws over `hdr` */
+  render(): RunEntry[];
+  /** how far the camera is inside cloud, 0..1 (read each frame) */
+  readonly inside: number;
+}
 /** the top of the ordinary layer (the storm towers rise above it to CLOUD_Y1) */
 export const CLOUD_LAYER = 2600;
 const MAX_CELLS = 8;
@@ -93,7 +107,7 @@ export class Clouds {
   on = true;
   /** the camera is under the sea: no march, no composite (the sea's underside shows the sky through its window) */
   hidden = false;
-  get live() { return this.on && !this.hidden; }
+  get live() { return this.on && !this.hidden && this.vol && !this.src; }
   /** the clouds' own clock (s) */
   time = 900;
   /** the camera is up in or above the slab (the composite goes after the mist) */
@@ -159,9 +173,30 @@ export class Clouds {
     if (s.cells) this.cells = s.cells.map((c) => ({ ...c }));
   }
 
-  constructor(private kit: Kit, private heights: Texture, private depth: Texture, half: number) {
+  /** the volumetric clouds exist (not a renderer made with clouds: 'none', nor given back to a source) */
+  get volumetric() { return this.vol; }
+  /** the game's own clouds, if it brought them (use()) */
+  get source() { return this.src; }
+  private vol: boolean;
+  private src: CloudSource | null = null;
+
+  constructor(private kit: Kit, private heights: Texture, private depth: Texture, half: number, o: { volumetric?: boolean } = {}) {
     const k = kit;
+    this.vol = o.volumetric !== false;
     this.u = k.uniforms(cloudShader.structs.CloudU, 'clouds');
+    const S = 2 * half + 3000;
+    this.cloudMap = [-S / 2, -S / 2, S, 700];
+    this.smap = k.texture({ label: 'clouds.shadow', format: 'rgba8unorm', size: [SMAP_N, SMAP_N], usage: ['storage', 'sample'] });
+    if (!this.vol) {
+      // (none: what the composite and the shafts bind, a texel each; the rest never made)
+      const one = (label: string, format: GPUTextureFormat) => k.texture({ label, format, size: [1, 1], usage: ['storage', 'sample', 'copy-src', 'copy-dst'] });
+      this.farOut = one('clouds.far', 'rgba16float'); this.farMeta = one('clouds.farMeta', 'rgba32float');
+      this.nearOut = one('clouds.near', 'rgba16float'); this.nearMeta = one('clouds.nearMeta', 'rgba32float');
+      this.farHist = this.farOut; this.farMetaHist = this.farMeta; this.nearHist = this.nearOut; this.nearMetaHist = this.nearMeta;
+      this.base = this.detail = this.weatherTex = this.ground = this.lvol = this.wake = this.wakeNext = this.blue = null!;
+      this.towers = null!; this.q = this.h = null!;
+      return;
+    }
     this.base = k.texture({ label: 'clouds.noise.base', format: 'r32float', size: [128, 128, 128], dimension: '3d', mips: 8, usage: ['storage', 'sample'] });
     this.detail = k.texture({ label: 'clouds.noise.detail', format: 'rgba8unorm', size: [64, 64, 64], dimension: '3d', mips: 7, usage: ['storage', 'sample'] });
     this.weatherTex = k.texture({ label: 'clouds.weather', format: 'rgba16float', size: [WEATHER_N, WEATHER_N], usage: ['storage', 'sample'] });
@@ -170,7 +205,6 @@ export class Clouds {
     this.towers = k.storage({ label: 'clouds.towers', size: TW_N * TW_NY * TW_N * MAX_CELLS * 8, usage: ['storage', 'copy-src'] });
     this.wake = k.texture({ label: 'clouds.wake', format: 'rgba32float', size: [WAKE_N, WAKE_N], usage: ['sample', 'copy-dst'] });
     this.wakeNext = k.texture({ label: 'clouds.wake.next', format: 'rgba32float', size: [WAKE_N, WAKE_N], usage: ['storage', 'copy-src'] });
-    this.smap = k.texture({ label: 'clouds.shadow', format: 'rgba8unorm', size: [SMAP_N, SMAP_N], usage: ['storage', 'sample'] });
     this.blue = blueNoiseTexture(k, 64, 11);
     const tex = (label: string, scale: number, format: GPUTextureFormat, usage: ('storage' | 'sample' | 'copy-src' | 'copy-dst')[]) =>
       k.texture({ label, format, size: 'render', scale, usage });
@@ -190,12 +224,28 @@ export class Clouds {
     this.nearMeta = tex('clouds.nearMeta', 0.5, 'rgba32float', ['storage', 'sample', 'copy-src']);
     this.nearHist = tex('clouds.nearHist', 0.5, 'rgba16float', ['sample', 'copy-dst']);
     this.nearMetaHist = tex('clouds.nearMetaHist', 0.5, 'rgba32float', ['sample', 'copy-dst']);
-    const S = 2 * half + 3000;
-    this.cloudMap = [-S / 2, -S / 2, S, 700];
+  }
+
+  /** a game's own clouds in place of these (null: back to the volumetric ones, if they still exist). The volumetric
+   *  resources the source doesn't need — the noise volumes, the weather, light, wake and tower maps, the march's
+   *  targets and histories, ~80 MB at 1080p — are given back at once (`use(null)` won't bring them back). */
+  use(src: CloudSource | null) {
+    this.src = src;
+    if (!src || !this.vol) return;
+    this.vol = false;
+    const free: ({ destroy(): void } | { dispose(): void } | null | undefined)[] = [
+      ...this.noise, ...this.passesQ, ...this.passesH, this.bakeGround, this.bakeLight, this.bakeWeather, this.bakeShadow,
+      this.bakeWake, this.probePass, this.bakeTowers, this.base, this.detail, this.weatherTex, this.ground, this.lvol, this.wake,
+      this.wakeNext, this.towers, this.probeBuf, this.blue, this.farHist, this.farMetaHist, this.nearHist, this.nearMetaHist,
+      ...(this.q ? Object.values(this.q) : []), ...(this.h ? Object.values(this.h) : []),
+    ] as never;
+    this.kit.release(...free);
+    this.noise = []; this.passesQ = []; this.passesH = []; this.copies = [];
   }
 
   /** the passes (after the env group is shared: the march reads it) */
   build() {
+    if (!this.vol) return;
     const k = this.kit, base = this.base, detail = this.detail;
     this.noise.push(k.compute(noiseShader, { label: 'clouds.noise.base', entry: 'bakeBase', bind: { baseOut: base.mip(0), detailOut: detail.mip(0) }, threads: [128, 128, 128] }));
     this.noise.push(k.compute(noiseShader, { label: 'clouds.noise.detail', entry: 'bakeDetail', bind: { baseOut: base.mip(0), detailOut: detail.mip(0), blueIn: this.blue }, threads: [64, 64, 64] }));
@@ -296,7 +346,7 @@ export class Clouds {
   }
   /** something flew through from a to b this frame: tear a tunnel (radius m, strength 0..1) that heals */
   stamp(a: V3, b: V3, radius: number, strength = 0.95) {
-    if (this.stampList.length >= 64) return;
+    if (!this.vol || this.src || this.stampList.length >= 64) return;
     // (only where there could be cloud)
     if (Math.max(a[1], b[1]) < CLOUD_Y0 - radius || Math.min(a[1], b[1]) > CLOUD_Y1 + radius) return;
     this.stampList.push(a[0], a[1], a[2], radius, b[0], b[1], b[2], strength);
@@ -310,6 +360,8 @@ export class Clouds {
   update(dt: number, cam: V3, _cover?: number, fovY = 55 * Math.PI / 180) {
     this.time += dt;
     this.frame++;
+    // (a game's own clouds: theirs is the camera's cloud; nothing of these to run)
+    if (this.src || !this.vol) { this.inside = this.src ? this.src.inside : 0; this.above = false; return; }
     this.stepWeather(dt);
     // (the camera's cloud, read back a frame or two late)
     if (!this.probing && this.probeBuf) {
@@ -479,6 +531,8 @@ export class Clouds {
 
   /** compute before the passes: the bakes */
   bakes(): RunEntry[] {
+    if (this.src) return this.src.bakes();
+    if (!this.vol) return [];
     const out: RunEntry[] = [];
     if (this.once) { out.push(...this.noise, this.bakeGround); this.once = false; }
     out.push(this.bakeWeather, this.bakeLight, this.bakeTowers, this.bakeWake, this.wakeCopy, this.bakeShadow, this.probePass);
@@ -486,6 +540,7 @@ export class Clouds {
   }
   /** after the scene's depth is complete (the water in): march + resolve + keep the history */
   render(): RunEntry[] {
+    if (this.src) return this.hidden ? [] : this.src.render();
     if (!this.live) return [];
     return [...(this.params.marchRes === 'half' ? this.passesH : this.passesQ), ...this.copies];
   }

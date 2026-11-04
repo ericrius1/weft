@@ -1,5 +1,14 @@
 import type { Kit, Texture, RunEntry, RenderPass, V3 } from '@ericrius1/weft';
 export declare const CLOUD_Y0 = 180, CLOUD_Y1 = 7200;
+/** a game's own clouds, run by the renderer in place of the volumetric ones (Clouds.use) */
+export interface CloudSource {
+    /** compute before the scene (its noise, its shadow into `smap`): run every frame, the source keeps its own cadence */
+    bakes(): RunEntry[];
+    /** after the scene's depth is complete (the water in), before the mist and the effects: its draws over `hdr` */
+    render(): RunEntry[];
+    /** how far the camera is inside cloud, 0..1 (read each frame) */
+    readonly inside: number;
+}
 /** the top of the ordinary layer (the storm towers rise above it to CLOUD_Y1) */
 export declare const CLOUD_LAYER = 2600;
 /** the weather: how much sky is cloud, what kind, how stormy, a front sweeping through */
@@ -199,7 +208,19 @@ export declare class Clouds {
         frontPos: number;
         cells?: Cell[];
     });
-    constructor(kit: Kit, heights: Texture, depth: Texture, half: number);
+    /** the volumetric clouds exist (not a renderer made with clouds: 'none', nor given back to a source) */
+    get volumetric(): boolean;
+    /** the game's own clouds, if it brought them (use()) */
+    get source(): CloudSource | null;
+    private vol;
+    private src;
+    constructor(kit: Kit, heights: Texture, depth: Texture, half: number, o?: {
+        volumetric?: boolean;
+    });
+    /** a game's own clouds in place of these (null: back to the volumetric ones, if they still exist). The volumetric
+     *  resources the source doesn't need — the noise volumes, the weather, light, wake and tower maps, the march's
+     *  targets and histories, ~80 MB at 1080p — are given back at once (`use(null)` won't bring them back). */
+    use(src: CloudSource | null): void;
     /** the passes (after the env group is shared: the march reads it) */
     build(): void;
     /** the resolved clouds (half res: rgb in-scatter, a transmittance) — the shafts read it too */

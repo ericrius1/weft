@@ -135,7 +135,7 @@ export class Renderer {
         this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
         this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
         this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
-        this.clouds = new Clouds(k, terrain.heightTex, this.depth, half);
+        this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: opts.clouds !== 'none' });
         // the environment, shared by every surface shader (group 1)
         k.shareGroup(1, envShader, {
             lighting: atmo.lighting, skyTex: atmo.skyView, aerialTex: atmo.aerial,
