@@ -4,6 +4,7 @@ import type { Atmosphere } from '../world/sky';
 import { Ripples, type RippleOptions } from '../world/ripples';
 import { TerrainShadow } from './hfshadow';
 import { Clouds } from './clouds';
+import { SkyClouds, type SkyCloudOptions } from './skyclouds';
 import { Cinema } from './cinema';
 import { Underwater } from './underwater';
 /** the defaults: the opaque scene's samples a pixel, a shadow cascade's size (texels a side) */
@@ -42,9 +43,13 @@ export interface RendererOptions {
      *  into `hdr` and `depth`, no multisampled targets and no depth resolve; an `alphaToCoverage` draw is drawn without
      *  it — a shader declaring `override ALPHA_TO_COVERAGE: bool` is told which, to cut out by alpha instead) */
     msaa?: 1 | 4;
-    /** the clouds: loom's volumetric ones (the default), or 'none' — never made, for a game that brings its own
-     *  (r.clouds.use(source)) or wants a clear sky */
-    clouds?: 'volumetric' | 'none';
+    /** the clouds: loom's volumetric ones (the default); 'sprites' — Boulder's procedural sprite clouds and decks
+     *  (r.skyClouds: its kinds of sky, eased between; the volumetric ones never made); or 'none' — never made, for a game
+     *  that brings its own (r.clouds.use(source)) or wants a clear sky */
+    clouds?: 'volumetric' | 'sprites' | 'none';
+    /** the sprite clouds' options (clouds: 'sprites'): a phone's economies, their reach, the sky to begin with, the
+     *  ground (or set r.skyClouds.ground later), … — `half` defaults to the renderer's */
+    sky?: SkyCloudOptions;
     /** each of the three shadow cascades' size, texels a side (default SHADOW_SIZE, 2048) */
     shadowSize?: number;
     /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */
@@ -72,6 +77,9 @@ export declare class Renderer {
     ripples: Ripples;
     hf: TerrainShadow;
     clouds: Clouds;
+    /** the sprite clouds, when the renderer was made with clouds: 'sprites' (r.clouds' source; `update` steps them) —
+     *  `setSky(kind, secs)`, `ground = (x, z) => height`, and for the world uniforms `sky` and `shadowK` */
+    skyClouds: SkyClouds | null;
     cinema: Cinema;
     underwater: Underwater;
     /** the opaque scene (MSAA): add draws to it */

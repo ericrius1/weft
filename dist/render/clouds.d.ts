@@ -8,6 +8,11 @@ export interface CloudSource {
     render(): RunEntry[];
     /** how far the camera is inside cloud, 0..1 (read each frame) */
     readonly inside: number;
+    /** what the sky shaders need from it, if it says (Clouds.sky hands it on): the cirrus's cover, how overcast */
+    readonly sky?: {
+        cloudCover: number;
+        overcast: number;
+    };
 }
 /** the top of the ordinary layer (the storm towers rise above it to CLOUD_Y1) */
 export declare const CLOUD_LAYER = 2600;

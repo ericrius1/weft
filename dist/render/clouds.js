@@ -304,6 +304,8 @@ export class Clouds {
     /** what the sky shaders need from the weather (games pass it on in world): the cirrus's cover, how overcast (inside
      *  a cloud too: the scene is lit by the cloud's own diffuse grey, not the open sky) */
     get sky() {
+        if (this.src?.sky)
+            return this.src.sky;
         const W = this.weather;
         // (under a tower's anvil the sky's shut out as surely as under a deck)
         let tower = 0;

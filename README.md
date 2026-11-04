@@ -8,7 +8,8 @@ games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
   shadows from its heightfield; GTAO; valley mist; sun and moon shafts.
 - **Clouds** (`render/clouds`): Nubis-style shape and erosion noise over an evolving weather map, storm cells with
   anvils and lightning, a baked light volume, multiple-scattering octaves, two temporally resolved layers, holes torn
-  by things flying through.
+  by things flying through. Or **sprite clouds** (`clouds: 'sprites'`, `render/skyclouds`): Boulder's procedural
+  heaps, storms, lenticulars and decks, every kind of its weather and Drake's Highland, eased from sky to sky.
 - **Water**: Gerstner seas with a dispersive ripple sim round the player (Kelvin wakes, ring trains; any window size),
   refraction absorbed per channel, a planar mirror; under the sea, caustics and shafts through a medium a world can set
   (a lagoon, a peaty loch).

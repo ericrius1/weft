@@ -7,6 +7,7 @@ import lensShader from '../shaders/lens.wgsl';
 import { Ripples } from '../world/ripples';
 import { TerrainShadow } from './hfshadow';
 import { Clouds } from './clouds';
+import { SkyClouds } from './skyclouds';
 import { Cinema } from './cinema';
 import { Underwater } from './underwater';
 /** the defaults: the opaque scene's samples a pixel, a shadow cascade's size (texels a side) */
@@ -45,6 +46,9 @@ export class Renderer {
     ripples;
     hf;
     clouds;
+    /** the sprite clouds, when the renderer was made with clouds: 'sprites' (r.clouds' source; `update` steps them) —
+     *  `setSky(kind, secs)`, `ground = (x, z) => height`, and for the world uniforms `sky` and `shadowK` */
+    skyClouds = null;
     cinema;
     underwater;
     /** the opaque scene (MSAA): add draws to it */
@@ -135,7 +139,7 @@ export class Renderer {
         this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
         this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
         this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
-        this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: opts.clouds !== 'none' });
+        this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: (opts.clouds ?? 'volumetric') === 'volumetric' });
         // the environment, shared by every surface shader (group 1)
         k.shareGroup(1, envShader, {
             lighting: atmo.lighting, skyTex: atmo.skyView, aerialTex: atmo.aerial,
@@ -144,6 +148,11 @@ export class Renderer {
             plights: this.lights,
         }, 'env');
         this.clouds.build();
+        // the sprite clouds in the march's place (its resources never made: clouds 'sprites' isn't volumetric)
+        if (opts.clouds === 'sprites') {
+            this.skyClouds = new SkyClouds(k, { hdr: this.hdr, depth: this.depth, smap: this.clouds.smap }, { half, ...opts.sky });
+            this.clouds.use(this.skyClouds);
+        }
         // (a shadow pass can't have the shadow map it writes bound for sampling: those passes see a 1×1 stand-in)
         const noShadow = k.texture({ label: 'shadow.none', format: 'depth32float', size: [1, 1, 3], usage: ['render', 'sample'] });
         for (let c = 0; c < 3; c++) {
@@ -171,7 +180,8 @@ export class Renderer {
         }
         this.copy = k.copy(this.hdr, this.sceneCopy, 'scene.copy');
         this.water = k.pass({ label: 'water', color: [{ target: this.hdr, clear: false }], depth: { target: this.depth, readOnly: true } });
-        this.cinema = new Cinema(k, this.depth, this.hdr, this.clouds.outTex);
+        // (the shafts are cut by the clouds: the march's output, or the sprite clouds' cover)
+        this.cinema = new Cinema(k, this.depth, this.hdr, this.skyClouds?.cover ?? this.clouds.outTex);
         this.cloudsBelow = k.pass({ label: 'clouds.below', color: [{ target: this.hdr, clear: false }], enabled: () => this.clouds.live && !this.clouds.above });
         this.cloudsAbove = k.pass({ label: 'clouds.above', color: [{ target: this.hdr, clear: false }], enabled: () => this.clouds.live && this.clouds.above });
         this.clouds.addComposite(this.cloudsBelow);
@@ -299,8 +309,9 @@ export class Renderer {
             this.lensU.set({ a: [Ln.halation, Ln.halationRadius, Ln.threshold, Ln.aberration], b: [Ln.barrel, Ln.letterbox, Ln.sharpen, o.time], c: [this.ldr.width, this.ldr.height, 1 / this.ldr.width, 1 / this.ldr.height], d: [Ln.warmth, 0, 0, 0] });
         this.cinema.hour = o.hour;
         this.cinema.under = o.under > 0.5;
-        this.cinema.update(o.time, o.cam, o.light, o.night, this.hdr.height, o.seaLevel, this.clouds.live);
+        this.cinema.update(o.time, o.cam, o.light, o.night, this.hdr.height, o.seaLevel, this.clouds.live || (!!this.skyClouds && !this.clouds.hidden));
         this.clouds.hidden = o.cam.position[1] < o.seaLevel - 0.3;
+        this.skyClouds?.update(o.dt, o.cam.position, { night: o.night, light: o.light });
         this.clouds.update(o.dt, o.cam.position, o.cover, o.cam.fovY);
         this.underwater.update(o.time, o.dt, o.cam.position[1], o.seaLevel);
     }
