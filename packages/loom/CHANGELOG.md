@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.5
+
+- **Bring your own clouds** (`render/clouds.ts`, `render/renderer.ts`): **`r.clouds.use(source)`** runs a game's own
+  clouds (sprites, layers, anything implementing `CloudSource`: `bakes()` before the scene, `render()` after its depth,
+  `inside` 0..1) where the volumetric march ran. The source fills `r.clouds.smap`, so every surface's cloud shadows
+  and the loch's keep working, and its `inside` drives the exposure's lift in a cloud as before. The volumetric
+  resources (noise volumes, weather, light, wake and tower maps, the march's targets and histories, ~80 MB at 1080p)
+  are given back at once. **`RendererOptions.clouds: 'none'`** never makes them in the first place (just the shadow
+  map and four 1×1 targets the composite and the shafts bind): a game's own clouds, or a clear sky. `r.clouds.live`
+  is false with either; `stamp()` and the weather are no-ops. `r.clouds.volumetric` / `r.clouds.source` say which.
+
 ## 0.1.4
 
 - **A mix bus for a game's own sound** (`audio/engine.ts`): **`audio.bus('sfx' | 'music' | 'amb')`** gives `{ dry, rev,

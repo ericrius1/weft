@@ -56,6 +56,9 @@ export interface RendererOptions {
    *  into `hdr` and `depth`, no multisampled targets and no depth resolve; an `alphaToCoverage` draw is drawn without
    *  it — a shader declaring `override ALPHA_TO_COVERAGE: bool` is told which, to cut out by alpha instead) */
   msaa?: 1 | 4;
+  /** the clouds: loom's volumetric ones (the default), or 'none' — never made, for a game that brings its own
+   *  (r.clouds.use(source)) or wants a clear sky */
+  clouds?: 'volumetric' | 'none';
   /** each of the three shadow cascades' size, texels a side (default SHADOW_SIZE, 2048) */
   shadowSize?: number;
   /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */
@@ -173,7 +176,7 @@ export class Renderer {
     this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
     this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
     this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
-    this.clouds = new Clouds(k, terrain.heightTex, this.depth, half);
+    this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: opts.clouds !== 'none' });
 
     // the environment, shared by every surface shader (group 1)
     k.shareGroup(1, envShader, {
