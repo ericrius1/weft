@@ -57,6 +57,15 @@ export declare class AudioEngine {
     suspend(): void;
     /** the underlying context (null before resume) */
     get context(): BaseAudioContext | null;
+    /** a mix bus for a game's own live sound (an instrument, its own synth): `dry` into the bus as it is, `rev` a send
+     *  into the world's reverb (the space it's in: the valley's, the forest's), `echo` into the far echo — behind the
+     *  bus's volume, the master, the compressor and limiter and the start's fade, like everything else the engine plays.
+     *  null before resume(). Connect a voice's output to `dry`, and a GainNode of it to `rev` for its room. */
+    bus(id?: 'sfx' | 'music' | 'amb'): {
+        dry: AudioNode;
+        rev: AudioNode;
+        echo: AudioNode;
+    } | null;
     /** trigger a wildlife call now (audition / scripted moments) */
     debugCall(name: DebugCall, dist?: number): void;
     /** music control: rest for `secs` seconds, or start the next piece right away */
