@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- **A mix bus for a game's own sound** (`audio/engine.ts`): **`audio.bus('sfx' | 'music' | 'amb')`** gives `{ dry, rev,
+  echo }` — nodes to connect a live voice into (an instrument, a game's own synth), so it plays behind the volumes,
+  the master, the compressor and limiter and the start's fade, and sits in the world's reverb and echo like the
+  engine's own sounds (before, a game could only reach `context.destination`, past all of them). null before
+  `resume()`.
+
 ## 0.1.3
 
 - **Ripples, dispersive and any size** (`world/ripples.ts`, `shaders/ripple.wgsl`): the wave-equation window round the
