@@ -3,5 +3,5 @@
   "private": true,
   "type": "module",
   "scripts": { "dev": "vite", "build": "vite build" },
-  "dependencies": { "@ericrius1/weft": "*" }
+  "dependencies": { "@ericrius1/loom": "*", "@ericrius1/weft": "*" }
 }

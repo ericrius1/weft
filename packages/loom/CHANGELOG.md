@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.6
+
+- **Sprite clouds, built in** (`render/skyclouds.ts`, `render/skies.ts`, `shaders/skyclouds*.wgsl`): Boulder's
+  procedural sky — the one Boulder and Drake's Dragon each carried a port of — as one renderer option.
+  **`RendererOptions.clouds: 'sprites'`** makes **`r.skyClouds`** (a `CloudSource`, plugged in with `r.clouds.use`; the
+  volumetric resources never made, as with `'none'`) and steps it from `r.update`. Heaps, wisps, towers and
+  cumulonimbus are fixed clusters of soft lit sprites on grids of cells drifting with the wind, each cloud forming,
+  growing its upper puffs, maturing and thinning away on the clouds' own clock; lenticular caps are ellipsoids traced
+  in the same pass; rain hangs from the big ones' bases; and up to four decks a sky (low, mid, high and the chinook's
+  wave deck) are slabs of baked noise composited per pixel round the puffs — far off one sample, close up marched
+  through (a lid to climb out of, a sea of cloud from above), clipped where a ridge stands in one. Lit by loom's key
+  light at each cloud's height, its sky harmonics and aerial perspective; they fill `r.clouds.smap` (every surface's
+  cloud shadows), their `inside` lifts the exposure in a heap or a deck, and their cover cuts loom's sun shafts as the
+  volumetric clouds' does.
+- **Skies**: `SKY_KINDS` — every kind of Boulder's weather (`clear`, `fair cumulus`, `towering cumulus`, `thunderstorm`,
+  `stratocumulus`, `altocumulus`, `cirrus` with its 22-degree halo now and then, `chinook`: lenticular stacks upwind and
+  the wave deck ending in a clean line across the wind, `overcast`, `altostratus`), each varied by a seed as Boulder's
+  days are, and **`'highland'`**, Drake's glen (fair cumulus over the hills, wisps, far towers, caps over the peaks,
+  a patch of altocumulus) exactly as Drake draws it. Or a `SkyRecipe` of one's own (`skyRecipe(kind, seed)` to start
+  from). **`r.skyClouds.setSky(kind | recipe, secs)`** eases from one sky to another: the old clouds thin away as the
+  new ones form on their own wind, the decks break up and spread.
+- **Options** (`RendererOptions.sky`): `{ phone, range, towerRange, lod, spriteCap, shadowPx, shadowEvery, deckRich,
+  shadows, ground, half, seed, sky }` — `phone` the economies Drake's phone profile had (nearer ranges and levels of
+  detail, 6000 sprites, a 256 px shadow every third frame, plainer decks). **`r.skyClouds.ground = (x, z) => height`**
+  (any time): heaps ride up over the ridges they drift onto, caps stand over the peaks. For the world uniforms:
+  `r.clouds.sky` (now the source's when it has one: loom's cirrus cover and how overcast it is overhead — a lid turns
+  the sky light to its grey) and `r.skyClouds.shadowK` (world.misc.y). `clouds: 'volumetric'` stays the default and
+  is unchanged.
+
 ## 0.1.5
 
 - **Bring your own clouds** (`render/clouds.ts`, `render/renderer.ts`): **`r.clouds.use(source)`** runs a game's own

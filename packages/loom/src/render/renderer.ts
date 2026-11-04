@@ -3,7 +3,7 @@
 //   shadow cascades → the planar reflection (half res, a mirrored view) → the MSAA opaque scene → depth resolve (at
 //   msaa: 1 the scene draws straight into hdr and depth, no resolve)
 //   → AO (half res, into the scene) → a copy of the scene → the water (refracting that copy, reflecting the mirror)
-//   → the clouds (march, resolve, composite) → mist + shafts → glows and particles → underwater → motion blur
+//   → the clouds (march, resolve, composite; or the sprite clouds' puffs and decks) → mist + shafts → glows and particles → underwater → motion blur
 //   → bloom (down, eye adaptation, up) → the film grade to the screen (or, with the lens on, to a display-space
 //   target and then the lens pass — halation, chromatic fringes, barrel, sharpening, scope bars — to the screen).
 // The environment every surface needs is one shared bind group (env.wgsl, group 1).
@@ -19,6 +19,7 @@ import type { Atmosphere } from '../world/sky';
 import { Ripples, type RippleOptions } from '../world/ripples';
 import { TerrainShadow } from './hfshadow';
 import { Clouds } from './clouds';
+import { SkyClouds, type SkyCloudOptions } from './skyclouds';
 import { Cinema } from './cinema';
 import { Underwater } from './underwater';
 
@@ -56,9 +57,13 @@ export interface RendererOptions {
    *  into `hdr` and `depth`, no multisampled targets and no depth resolve; an `alphaToCoverage` draw is drawn without
    *  it — a shader declaring `override ALPHA_TO_COVERAGE: bool` is told which, to cut out by alpha instead) */
   msaa?: 1 | 4;
-  /** the clouds: loom's volumetric ones (the default), or 'none' — never made, for a game that brings its own
-   *  (r.clouds.use(source)) or wants a clear sky */
-  clouds?: 'volumetric' | 'none';
+  /** the clouds: loom's volumetric ones (the default); 'sprites' — Boulder's procedural sprite clouds and decks
+   *  (r.skyClouds: its kinds of sky, eased between; the volumetric ones never made); or 'none' — never made, for a game
+   *  that brings its own (r.clouds.use(source)) or wants a clear sky */
+  clouds?: 'volumetric' | 'sprites' | 'none';
+  /** the sprite clouds' options (clouds: 'sprites'): a phone's economies, their reach, the sky to begin with, the
+   *  ground (or set r.skyClouds.ground later), … — `half` defaults to the renderer's */
+  sky?: SkyCloudOptions;
   /** each of the three shadow cascades' size, texels a side (default SHADOW_SIZE, 2048) */
   shadowSize?: number;
   /** the terrain's long shadow (hfshadow) over the whole map, texels a side (default 2048) */
@@ -86,6 +91,9 @@ export class Renderer {
   ripples: Ripples;
   hf: TerrainShadow;
   clouds: Clouds;
+  /** the sprite clouds, when the renderer was made with clouds: 'sprites' (r.clouds' source; `update` steps them) —
+   *  `setSky(kind, secs)`, `ground = (x, z) => height`, and for the world uniforms `sky` and `shadowK` */
+  skyClouds: SkyClouds | null = null;
   cinema: Cinema;
   underwater: Underwater;
   /** the opaque scene (MSAA): add draws to it */
@@ -176,7 +184,7 @@ export class Renderer {
     this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
     this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
     this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
-    this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: opts.clouds !== 'none' });
+    this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: (opts.clouds ?? 'volumetric') === 'volumetric' });
 
     // the environment, shared by every surface shader (group 1)
     k.shareGroup(1, envShader, {
@@ -186,6 +194,11 @@ export class Renderer {
       plights: this.lights,
     }, 'env');
     this.clouds.build();
+    // the sprite clouds in the march's place (its resources never made: clouds 'sprites' isn't volumetric)
+    if (opts.clouds === 'sprites') {
+      this.skyClouds = new SkyClouds(k, { hdr: this.hdr, depth: this.depth, smap: this.clouds.smap }, { half, ...opts.sky });
+      this.clouds.use(this.skyClouds);
+    }
 
     // (a shadow pass can't have the shadow map it writes bound for sampling: those passes see a 1×1 stand-in)
     const noShadow = k.texture({ label: 'shadow.none', format: 'depth32float', size: [1, 1, 3], usage: ['render', 'sample'] });
@@ -214,7 +227,8 @@ export class Renderer {
     }
     this.copy = k.copy(this.hdr, this.sceneCopy, 'scene.copy');
     this.water = k.pass({ label: 'water', color: [{ target: this.hdr, clear: false }], depth: { target: this.depth, readOnly: true } });
-    this.cinema = new Cinema(k, this.depth, this.hdr, this.clouds.outTex);
+    // (the shafts are cut by the clouds: the march's output, or the sprite clouds' cover)
+    this.cinema = new Cinema(k, this.depth, this.hdr, this.skyClouds?.cover ?? this.clouds.outTex);
     this.cloudsBelow = k.pass({ label: 'clouds.below', color: [{ target: this.hdr, clear: false }], enabled: () => this.clouds.live && !this.clouds.above });
     this.cloudsAbove = k.pass({ label: 'clouds.above', color: [{ target: this.hdr, clear: false }], enabled: () => this.clouds.live && this.clouds.above });
     this.clouds.addComposite(this.cloudsBelow);
@@ -341,8 +355,9 @@ export class Renderer {
     if (Ln.on) this.lensU.set({ a: [Ln.halation, Ln.halationRadius, Ln.threshold, Ln.aberration], b: [Ln.barrel, Ln.letterbox, Ln.sharpen, o.time], c: [this.ldr.width, this.ldr.height, 1 / this.ldr.width, 1 / this.ldr.height], d: [Ln.warmth, 0, 0, 0] });
     this.cinema.hour = o.hour;
     this.cinema.under = o.under > 0.5;
-    this.cinema.update(o.time, o.cam, o.light, o.night, this.hdr.height, o.seaLevel, this.clouds.live);
+    this.cinema.update(o.time, o.cam, o.light, o.night, this.hdr.height, o.seaLevel, this.clouds.live || (!!this.skyClouds && !this.clouds.hidden));
     this.clouds.hidden = o.cam.position[1] < o.seaLevel - 0.3;
+    this.skyClouds?.update(o.dt, o.cam.position as V3, { night: o.night, light: o.light });
     this.clouds.update(o.dt, o.cam.position, o.cover, o.cam.fovY);
     this.underwater.update(o.time, o.dt, o.cam.position[1], o.seaLevel);
   }

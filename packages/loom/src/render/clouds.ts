@@ -6,7 +6,8 @@
 // Or a game brings its own clouds (sprites, layers, anything): `use(source)` runs its passes where the march ran — it
 // fills the shadow map (`smap`: every surface's cloudShadowAt reads it) and says how far the camera is in cloud
 // (`inside`: the exposure's lift, a game's sound) — and the volumetric resources are given back. A renderer made with
-// `clouds: 'none'` never makes them (only the shadow map, the four tiny outputs the composite and the shafts bind).
+// `clouds: 'none'` never makes them (only the shadow map, the four tiny outputs the composite and the shafts bind); one
+// made with `clouds: 'sprites'` neither, and brings loom's own sprite clouds (skyclouds.ts) as the source.
 import type { Kit, Texture, Compute, UniformBuffer, RunEntry, RenderPass, StorageBuffer, V3 } from '@ericrius1/weft';
 import { blueNoiseTexture } from '@ericrius1/weft';
 import cloudShader from '../shaders/clouds.wgsl';
@@ -29,6 +30,8 @@ export interface CloudSource {
   render(): RunEntry[];
   /** how far the camera is inside cloud, 0..1 (read each frame) */
   readonly inside: number;
+  /** what the sky shaders need from it, if it says (Clouds.sky hands it on): the cirrus's cover, how overcast */
+  readonly sky?: { cloudCover: number; overcast: number };
 }
 /** the top of the ordinary layer (the storm towers rise above it to CLOUD_Y1) */
 export const CLOUD_LAYER = 2600;
@@ -314,6 +317,7 @@ export class Clouds {
   /** what the sky shaders need from the weather (games pass it on in world): the cirrus's cover, how overcast (inside
    *  a cloud too: the scene is lit by the cloud's own diffuse grey, not the open sky) */
   get sky() {
+    if (this.src?.sky) return this.src.sky;
     const W = this.weather;
     // (under a tower's anvil the sky's shut out as surely as under a deck)
     let tower = 0;

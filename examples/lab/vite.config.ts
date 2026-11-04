@@ -9,7 +9,7 @@ const alias = process.env.WEFT_SRC
   : [];
 
 export default defineConfig({
-  plugins: [weft()],
+  plugins: [weft({ libs: { loom: '@ericrius1/loom' } })],
   resolve: { alias },
-  build: { target: 'esnext', rollupOptions: { input: ['index.html', 'bench.html', 'checks.html'].map((f) => resolve(__dirname, f)) } },
+  build: { target: 'esnext', rollupOptions: { input: ['index.html', 'bench.html', 'checks.html', 'sky.html'].map((f) => resolve(__dirname, f)) } },
 });
