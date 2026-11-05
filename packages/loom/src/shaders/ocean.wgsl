@@ -138,7 +138,10 @@ fn detailNormal(xz: vec2f, t: f32, k: f32) -> vec3f {
   let thick = min(thick0, 200.0) + floorDepth * 0.6;
   let T = exp(-ocean.absorb * thick);
   // light scattered in the water body (lit by sun and sky; the clouds' shadows fall on it)
-  let sh = shadowAt(wp, vec3f(0.0, 1.0, 0.0), i.pos.xy);
+  // (read half a metre over the surface: a body in the water — a swimmer, a dragon skimming — mustn't shadow the
+  // water over its own submerged belly, where the ripples' heights would cross its depth in a lace of shadow acne)
+  let shP = wp + vec3f(0.0, 0.5, 0.0);
+  let sh = shadowAt(shP, vec3f(0.0, 1.0, 0.0), i.pos.xy);
   let sunL = lighting.sunRad.rgb * PI * max(world.lightDir.y, 0.0) * sh + shIrradiance(vec3f(0.0, 1.0, 0.0)) * PI;
   let scatterC = mix(ocean.scatter, ocean.deep, smoothstep(2.0, 30.0, floorDepth));
   var col = behind * T + scatterC * sunL * (1.0 - T) * 0.12;
@@ -172,7 +175,13 @@ fn detailNormal(xz: vec2f, t: f32, k: f32) -> vec3f {
     let m = textureSampleLevel(reflTex, samp_linear, ruv, 0.0);
     // (water churned rough by the ripple sim — a wake, a crater — scatters the mirror into a sky-lit sheen: a mirror
     // image torn into its slopes reads as shards)
-    let rough = 1.0 - smoothstep(0.5, 1.3, length(vec2f(rx, rz)) / (2.0 * cell));
+    // (its slope read over two cells each way: over one, the churn's finest ripples cut the mirror into a crisp lace —
+    // a dragon's dark reflection drawn in threads over its wake)
+    let rx2 = rippleAt(i.base + vec2f(2.0 * cell, 0.0)).x - rippleAt(i.base - vec2f(2.0 * cell, 0.0)).x;
+    let rz2 = rippleAt(i.base + vec2f(0.0, 2.0 * cell)).x - rippleAt(i.base - vec2f(0.0, 2.0 * cell)).x;
+    let slope = mix(length(vec2f(rx, rz)) / (2.0 * cell), length(vec2f(rx2, rz2)) / (4.0 * cell), 0.75);
+    // (and churned, aerated water — a wake, a splash's churn — holds no image at all: only the sheen)
+    let rough = (1.0 - smoothstep(0.25, 1.6, slope)) * (1.0 - smoothstep(0.04, 0.3, rp.z));
     refl = mix(refl, m.rgb, m.a * rough);
   }
   let spec = ggxSpec(n, v, world.lightDir, 0.07, 1.0) * max(dot(n, world.lightDir), 0.0);
@@ -208,10 +217,10 @@ fn detailNormal(xz: vec2f, t: f32, k: f32) -> vec3f {
     }
     if (foam * ocean.foam > 0.002) {
       // (white water scatters the whole sky's light, and at a glance it's never darker than the sheen beside it)
-      let foamLight = lightDiffuse(vec3f(0.88), vec3f(0.0, 1.0, 0.0), wp, i.pos.xy, 1.0, 0.3) + shIrradiance(vec3f(0.0, 1.0, 0.0)) * 0.35;
+      let foamLight = lightDiffuse(vec3f(0.88), vec3f(0.0, 1.0, 0.0), shP, i.pos.xy, 1.0, 0.3) + shIrradiance(vec3f(0.0, 1.0, 0.0)) * 0.35;
       col = mix(col, max(foamLight, refl * 0.8), clamp(foam * ocean.foam, 0.0, 1.0));
     }
-    if (milk > 0.0) { col = mix(col, (lightDiffuse(vec3f(0.5, 0.62, 0.6), vec3f(0.0, 1.0, 0.0), wp, i.pos.xy, 1.0, 0.3) + refl * 0.25), milk * ocean.foam * (1.0 - foam)); }
+    if (milk > 0.0) { col = mix(col, (lightDiffuse(vec3f(0.5, 0.62, 0.6), vec3f(0.0, 1.0, 0.0), shP, i.pos.xy, 1.0, 0.3) + refl * 0.25), milk * ocean.foam * (1.0 - foam)); }
   }
 
   // seen from below: the surface is a bright window up to the sky, a mirror outside it

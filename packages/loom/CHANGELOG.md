@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.7
+
+- **The sea under a body in it** (`shaders/ocean.wgsl`): a swimmer's or a skimming dragon's own mirror image no longer
+  lies over its wake in crisp threads. Churned, aerated water (the ripple sim's churn) holds no mirror image, only the
+  sky's sheen; the waves' slope that breaks the mirror up is read over two cells as well as one, so a wake's finest
+  ripples don't cut it into lace. The water's sun shadow, its foam's and its milk's light are read half a metre over
+  the surface, so a body lying in the water doesn't shadow the water over its own submerged belly in a lace of acne.
+
 ## 0.1.6
 
 - **Sprite clouds, built in** (`render/skyclouds.ts`, `render/skies.ts`, `shaders/skyclouds*.wgsl`): Boulder's
