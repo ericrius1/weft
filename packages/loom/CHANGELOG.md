@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.8
+
+- **The film, shared** (`shaders/film.wgsl` — `#include "loom/film"` — and `render/film.ts`): the film Universe's whole
+  dive goes through, molecules to the edge of the universe and past it, ported from Seven Havens' and generalized —
+  bloom's share and the glow past a knee, film's red halation, exposure and a warm/cool white balance, AgX with its
+  punch, the saturation after it, a contrast with a soft toe, a grade by the time of day, vignettes, a fixed dither and
+  grain kept to the mids, the screen's curve; `filmLock` runs it backwards for characters drawn as colour models. No
+  bindings of its own: bind a `FilmU`, call `filmCurve` then `filmFinish`. `Film` names its settings as numbers,
+  `mixFilm` takes one look toward another (the bloom's knee weighted by how much bloom each adds), `filmFields` packs
+  one into the uniform (`levels`: the bloom chain's).
+- **The stats box** (`ui/stats.ts`): Universe's and Seven Havens' — frame rate and time, the GPU's time, the render
+  scale, GPU memory by what's been made (`trackGpuMemory`), the JS heap; `className` for the page's own interface
+  class.
+
 ## 0.1.7
 
 - **The sea under a body in it** (`shaders/ocean.wgsl`): a swimmer's or a skimming dragon's own mirror image no longer
