@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.14
+
+- **Forests on the GPU** (`world/forest.ts`, `shaders/forest.wgsl` — `#include "loom/forest"`): San Francisco's
+  trees' cull, with nothing of its trees in it. Every instance (16 bytes: x, z, its stored foot y, and a packed u32 of
+  archetype, height, crown radius and seed) is stood on the ground, frustum-culled and sorted by distance into four
+  lists with capacities — near, far (overlapping the impostors over a crossfade band), impostor and the shadows'
+  casters — the impostors thinned far off by seed (a share kept that falls with the distance squared, each kept crown
+  widened to cover for those let go, those going shrinking away over a band of the seeds), and the four indirect draws'
+  args written. The world's shader defines `forestGround(xz, stored)`, `forestAccept(xz, ground)` and
+  `forestReach(t)` and includes `loom/forest`; its draws read `forestVisible` from `forestListBase(list)` and unpack
+  with `forestUnpack`. `new Forest(kit, shader, { label, caps, thin })`, `load(instances, bind)`, `update({ near, far,
+  imp, band, shadow, verts, user })` (four vec4s of the world's own for its draws), `passes()`, `drawBind()`,
+  `args` / `argsOffset(list)`. `decodeForest(bytes, { origin, step })` reads the compact 'TRE2' byte planes in any
+  frame (and shuffles them, so a full list drops trees evenly); `packForest` packs the u32.
+
 ## 0.1.13
 
 - **Clipmaps fed from tile packs** (`terrain/clipmap.ts`, `shaders/clipmap.wgsl` — `#include "loom/clipmap"`): San
