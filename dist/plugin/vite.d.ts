@@ -26,4 +26,44 @@ export declare function filmSink(opts: {
     dir: string;
     route?: string;
 }): Plugin;
+/** The big assets on R2 (San Francisco's and Boulder's): an app's /assets beside it in development, its big files
+ *  content-addressed on R2 once published (tools/publish-assets.mjs) and listed in a map, path under /assets → URL.
+ *  - dev and preview: an asset that isn't on this disk is redirected to its R2 copy, so a worktree or a fresh clone works
+ *    without every file (one that is here is always served from here: edit away). The map is re-read when it changes.
+ *  - a build: the map shipped as dist/assets/remote.json (Assets.init reads it), and the files that live only on R2
+ *    (`omit`) left out of dist.
+ *
+ *    plugins: [weft(), remoteAssets({ omit: /^tiles\/.*\.pack$/ })]
+ */
+export declare function remoteAssets(opts?: {
+    /** the assets folder (default public/assets, under the Vite root) */
+    assets?: string;
+    /** the map (default remote-assets.json beside the Vite config's root) */
+    map?: string;
+    /** the URL prefix the assets are served under (default '/assets/'; anywhere in the path: a page under a base) */
+    prefix?: string;
+    /** what a build leaves out of dist (paths under assets): R2 serves it */
+    omit?: RegExp | ((rel: string) => boolean);
+    /** the shipped map's name under dist/<assets> (default remote.json; null: not shipped) */
+    ship?: string | null;
+}): Plugin;
+/** Where shot() posts its pictures (dev and preview): `/__shot?name=` a JPEG (or PNG, WebP: by its type) written to
+ *  `dir`/<name>.jpg.
+ *
+ *    plugins: [weft(), shotSink({ dir: resolve(__dirname, '../shots') })]
+ */
+export declare function shotSink(opts: {
+    dir: string;
+    route?: string;
+}): Plugin;
+/** Where perfBeacon() reports land on a dev or preview server (Boulder's): `/__beacon` JSON, each a line of
+ *  `dir`/beacon.jsonl with the time, the user agent and the build (git describe). A report past 1 MB isn't kept.
+ *
+ *    plugins: [weft(), beaconSink({ dir: resolve(__dirname, '../shots/perf') })]
+ */
+export declare function beaconSink(opts: {
+    dir: string;
+    route?: string;
+    file?: string;
+}): Plugin;
 //# sourceMappingURL=vite.d.ts.map

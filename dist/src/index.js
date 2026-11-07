@@ -17,4 +17,10 @@ export { blueNoise, blueNoiseTexture } from './bluenoise';
 export { Capture } from './capture';
 export { Fulldome } from './dome';
 export { domeLayout, domeDirection, tileWeights, viewBasis } from './domelayout';
+export { Assets, Pack, fetchKept, isLasting, inflate, decodeH16, unpackH16, packH16 } from './assets';
+export { loadImageTexture, loadImageArray, loadBitmap, bitmapOf, textureFromBitmaps, generateMips, warmMips, solidTexture } from './images';
+export { isWebKit, isPhone, gpuName, isAppleGpu, LoadGuard } from './device';
+export { FrameBudget } from './budget';
+export { shot } from './shot';
+export { perfBeacon } from './beacon';
 //# sourceMappingURL=index.js.map

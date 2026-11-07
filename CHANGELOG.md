@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.5
+
+What San Francisco and Boulder each carried a copy of, shared: every addition is new, nothing before it changes.
+
+- **Assets** (`Assets`, `Pack`, `inflate`, `decodeH16`): an app's files beside it under /assets in development and
+  content-addressed on R2 once published, by a manifest (remote.json: path → URL) a build ships; with `keep`, the
+  content-addressed objects (objects/<sha256>/…) held in Cache Storage for the next visit (Boulder's: the HTTP cache
+  dropped two thirds of ~100 MB between two visits) and `forgetExcept` to let go of a past deploy's. A `Pack` is a layer
+  too big to fetch whole, its tiles byte ranges of one file (San Francisco's terrain): a tile by Range request, retried
+  with backoff, abortable, and from a server that ignores the range too. `decodeH16`/`unpackH16`/`packH16`: the h16
+  height-tile codec (two byte planes of row-predicted, zig-zagged u16s, deflated). Tested without a network.
+- **Images** (`loadImageTexture`, `loadImageArray`, `textureFromBitmaps`, `generateMips`, `warmMips`, `solidTexture`):
+  Boulder's — decoded off the main thread, mip chains filled at once by a tiny pipeline made on the spot (MipChain's
+  compile asynchronously: a one-off run right after would draw nothing), the common formats' pipelines warmed in the
+  background so a texture arriving later doesn't stall the page on a compile; `max` keeps a big image from its first mip
+  within a size (a phone's memory).
+- **The device** (`isWebKit`, `isPhone`, `gpuName`, `isAppleGpu`) and **the load guard** (`LoadGuard`): a load that
+  crashed the tab, the GPU or the machine steps the next one down a ladder of profiles, kept as the heaviest auto may
+  choose; a GPU lost while shown does the same. Tested without a browser.
+- **`FrameBudget`**: Boulder's and San Francisco's dynamic resolution (an `AutoResolution`), tuned on an iPhone 16e —
+  paced by the frames on WebKit (whose timestamps and queue don't measure the GPU), a frame the CPU made late not
+  counted, never back to a scale that missed in the last 45 s; the queue's time where there are no timestamps; the
+  governor's `starved` and `roomy`; `keep`: the scale that held kept for the next visit. Tested without a GPU.
+- **`shot(kit, name)`**: a picture of the view stepped by hand (`kit.step`, `Capture`), so it works in a hidden tab or
+  pane and headless; posted to the dev server's **`shotSink`** (plugin/vite.ts), written to shots/<name>.jpg.
+- **`perfBeacon(kit, { url })`**: every few seconds the frame rate, worst frame, GPU time, render scale and size — and
+  the app's own fields — posted from a device you can't attach a profiler to; the dev server's **`beaconSink`**
+  (Boulder's) logs them to shots/perf/beacon.jsonl.
+- **`remoteAssets()`** (plugin/vite.ts): dev and preview send an asset not on this disk to its R2 copy (the map re-read
+  when it changes); a build ships the map as assets/remote.json and leaves out what only R2 serves (`omit`).
+- **`tools/publish-assets.mjs`** (in the package): an app's big files up to R2 as objects/<sha256>/<name> through
+  Wrangler, the map written; `--match` globs, `--dry`.
+- **`#include "weft/lodfade"`**: the dithered crossfade between two levels of detail (San Francisco's buildings'):
+  `ign` (interleaved gradient noise), `lodFadeT`, `lodFadeDrop` — each pixel drawn by exactly one level.
+
 ## 0.2.4
 
 - **A texture sized by the canvas, too small for its mips, is made big enough to hold them**: before the canvas is

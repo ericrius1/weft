@@ -16,4 +16,10 @@ export { blueNoise, blueNoiseTexture } from './bluenoise';
 export { Capture } from './capture';
 export { Fulldome, type FulldomeOptions } from './dome';
 export { domeLayout, domeDirection, tileWeights, viewBasis, type DomeLayout, type DomeOptions } from './domelayout';
+export { Assets, Pack, fetchKept, isLasting, inflate, decodeH16, unpackH16, packH16, type AssetsOptions, type PackIndex, type TileIndex } from './assets';
+export { loadImageTexture, loadImageArray, loadBitmap, bitmapOf, textureFromBitmaps, generateMips, warmMips, solidTexture, type ImageTextureOptions } from './images';
+export { isWebKit, isPhone, gpuName, isAppleGpu, LoadGuard, type LoadGuardKeys } from './device';
+export { FrameBudget, type FrameBudgetOptions } from './budget';
+export { shot, type ShotOptions } from './shot';
+export { perfBeacon, type BeaconOptions, type BeaconReport } from './beacon';
 //# sourceMappingURL=index.d.ts.map
