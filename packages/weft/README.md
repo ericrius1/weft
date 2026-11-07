@@ -24,6 +24,9 @@ definition of the data.** The engine under [games.ericlevin.dev](https://games.e
    backquote key) lists the passes that ran with GPU timings and on/off switches, any texture, and sliders built from
    `// @range(…)` annotations in WGSL structs.
 7. **A frame budget**: `kit.maxFps` and `AutoResolution` (GPU timestamps → render scale; the frames' intervals where there are none, as on a phone's Safari).
+   `FrameBudget` is the one Boulder and San Francisco run (tuned on an iPhone 16e: paced by the frames on WebKit, the
+   governor's `starved`/`roomy`, the scale that held kept for the next visit); `LoadGuard` steps a load down a ladder of
+   profiles after one that crashed; `isWebKit`, `isPhone`, `gpuName`, `isAppleGpu`.
 8. **Encoding is cheap.** Bind groups are checked by number, not rebuilt as keys: a group of direct resources is reused
    until something is reallocated, and anything else (a `Ref`) is resolved once per run epoch (each `kit.run` and each
    `RunAction` starts one — so a Ref's target changes only between them). Static draws can be baked into a render
@@ -125,6 +128,26 @@ const cap = new Capture(kit);               // frames read from the swapchain (h
 const png = await cap.grab();               // a data URL; cap.step(dt) / cap.blob() step a frame by hand
 // vite.config.ts: plugins: [weft(), filmSink({ dir: resolve(__dirname, '../film') })]
 //   a page POSTs /__film/frame?name=&i= (JPEG), /__film/audio (WAV), /__film/meta → <dir>/<name>/…
+```
+
+A picture of the view stepped by hand (a hidden tab or pane runs no animation frames), and a device's frames reported
+from where no profiler reaches:
+
+```ts
+await shot(kit, 'harbour');                 // dev: shots/harbour.jpg (plugins: [shotSink({ dir })])
+perfBeacon(kit, { url: '/__beacon', extra: () => ({ profile }) });   // every 5 s: fps, worst, GPU ms, scale (beaconSink)
+```
+
+The big files on R2, content-addressed, and the layers too big to fetch whole streamed as tiles out of packs:
+
+```ts
+const assets = await new Assets({ keep: 'mygame-objects' }).init();   // remote.json: path → objects/<sha256>/<name>
+const pack = await Pack.load(assets, 'height0');                       // tiles/height0.json + its pack
+const bytes = await pack.bytes(row, col, signal);                      // a Range request, retried
+const metres = await decodeH16(bytes!, pack.index.tile, pack.index.q!);
+const sky = await loadImageTexture(kit, assets.url('sky.webp'), { srgb: true, mips: true });
+// vite.config.ts: plugins: [weft(), remoteAssets({ omit: /^tiles\/.*\.pack$/ })]   dev: not on disk → its R2 copy
+// publish: node node_modules/@ericrius1/weft/tools/publish-assets.mjs --bucket B --origin URL --match 'tiles/*.pack'
 ```
 
 A planetarium's fulldome (a 180-degree equidistant fisheye: the zenith at the centre, the heading at the bottom rim,

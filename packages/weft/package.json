@@ -1,6 +1,6 @@
 {
   "name": "@ericrius1/weft",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "A thin WebGPU kit: a frame is an explicit, ordered list of passes over named resources, and WGSL is the single definition of the data. With a Vite plugin for typed, hot-reloading .wgsl imports.",
   "type": "module",
   "license": "MIT",
@@ -59,7 +59,8 @@
     "shaders",
     "client.d.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "tools"
   ],
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.plugin.json && node scripts/declare.mjs && tsc -p tsconfig.json && node scripts/copy-shaders.mjs",

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.9
+
+- **The autopilot** (`camera/autopilot.ts`, San Francisco's): `fly(pose)` rises off the ground, crosses high enough to
+  see the land whole — the farther, the higher, over the land the whole way — and comes down into the place's own
+  view, looking where it's going and, the last stretch, round to the view's; `tour(true)` strings `Stop`s together, each
+  held a few seconds turning slowly and named (`say`). Any key, click, drag, wheel or touch on the view hands the camera
+  straight back (`passKeys`/`passCodes`: the game's own keys that don't); less motion asked for, flights cut and holds
+  still. `onTour`, `onFlown`; `shortest`, `longest`, `ceiling`, `holdFor`.
+
 ## 0.1.8
 
 - **The film, shared** (`shaders/film.wgsl` — `#include "loom/film"` — and `render/film.ts`): the film Universe's whole
