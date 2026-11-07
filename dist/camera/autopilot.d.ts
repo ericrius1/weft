@@ -27,6 +27,9 @@ export declare class Autopilot {
     touring: boolean;
     /** told when the tour starts or stops (the places list's button follows) */
     onTour: ((on: boolean) => void) | null;
+    /** told of each flight as it starts, where it's going (stream the destination ahead: it arrives on a place that's
+     *  there) */
+    onFly: ((to: Pose) => void) | null;
     /** told when a flight's over: true if it arrived, false if a hand took the camera back */
     onFlown: ((arrived: boolean) => void) | null;
     /** the line when a hand stops the tour (how to go on: the interface says, by what's to hand) */

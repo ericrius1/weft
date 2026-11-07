@@ -33,6 +33,9 @@ export class Autopilot {
     touring = false;
     /** told when the tour starts or stops (the places list's button follows) */
     onTour = null;
+    /** told of each flight as it starts, where it's going (stream the destination ahead: it arrives on a place that's
+     *  there) */
+    onFly = null;
     /** told when a flight's over: true if it arrived, false if a hand took the camera back */
     onFlown = null;
     /** the line when a hand stops the tour (how to go on: the interface says, by what's to hand) */
@@ -96,6 +99,7 @@ export class Autopilot {
         this.T = this.reduced ? 0.01 : clamp(2 + 0.95 * Math.log2(1 + d / 250), this.shortest, this.longest);
         this.t = 0;
         this.state = 'flying';
+        this.onFly?.(this.to);
     }
     /** the tour: from its first stop, or on from the one it was stopped at */
     tour(on = !this.touring) {
