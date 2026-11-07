@@ -17,7 +17,9 @@ games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
   point lights with headlamp profiles; light in the air sampled equi-angularly (Kulla & Fajardo). For a world with its
   own renderer, **rainfall** (`weather/rainfall`, `#include "loom/rainfall"`): rain round the eye from a weather's
   rain, cloud and wind, in three wrapped boxes of drops, splashes and a veil over the distance, lit and grounded by
-  three functions the world's shader defines (or from a uniform: `loom/rainfall_lit`).
+  three functions the world's shader defines (or from a uniform: `loom/rainfall_lit`); and a **low-res volume**
+  (`render/volume`, `#include "loom/volume"`: fog, mist, smoke marched at a fraction of the resolution, a reprojected
+  history, a depth-aware upsample; the world's shader marches it) over the **scene's distance** (`render/scenez`).
 - **The film**: motion blur, depth of field and tilt-shift, wide bloom, histogram eye adaptation, an AgX grade with
   split toning and scotopic night, a lens pass (halation, fringes, barrel).
 - **Stylized**: toon light with complementary shadows, ink outlines from the depth's second difference, a paint

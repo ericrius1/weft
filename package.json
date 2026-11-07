@@ -1,6 +1,6 @@
 {
   "name": "@ericrius1/loom",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "A cinematic WebGPU renderer on weft: physically based atmosphere, volumetric clouds and storm cells, the sea, rain, light in the air, GTAO, bloom, eye adaptation and an AgX film grade — plus GPU particles, paint, ink and toon light, breakable rubble on box3d, and a procedural audio engine.",
   "type": "module",
   "license": "MIT",
@@ -52,5 +52,5 @@
   "peerDependencies": {
     "@ericrius1/weft": "*"
   },
-  "gitHead": "1b4f653c790893df05752f556217e89868d6438e"
+  "gitHead": "239c26da654a99b7dde3dec28b3180796dc5e9a6"
 }
