@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.11
+
+- **Rainfall for any world** (`weather/rainfall.ts`, `shaders/rainfall.wgsl` — `#include "loom/rainfall"`): San
+  Francisco's rain (Boulder's precip, its rain), with nothing of either in it. From a weather's `rain` (0..1, read as
+  millimetres an hour: a drizzle's fine slow mist to a downpour's long fast streaks), `cloud` (the cloud base, the top
+  of the fall) and `wind`/`windDir` (the slant): three nested boxes of drops wrapped round the eye, each a quad along
+  its fall as a shutter sees it, at least a pixel wide; splashes, a ring and a crown, near the eye; the veil, the
+  fall's extinction over the distance (Koschmieder) up to the cloud base. Drawn premultiplied over the finished scene
+  in a pass of its own (`attach(hdr, sceneZ)`: the scene's distance as r32float metres), nothing run while it's dry,
+  `scale` for a phone's fewer drops. The world lights it: its shader defines `rainLight(p, g, side)`, `rainVeil()` and
+  `rainGround(xz)` from its own sky, shadows, lamps and ground, then includes `loom/rainfall` (passed as `shader`); or
+  the default, `loom/rainfall_lit`, from `Rainfall.light` (sky, key light and its way, lamps, a flat ground) set each
+  frame. Additive: `render/rain` (the Renderer's own) is unchanged.
+
 ## 0.1.10
 
 - **`Autopilot.onFly`**: told of each flight as it starts, where it's going — stream the destination ahead, so the
