@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10
+
+- **`Autopilot.onFly`**: told of each flight as it starts, where it's going — stream the destination ahead, so the
+  flight lands on a place that's there (San Francisco prefetches its clipmap and city there).
+
 ## 0.1.9
 
 - **The autopilot** (`camera/autopilot.ts`, San Francisco's): `fly(pose)` rises off the ground, crosses high enough to

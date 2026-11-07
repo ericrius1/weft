@@ -89,3 +89,24 @@ test('h16 heights round trip: planes, prediction and zig-zag', async () => {
   const m = await decodeH16(z, n, [-50, 0.01]);
   for (let i = 0; i < v.length; i++) assert.ok(Math.abs(m[i] - (-50 + v[i] * 0.01)) < 1e-3, `texel ${i}`);
 });
+
+test('a run of a pack: one Range request for several tiles', async () => {
+  const log = serve({ '/p': { body } });
+  const p = new Pack(index, '/p');
+  assert.deepEqual([...new Uint8Array(await p.range(3, 6))], [10, 11, 12, 13, 20, 21]);
+  assert.equal(log.at(-1).range, 'bytes=3-8');
+});
+
+test("the page's early fetches are taken once, the manifest's too; a fetch with options never takes one", async () => {
+  const log = serve({ '/assets/trees.bin': { body: 'late' } });
+  const early = {
+    'remote.json': Promise.resolve(new Response(JSON.stringify({ 'a.pack': 'https://r2/a.pack' }), { headers: { 'content-type': 'application/json' } })),
+    'trees.bin': Promise.resolve(new Response('early')),
+  };
+  const a = await new Assets({ root: '/assets', early }).init();
+  assert.equal(a.url('a.pack'), 'https://r2/a.pack');
+  assert.equal(log.length, 0);
+  assert.equal(await (await a.fetch('trees.bin')).text(), 'early');
+  assert.equal(await (await a.fetch('trees.bin')).text(), 'late');
+  assert.equal(log.length, 1);
+});
