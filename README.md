@@ -22,6 +22,11 @@ games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
   history, a depth-aware upsample; the world's shader marches it) over the **scene's distance** (`render/scenez`).
 - **Land streaming** (`terrain/clipmap`, `#include "loom/clipmap"`): clipmaps of heights, colour and surface classes
   fed from range-addressed tile packs through the world's own streamer, every tile fading in, nothing popping.
+- **Forests** (`world/forest`, `#include "loom/forest"`): hundreds of thousands of trees, 16 bytes each, culled and
+  sorted on the GPU each frame into near, far, impostor and shadow lists with caps, the impostors thinned by seed far
+  off, the indirect draws' counts written; the world's shader says what the ground under a tree is, whether it stands
+  there and how far each kind is drawn, and draws the lists itself. A compact on-disk format (`decodeForest`) in the
+  world's own frame.
 - **The film**: motion blur, depth of field and tilt-shift, wide bloom, histogram eye adaptation, an AgX grade with
   split toning and scotopic night, a lens pass (halation, fringes, barrel).
 - **Stylized**: toon light with complementary shadows, ink outlines from the depth's second difference, a paint
