@@ -316,4 +316,41 @@ export function beaconSink(opts) {
         });
     });
 }
+/** A build's early start (Boulder's idea, San Francisco's plugin): index.html itself asks for the files the first view
+ *  needs — the R2 map, packs' indexes, the small binaries — before the bundle's even fetched, each kept as its fetch's
+ *  promise in window[`global`] (Assets' `early` takes each once), and connects at once to the hosts the R2 map points at
+ *  (preconnect), for the first tiles. Dev servers are left alone.
+ *
+ *    plugins: [weft(), earlyFetch({ files: (has) => ['remote.json', ...has('tiles', /\.json$/), 'trees.bin'] })]
+ */
+export function earlyFetch(opts) {
+    let build = false, root = process.cwd();
+    return {
+        name: 'weft-early-fetch',
+        configResolved(c) { build = c.command === 'build'; root = c.root; },
+        transformIndexHtml(html) {
+            if (!build)
+                return html;
+            const assets = resolve(root, opts.assets ?? 'public/assets');
+            const has = (dir, re) => {
+                const d = resolve(assets, dir);
+                return existsSync(d) ? readdirSync(d).filter((f) => !re || re.test(f)).map((f) => `${dir}/${f}`) : [];
+            };
+            const listed = typeof opts.files === 'function' ? opts.files(has) : opts.files;
+            const files = listed.filter((f) => f === 'remote.json' || existsSync(resolve(assets, f)));
+            let hosts = [];
+            const map = opts.map === undefined ? 'remote-assets.json' : opts.map;
+            if (map) {
+                try {
+                    hosts = [...new Set(Object.values(JSON.parse(readFileSync(resolve(root, map), 'utf8'))).map((u) => new URL(u).origin))];
+                }
+                catch { /* none */ }
+            }
+            const g = JSON.stringify(opts.global ?? '__early'), pre = JSON.stringify(opts.prefix ?? 'assets/');
+            const code = `(function(){var e=window[${g}]={},f=${JSON.stringify(files)};for(var i=0;i<f.length;i++){e[f[i]]=fetch(${pre}+f[i],f[i]==='remote.json'?{cache:'no-cache'}:{}).catch(function(){return null;});}})();`;
+            const tags = [...hosts.map((h) => `<link rel="preconnect" href="${h}" crossorigin />`), `<script>${code}</script>`].join('\n  ');
+            return /<meta charset[^>]*>/i.test(html) ? html.replace(/(<meta charset[^>]*>)/i, `$1\n  ${tags}`) : html.replace(/<head>/i, `<head>\n  ${tags}`);
+        },
+    };
+}
 //# sourceMappingURL=vite.js.map

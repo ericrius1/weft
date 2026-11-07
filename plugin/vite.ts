@@ -284,3 +284,49 @@ export function beaconSink(opts: { dir: string; route?: string; file?: string })
     });
   });
 }
+
+/** A build's early start (Boulder's idea, San Francisco's plugin): index.html itself asks for the files the first view
+ *  needs — the R2 map, packs' indexes, the small binaries — before the bundle's even fetched, each kept as its fetch's
+ *  promise in window[`global`] (Assets' `early` takes each once), and connects at once to the hosts the R2 map points at
+ *  (preconnect), for the first tiles. Dev servers are left alone.
+ *
+ *    plugins: [weft(), earlyFetch({ files: (has) => ['remote.json', ...has('tiles', /\.json$/), 'trees.bin'] })]
+ */
+export function earlyFetch(opts: {
+  /** the files under assets to fetch early: a list, or a function given `has(dir, re)` (the files in a folder under
+   *  assets matching re, as paths) that returns one. remote.json is always asked for fresh (no-cache) */
+  files: string[] | ((has: (dir: string, re?: RegExp) => string[]) => string[]);
+  /** the assets folder (default public/assets) and the URL path they're served at, relative to the page (default
+   *  'assets/') */
+  assets?: string;
+  prefix?: string;
+  /** the R2 map whose hosts are preconnected to (default remote-assets.json; null: none) */
+  map?: string | null;
+  /** the global the fetches are kept in (default '__early') */
+  global?: string;
+}): Plugin {
+  let build = false, root = process.cwd();
+  return {
+    name: 'weft-early-fetch',
+    configResolved(c) { build = c.command === 'build'; root = c.root; },
+    transformIndexHtml(html) {
+      if (!build) return html;
+      const assets = resolve(root, opts.assets ?? 'public/assets');
+      const has = (dir: string, re?: RegExp) => {
+        const d = resolve(assets, dir);
+        return existsSync(d) ? readdirSync(d).filter((f) => !re || re.test(f)).map((f) => `${dir}/${f}`) : [];
+      };
+      const listed = typeof opts.files === 'function' ? opts.files(has) : opts.files;
+      const files = listed.filter((f) => f === 'remote.json' || existsSync(resolve(assets, f)));
+      let hosts: string[] = [];
+      const map = opts.map === undefined ? 'remote-assets.json' : opts.map;
+      if (map) {
+        try { hosts = [...new Set(Object.values(JSON.parse(readFileSync(resolve(root, map), 'utf8')) as Record<string, string>).map((u) => new URL(u).origin))]; } catch { /* none */ }
+      }
+      const g = JSON.stringify(opts.global ?? '__early'), pre = JSON.stringify(opts.prefix ?? 'assets/');
+      const code = `(function(){var e=window[${g}]={},f=${JSON.stringify(files)};for(var i=0;i<f.length;i++){e[f[i]]=fetch(${pre}+f[i],f[i]==='remote.json'?{cache:'no-cache'}:{}).catch(function(){return null;});}})();`;
+      const tags = [...hosts.map((h) => `<link rel="preconnect" href="${h}" crossorigin />`), `<script>${code}</script>`].join('\n  ');
+      return /<meta charset[^>]*>/i.test(html) ? html.replace(/(<meta charset[^>]*>)/i, `$1\n  ${tags}`) : html.replace(/<head>/i, `<head>\n  ${tags}`);
+    },
+  };
+}

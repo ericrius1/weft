@@ -66,4 +66,24 @@ export declare function beaconSink(opts: {
     route?: string;
     file?: string;
 }): Plugin;
+/** A build's early start (Boulder's idea, San Francisco's plugin): index.html itself asks for the files the first view
+ *  needs — the R2 map, packs' indexes, the small binaries — before the bundle's even fetched, each kept as its fetch's
+ *  promise in window[`global`] (Assets' `early` takes each once), and connects at once to the hosts the R2 map points at
+ *  (preconnect), for the first tiles. Dev servers are left alone.
+ *
+ *    plugins: [weft(), earlyFetch({ files: (has) => ['remote.json', ...has('tiles', /\.json$/), 'trees.bin'] })]
+ */
+export declare function earlyFetch(opts: {
+    /** the files under assets to fetch early: a list, or a function given `has(dir, re)` (the files in a folder under
+     *  assets matching re, as paths) that returns one. remote.json is always asked for fresh (no-cache) */
+    files: string[] | ((has: (dir: string, re?: RegExp) => string[]) => string[]);
+    /** the assets folder (default public/assets) and the URL path they're served at, relative to the page (default
+     *  'assets/') */
+    assets?: string;
+    prefix?: string;
+    /** the R2 map whose hosts are preconnected to (default remote-assets.json; null: none) */
+    map?: string | null;
+    /** the global the fetches are kept in (default '__early') */
+    global?: string;
+}): Plugin;
 //# sourceMappingURL=vite.d.ts.map

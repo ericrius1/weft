@@ -41,10 +41,20 @@ export class Assets {
     /** path under root → its URL (the manifest; empty until init, or with none) */
     remote = {};
     manifest;
+    early;
     constructor(opts = {}) {
         this.root = opts.root ?? (typeof document === 'undefined' ? '/assets' : new URL('assets', document.baseURI).pathname);
         this.manifest = opts.manifest === undefined ? 'remote.json' : opts.manifest;
         this.keep = opts.keep ?? null;
+        this.early = opts.early ?? {};
+    }
+    /** the page's early fetch of `rel`, once (null: none, or already taken) */
+    takeEarly(rel) {
+        const e = this.early[rel];
+        if (!e)
+            return null;
+        delete this.early[rel];
+        return e;
     }
     /** read the manifest (revalidated every load: a map cached from the last deploy would send moved files to this one's
      *  404s). None, or not JSON (a dev server's index.html fallback): everything's beside the app */
@@ -52,7 +62,7 @@ export class Assets {
         if (!this.manifest)
             return this;
         try {
-            const r = await fetch(`${this.root}/${this.manifest}`, { cache: 'no-cache' });
+            const r = (await this.takeEarly(this.manifest)) ?? await fetch(`${this.root}/${this.manifest}`, { cache: 'no-cache' });
             if (r.ok && (r.headers.get('content-type') ?? '').includes('json'))
                 this.remote = await r.json();
         }
@@ -63,7 +73,8 @@ export class Assets {
     url(rel) { return this.remote[rel] ?? `${this.root}/${rel}`; }
     /** a file (a range's 206 counts as there); throws with its path and status when it isn't */
     async fetch(rel, init) {
-        const r = await fetchKept(this.url(rel), init, this.keep);
+        const e = init ? null : this.takeEarly(rel);
+        const r = (e && await e) || await fetchKept(this.url(rel), init, this.keep);
         if (!r.ok && r.status !== 206)
             throw new Error(`${rel}: ${r.status}`);
         return r;
@@ -110,7 +121,12 @@ export class Pack {
     async bytes(r, c, signal) {
         if (!this.has(r, c))
             return null;
-        const k = r * this.index.grid + c, a = this.index.offsets[k], n = this.index.lengths[k];
+        const k = r * this.index.grid + c;
+        return this.range(this.index.offsets[k], this.index.lengths[k], signal);
+    }
+    /** a run of the pack's bytes, `n` from `a` (a block of neighbouring tiles in one request: San Francisco's streamer
+     *  fetches a row's run of tiles at once), retried like a tile */
+    async range(a, n, signal) {
         for (let tries = 0;; tries++) {
             try {
                 const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, signal });
@@ -119,7 +135,7 @@ export class Pack {
                 // (a server that ignores the range sends the whole pack: take our part of it)
                 if (res.ok)
                     return (await res.arrayBuffer()).slice(a, a + n);
-                throw new Error(`${this.index.name} ${r},${c}: ${res.status}`);
+                throw new Error(`${this.index.name} ${a}+${n}: ${res.status}`);
             }
             catch (e) {
                 if (signal?.aborted || tries >= this.retries)

@@ -26,6 +26,9 @@ export interface AssetsOptions {
   /** a Cache Storage name to keep the content-addressed objects in (null, the default: the HTTP cache only). Name it
    *  for the app: several apps can share an origin (ericlevin.dev), and forgetExcept clears what this one doesn't use */
   keep?: string | null;
+  /** what the page already asked for before the bundle ran (a build's index.html: plugin/vite.ts earlyFetch), path →
+   *  its fetch; each taken once, by init (the manifest) or a plain fetch(rel) — e.g. `globalThis.__early` */
+  early?: Record<string, Promise<Response | null>> | null;
 }
 
 /** a content-addressed object's URL: objects/<sha256>/<name> (it never changes, so it can be kept) */
@@ -52,10 +55,20 @@ export class Assets {
   /** path under root → its URL (the manifest; empty until init, or with none) */
   remote: Record<string, string> = {};
   private manifest: string | null;
+  private early: Record<string, Promise<Response | null>>;
   constructor(opts: AssetsOptions = {}) {
     this.root = opts.root ?? (typeof document === 'undefined' ? '/assets' : new URL('assets', document.baseURI).pathname);
     this.manifest = opts.manifest === undefined ? 'remote.json' : opts.manifest;
     this.keep = opts.keep ?? null;
+    this.early = opts.early ?? {};
+  }
+
+  /** the page's early fetch of `rel`, once (null: none, or already taken) */
+  takeEarly(rel: string): Promise<Response | null> | null {
+    const e = this.early[rel];
+    if (!e) return null;
+    delete this.early[rel];
+    return e;
   }
 
   /** read the manifest (revalidated every load: a map cached from the last deploy would send moved files to this one's
@@ -63,7 +76,7 @@ export class Assets {
   async init(): Promise<this> {
     if (!this.manifest) return this;
     try {
-      const r = await fetch(`${this.root}/${this.manifest}`, { cache: 'no-cache' });
+      const r = (await this.takeEarly(this.manifest)) ?? await fetch(`${this.root}/${this.manifest}`, { cache: 'no-cache' });
       if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) this.remote = await r.json();
     } catch { /* none */ }
     return this;
@@ -74,7 +87,8 @@ export class Assets {
 
   /** a file (a range's 206 counts as there); throws with its path and status when it isn't */
   async fetch(rel: string, init?: RequestInit): Promise<Response> {
-    const r = await fetchKept(this.url(rel), init, this.keep);
+    const e = init ? null : this.takeEarly(rel);
+    const r = (e && await e) || await fetchKept(this.url(rel), init, this.keep);
     if (!r.ok && r.status !== 206) throw new Error(`${rel}: ${r.status}`);
     return r;
   }
@@ -139,14 +153,19 @@ export class Pack<I extends PackIndex = TileIndex> {
   /** a tile's bytes (null where there's none); aborted with `signal`, retried on a network error or a bad status */
   async bytes(r: number, c: number, signal?: AbortSignal): Promise<ArrayBuffer | null> {
     if (!this.has(r, c)) return null;
-    const k = r * this.index.grid + c, a = this.index.offsets[k], n = this.index.lengths[k];
+    const k = r * this.index.grid + c;
+    return this.range(this.index.offsets[k], this.index.lengths[k], signal);
+  }
+  /** a run of the pack's bytes, `n` from `a` (a block of neighbouring tiles in one request: San Francisco's streamer
+   *  fetches a row's run of tiles at once), retried like a tile */
+  async range(a: number, n: number, signal?: AbortSignal): Promise<ArrayBuffer> {
     for (let tries = 0; ; tries++) {
       try {
         const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, signal });
         if (res.status === 206) return await res.arrayBuffer();
         // (a server that ignores the range sends the whole pack: take our part of it)
         if (res.ok) return (await res.arrayBuffer()).slice(a, a + n);
-        throw new Error(`${this.index.name} ${r},${c}: ${res.status}`);
+        throw new Error(`${this.index.name} ${a}+${n}: ${res.status}`);
       } catch (e) {
         if (signal?.aborted || tries >= this.retries) throw e;
         await new Promise((ok) => setTimeout(ok, this.backoff * 2 ** tries));

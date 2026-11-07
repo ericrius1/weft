@@ -8,6 +8,9 @@ export interface AssetsOptions {
     /** a Cache Storage name to keep the content-addressed objects in (null, the default: the HTTP cache only). Name it
      *  for the app: several apps can share an origin (ericlevin.dev), and forgetExcept clears what this one doesn't use */
     keep?: string | null;
+    /** what the page already asked for before the bundle ran (a build's index.html: plugin/vite.ts earlyFetch), path →
+     *  its fetch; each taken once, by init (the manifest) or a plain fetch(rel) — e.g. `globalThis.__early` */
+    early?: Record<string, Promise<Response | null>> | null;
 }
 /** a content-addressed object's URL: objects/<sha256>/<name> (it never changes, so it can be kept) */
 export declare const isLasting: (url: string) => boolean;
@@ -19,7 +22,10 @@ export declare class Assets {
     /** path under root → its URL (the manifest; empty until init, or with none) */
     remote: Record<string, string>;
     private manifest;
+    private early;
     constructor(opts?: AssetsOptions);
+    /** the page's early fetch of `rel`, once (null: none, or already taken) */
+    takeEarly(rel: string): Promise<Response | null> | null;
     /** read the manifest (revalidated every load: a map cached from the last deploy would send moved files to this one's
      *  404s). None, or not JSON (a dev server's index.html fallback): everything's beside the app */
     init(): Promise<this>;
@@ -71,6 +77,9 @@ export declare class Pack<I extends PackIndex = TileIndex> {
     has(r: number, c: number): boolean;
     /** a tile's bytes (null where there's none); aborted with `signal`, retried on a network error or a bad status */
     bytes(r: number, c: number, signal?: AbortSignal): Promise<ArrayBuffer | null>;
+    /** a run of the pack's bytes, `n` from `a` (a block of neighbouring tiles in one request: San Francisco's streamer
+     *  fetches a row's run of tiles at once), retried like a tile */
+    range(a: number, n: number, signal?: AbortSignal): Promise<ArrayBuffer>;
 }
 /** an h16 height tile's metres (n×n): deflated; two planes, the high bytes' then the low's, of u16s each predicted from
  *  the one before it in its row (a row's first from the one above it), the difference zig-zagged */

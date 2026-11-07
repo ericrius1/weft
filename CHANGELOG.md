@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.6
+
+- **`Pack.range(a, n, signal)`**: a run of a pack's bytes in one Range request, retried like a tile (San Francisco's
+  streamer fetches a row's neighbouring tiles at once); `bytes()` goes through it.
+- **`Assets` `early`**: the fetches a page started before its bundle ran, path → promise, each taken once by `init`
+  (the manifest) or a plain `fetch(rel)`; `takeEarly(rel)`.
+- **`earlyFetch()`** (plugin/vite.ts): a build's index.html asks for the first view's files itself (the R2 map, packs'
+  indexes, small binaries) into `window.__early`, and preconnects to the R2 map's hosts. San Francisco's early start.
+
 ## 0.2.5
 
 What San Francisco and Boulder each carried a copy of, shared: every addition is new, nothing before it changes.
