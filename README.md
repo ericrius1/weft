@@ -20,6 +20,8 @@ games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
   three functions the world's shader defines (or from a uniform: `loom/rainfall_lit`); and a **low-res volume**
   (`render/volume`, `#include "loom/volume"`: fog, mist, smoke marched at a fraction of the resolution, a reprojected
   history, a depth-aware upsample; the world's shader marches it) over the **scene's distance** (`render/scenez`).
+- **Land streaming** (`terrain/clipmap`, `#include "loom/clipmap"`): clipmaps of heights, colour and surface classes
+  fed from range-addressed tile packs through the world's own streamer, every tile fading in, nothing popping.
 - **The film**: motion blur, depth of field and tilt-shift, wide bloom, histogram eye adaptation, an AgX grade with
   split toning and scotopic night, a lens pass (halation, fringes, barrel).
 - **Stylized**: toon light with complementary shadows, ink outlines from the depth's second difference, a paint
