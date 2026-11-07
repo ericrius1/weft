@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.13
+
+- **Clipmaps fed from tile packs** (`terrain/clipmap.ts`, `shaders/clipmap.wgsl` — `#include "loom/clipmap"`): San
+  Francisco's land streaming, with nothing of San Francisco's in it (its packs by name). Up to four levels of heights
+  (r32float), four of colour (rgba8 sRGB, webp tiles with three mips) and one of surface classes, each a toroidal
+  window of tiles round the camera in its own layer, slid a tile at a time; every tile fades in over the coarser level
+  (half a second), each level's drawn rect eases to where it's going and a slot's old tile is written over only once
+  the rect has let go of it; the coarsest levels whole and still; heights kept on the CPU for `heightAt`; a fast
+  camera's road ahead and a flight's destination prefetched. Bring the streamer (`ClipStream`: rank, get, upload,
+  cached, prefetch, width) and the decoders (`ClipDecode`, a worker's); `ClipSet.create(kit, stream, heightWindow,
+  colorWindow, { heights, colors, mat, load, decode, fill })`; `fill(u)` writes the levels' uniforms and the
+  residency (9 levels x 64 slots). In a shader, define `clipTileInfo(lv)` and `clipTileSlot(k)` (where the residency
+  is) and include `loom/clipmap`: `clipUv`, `rectWeight`, `tileFade`, `levelWeight`.
+
 ## 0.1.12
 
 - **A volume in the air at a fraction of the resolution** (`render/volume.ts`, `shaders/volume.wgsl` — `#include
