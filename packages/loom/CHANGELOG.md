@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.12
+
+- **A volume in the air at a fraction of the resolution** (`render/volume.ts`, `shaders/volume.wgsl` — `#include
+  "loom/volume"`): San Francisco's fog's frame, with nothing of the fog in it, for a world with its own renderer. Each
+  frame the march runs at `scale` of the render (each low-res pixel's depth picked from the scene pixels under it: the
+  nearest where near things fill at least half of it, the farthest where they don't, so a pixel-wide wire takes the
+  volume behind it), the result is blended with the last frames' wherever the same place was seen (reprojected by the
+  depth, clamped to the neighbourhood: no ghosts), and laid over the scene at full resolution, each pixel taking the
+  low-res samples nearest it in depth (premultiplied). The world's shader defines `volumeMarch(px, uv, z) -> vec4f`
+  (light, transmittance) and includes `loom/volume`; `LowResVolume` makes the targets and runs the passes
+  (`update(steps, history, user)`: four vec4s of the world's own for its march; `on` gates them all; `current()` the
+  frame's result for shafts or a light meter).
+- **The scene's distance** (`render/scenez.ts`, `shaders/scenez.wgsl`, `scenez_ms.wgsl`): the depth as metres along
+  the view axis (r32float, 1e9 for the sky; a 4x MSAA depth's nearest sample), what the volume, rainfall, AO and
+  shafts read: `sceneZ(kit, depth)` or `sceneZShader(samples)`.
+
 ## 0.1.11
 
 - **Rainfall for any world** (`weather/rainfall.ts`, `shaders/rainfall.wgsl` — `#include "loom/rainfall"`): San
