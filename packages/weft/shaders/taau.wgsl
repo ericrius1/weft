@@ -12,12 +12,15 @@ struct Taau {
   prevVP: mat4x4f,    // last frame's, without its jitter
   jitter: vec4f,      // xy this frame's jitter (render pixels, Camera.jitter: +x right, +y up), z 1 drops the history, w sharpen 0..1
   k: vec4f,           // x the least share of this frame (1/16 typical), y the clip's width (sigmas), z anti-flicker, w debug view
+  o: vec4f,           // x 1: motion from taauVel (screen uv now − then, at the render size) in place of the camera's alone
 }
 @group(3) @binding(0) var<uniform> T: Taau;
 @group(3) @binding(1) var taauSrc: texture_2d<f32>;
 @group(3) @binding(2) var taauDepth: texture_depth_2d;
+@group(3) @binding(7) var taauDepthMS: texture_depth_multisampled_2d;   // (an MSAA scene's depth: entry resolveMS reads its first sample)
 @group(3) @binding(3) var taauHist: texture_2d<f32>;
 @group(3) @binding(4) var taauOut: texture_storage_2d<rgba16float, write>;
+@group(3) @binding(8) var taauVel: texture_2d<f32>;   // (optional: an app's motion vectors; a 1×1 stand-in without)
 
 fn tLuma(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 // (a reversible tonemap for blending: weights a sample by 1/(1+luma))
@@ -64,11 +67,34 @@ fn clipBox(h: vec3f, lo: vec3f, hi: vec3f, toward: vec3f) -> vec3f {
   return h;
 }
 
+/** the 3×3 render texels round an output pixel's (jittered) position: their corner, clamped by the caller */
+fn taauCorner(p: vec2i, outDim: vec2i, inDim: vec2i) -> vec2i {
+  let uv = (vec2f(p) + 0.5) / vec2f(outDim);
+  return vec2i(floor(uv * vec2f(inDim) + vec2f(T.jitter.x, -T.jitter.y)));
+}
 @compute @workgroup_size(8, 8) fn resolve(@builtin(global_invocation_id) id: vec3u) {
   let outDim = vec2i(textureDimensions(taauOut));
   let p = vec2i(id.xy);
   if (any(p >= outDim)) { return; }
   let inDim = vec2i(textureDimensions(taauSrc));
+  let ic = taauCorner(p, outDim, inDim);
+  var z: array<f32, 9>;
+  for (var k = 0; k < 9; k++) { z[k] = textureLoad(taauDepth, clamp(ic + vec2i(k % 3 - 1, k / 3 - 1), vec2i(0), inDim - 1), 0); }
+  resolveAt(p, outDim, inDim, z);
+}
+@compute @workgroup_size(8, 8) fn resolveMS(@builtin(global_invocation_id) id: vec3u) {
+  let outDim = vec2i(textureDimensions(taauOut));
+  let p = vec2i(id.xy);
+  if (any(p >= outDim)) { return; }
+  let inDim = vec2i(textureDimensions(taauSrc));
+  let ic = taauCorner(p, outDim, inDim);
+  var z: array<f32, 9>;
+  for (var k = 0; k < 9; k++) { z[k] = textureLoad(taauDepthMS, clamp(ic + vec2i(k % 3 - 1, k / 3 - 1), vec2i(0), inDim - 1), 0); }
+  resolveAt(p, outDim, inDim, z);
+}
+/** the resolve for output pixel p, given the depths of the 3×3 texels round it (row by row from the top left) */
+fn resolveAt(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>) {
+  var z = zIn;
   let inF = vec2f(inDim);
   let uv = (vec2f(p) + 0.5) / vec2f(outDim);
   // (this output pixel in render pixels; a texel centred at c holds what, unjittered, is at c - J)
@@ -81,6 +107,10 @@ fn clipBox(h: vec3f, lo: vec3f, hi: vec3f, toward: vec3f) -> vec3f {
   let fw = max(1.0, 0.5 * (scale.x + scale.y));
   var sum = vec3f(0.0);
   var wsum = 0.0;
+  // (and a wide one, by input pixels: a smooth upsample of this frame, for where the history can't be used — alone, the
+  // narrow one's samples show the render's own grid)
+  var sumW = vec3f(0.0);
+  var wsumW = 0.0;
   var m1 = vec3f(0.0);
   var m2 = vec3f(0.0);
   var lo = vec3f(1e9);
@@ -100,12 +130,19 @@ fn clipBox(h: vec3f, lo: vec3f, hi: vec3f, toward: vec3f) -> vec3f {
       // (Blackman-Harris, approximated by a Gaussian)
       let w = exp(-2.29 * dot(d, d));
       sum += ct * w; wsum += w;
+      let dw = vec2f(t) + 0.5 - J - pos;
+      let ww = exp(-2.29 * dot(dw, dw));
+      sumW += ct * ww; wsumW += ww;
       // (the nearest surface around the pixel: reversed-Z, the greatest depth — edges move with what's in front)
-      let z = textureLoad(taauDepth, t, 0);
-      if (z > best) { best = z; bestC = t; }
+      let zk = z[(dy + 1) * 3 + dx + 1];
+      if (zk > best) { best = zk; bestC = t; }
     }
   }
-  let cur = sum / max(wsum, 1e-4);
+  // (sharp where a sample landed near this output pixel, the smooth upsample where none did)
+  let conf = clamp(wsum, 0.0, 1.0);
+  let curW = sumW / max(wsumW, 1e-4);
+  let curN = sum / max(wsum, 1e-4);
+  let cur = mix(curW, curN, conf);
   let mean = m1 / 9.0;
   let sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3f(0.0)));
   let g = T.k.y;
@@ -117,34 +154,45 @@ fn clipBox(h: vec3f, lo: vec3f, hi: vec3f, toward: vec3f) -> vec3f {
   let wp = frame.invViewProj * vec4f(tuv.x * 2.0 - 1.0, 1.0 - tuv.y * 2.0, best, 1.0);
   let cc = T.curVP * wp;
   let pc = T.prevVP * wp;
-  var reset = T.jitter.z > 0.5 || pc.w <= 1e-6 || cc.w <= 1e-6;
+  var reset = T.jitter.z > 0.5;
   var huv = uv;
-  if (!reset) {
+  if (T.o.x > 0.5) {
+    // (the app's own motion: what moves by itself reprojects too)
+    huv = uv - textureLoad(taauVel, clamp(bestC, vec2i(0), vec2i(textureDimensions(taauVel)) - 1), 0).xy;
+  } else if (pc.w <= 1e-6 || cc.w <= 1e-6) { reset = true; }
+  else {
     let cu = vec2f(cc.x / cc.w * 0.5 + 0.5, 0.5 - cc.y / cc.w * 0.5);
     let pu = vec2f(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
     huv = uv - (cu - pu);
-    if (any(huv < vec2f(0.0)) || any(huv > vec2f(1.0))) { reset = true; }
   }
-  var outT = cur;
+  if (any(huv < vec2f(0.0)) || any(huv > vec2f(1.0))) { reset = true; }
+  var outT = curW;
   if (!reset) {
     var h = histCR(huv);
     if (!finite3(h)) { h = itm(cur); }
     let hy = toYCoCg(tm(h));
     let cy = toYCoCg(cur);
     let clipped = clipBox(hy, blo, bhi, cy);
+    // (how far the history lay beyond the neighbourhood, in its spread: detail that changed in place — a window that
+    // streamed in, a light switched on — can pass a box that spans both it and its surround; past a little, let it go)
+    let beyond = max(max(blo - hy, hy - bhi), vec3f(0.0)) / max(sigma, vec3f(1e-3));
+    let fadeK = smoothstep(0.1, 0.6, max(beyond.x, max(beyond.y, beyond.z)));
     // (this frame's share: the least where a sample fell right on the pixel; more where history was clipped hard —
     // something changed there — and less of it where the samples fell far from the pixel, when upscaling)
     let moved = length(clipped - hy) / max(clipped.x + 0.02, 0.02);
-    let coverage = clamp(wsum, 0.02, 1.0);
-    var a = T.k.x * coverage;
-    a = mix(a, 0.5, clamp(moved * T.k.z, 0.0, 0.6));
-    outT = mix(fromYCoCg(clipped), cur, a);
+    // (where the history's being replaced — what's there changed — this frame's smooth upsample takes over, not its
+    // sharp samples: those help only piled up over frames)
+    let reject = max(clamp(moved * T.k.z, 0.0, 0.6), fadeK * 0.6);
+    var a = T.k.x * max(conf, 0.02);
+    a = mix(a, 0.5, reject);
+    let curB = mix(curW, curN, conf * (1.0 - reject / 0.6));
+    outT = mix(fromYCoCg(clipped), curB, a);
   }
   var o = itm(max(outT, vec3f(0.0)));
   if (!finite3(o)) { o = vec3f(0.0); }
   if (T.k.w > 0.5) {
     // (debug: red where the history was dropped, the motion's size in green)
-    o = select(vec3f(0.0, length((uv - huv) * vec2f(outDim)) * 0.1, 0.0), vec3f(1.0, 0.0, 0.0), reset);
+    o = select(vec3f(0.0, length((uv - huv) * vec2f(outDim)) * 0.5, 0.0), vec3f(4.0, 0.0, 0.0), reset);
   }
   textureStore(taauOut, p, vec4f(o, 1.0));
 }

@@ -72,7 +72,9 @@ async function main() {
   const atmo = new Atmosphere(kit, terrain.heightTex);
   const { boxes, lights } = town();
   const r = new Renderer(kit, terrain, atmo, HALF, {
-    clouds: (q.get('clouds') ?? 'none') as 'none' | 'volumetric' | 'sprites', msaa: 1, taau: flag('taau', true),
+    clouds: (q.get('clouds') ?? 'none') as 'none' | 'volumetric' | 'sprites', msaa: 1,
+    // (?vel: a still motion-vector texture handed to the TAAU — the velocity path, for a still camera: ?still)
+    taau: flag('taau', true) && (q.has('vel') ? { velocity: kit.texture({ label: 'town.vel', format: 'rg16float', size: 'render', usage: ['sample', 'render'] }) } : true),
     lights: { max: Math.max(32, NLIGHTS), clustered: true },
     gi: { min: [-36, 0.5, -36], max: [36, 14.5, 36], spacing: 2, face: 24, maxPerFrame: 8 },
   });

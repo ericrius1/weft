@@ -57,6 +57,10 @@ export function weft(opts: WeftOptions = {}): Plugin {
   let isBuild = false;
   let libs: Record<string, string> = { weft: weftShaders };
   const includers = new Map<string, Set<string>>();
+  // (every shader file loaded, and its modification time then: a rebuilt package's dist — files deleted and written
+  // again, or renamed into place — can drop the watcher's hold on them, so a page load checks them itself)
+  const seen = new Map<string, number>();
+  const mtime = (f: string) => { try { return statSync(f).mtimeMs; } catch { return -1; } };
   const typesFrom = opts.typesFrom ?? PACKAGE;
   const runtime = opts.runtime ?? `${PACKAGE}/runtime`;
   const compile = (file: string) => compileWgsl(file, { root, libs });
@@ -92,7 +96,9 @@ export function weft(opts: WeftOptions = {}): Plugin {
       if (!file.endsWith('.wgsl') || (query && /raw|url/.test(query))) return null;
       try {
         const s = compile(file);
+        seen.set(file, mtime(file));
         for (const inc of s.includes) {
+          seen.set(inc, mtime(inc));
           this.addWatchFile(inc);
           let set = includers.get(inc);
           if (!set) includers.set(inc, (set = new Set()));
@@ -109,6 +115,22 @@ export function weft(opts: WeftOptions = {}): Plugin {
         return moduleCode({ id: id0, label: id0.split('/').pop()!, code: '', files: [id0], runs: [], error: msg,
           reflect: { structs: {}, bindings: {}, entries: [], overrides: {} } });
       }
+    },
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        // (a page load: any shader changed on disk since it was loaded is loaded again, it and what includes it)
+        if (req.headers.accept?.includes('text/html')) {
+          for (const [f, t] of seen) {
+            const now = mtime(f);
+            if (now === t) continue;
+            seen.set(f, now);
+            for (const file of [f, ...(includers.get(f) ?? [])]) {
+              for (const m of server.moduleGraph.getModulesByFile(file) ?? []) server.moduleGraph.invalidateModule(m);
+            }
+          }
+        }
+        next();
+      });
     },
     handleHotUpdate(ctx) {
       if (!ctx.file.endsWith('.wgsl')) return;

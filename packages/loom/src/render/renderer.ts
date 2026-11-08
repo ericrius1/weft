@@ -76,8 +76,9 @@ export interface RendererOptions {
   /** temporal anti-aliasing with upscaling (weft's Taau, r.taau): the picture comes out at the canvas's size, however
    *  small the render (kit.renderScale) — so a lowered scale costs a little sharpness in motion, not a soft picture.
    *  After the scene, the clouds, the air, the fx, motion blur and depth of field; before the bloom and the grade. With
-   *  it a phone can take msaa 1 and a lower scale. Off by default */
-  taau?: boolean;
+   *  it a phone can take msaa 1 and a lower scale. Off by default; { velocity } a game's own motion vectors (rg16float at
+   *  the render size: screen uv now − then) so what moves by itself reprojects too */
+  taau?: boolean | { velocity?: Texture };
   /** the point lights: `max` kept (default 32), `clustered` (default: when max > 32) binned into a grid round the
    *  camera (r.clusters: LightClusters) so each pixel loops only those near it — hundreds of lamps; `cells`, `cap` the
    *  grid's (32 × 16 × 32, 24 a cell) */
@@ -304,7 +305,7 @@ export class Renderer {
     this.copyDof = k.copy(this.hdr, this.sceneCopy, 'dof.copy');
     this.dofPass = k.compute(dofShader, { label: 'dof', entry: 'gather', bind: { dof: this.dofU, dofSrc: this.sceneCopy, dofDepth: this.depth, dofOut: this.hdr }, threads: () => [this.hdr.width, this.hdr.height] });
     // (the temporal upscale: what follows — bloom, the grade, the lens — reads its output, at the canvas's size)
-    if (opts.taau) this.taau = new Taau(k, this.hdr, this.depth);
+    if (opts.taau) this.taau = new Taau(k, this.hdr, this.depth, { velocity: typeof opts.taau === 'object' ? opts.taau.velocity : undefined });
     const graded = this.taau ? this.taau.out : this.hdr;
     for (let i = 0; i < BLOOM_LEVELS; i++) {
       const p = k.pass({ label: `bloom.down${i}`, color: [{ target: this.bloom.mip(i), clear: [0, 0, 0, 1] }] });
