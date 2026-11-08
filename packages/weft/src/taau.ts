@@ -15,7 +15,6 @@
 import type { Kit, View, RunEntry } from './kit';
 import type { Compute } from './passes';
 import { Ref, deref, type Texture, type UniformBuffer, PingPong, RunAction } from './resources';
-import { mat4Mul } from './math';
 import taauShader from '../shaders/taau.wgsl';
 
 export interface TaauOptions {
@@ -38,6 +37,34 @@ export interface TaauOptions {
   jump?: { metres: number; rel: number; turn: number } | null;
 }
 
+// (4×4 column-major, in doubles)
+function mul4(a: ArrayLike<number>, b: ArrayLike<number>, out = new Float64Array(16)) {
+  const o = new Float64Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    let v = 0;
+    for (let k = 0; k < 4; k++) v += a[k * 4 + r] * b[c * 4 + k];
+    o[c * 4 + r] = v;
+  }
+  out.set(o);
+  return out;
+}
+function inv4(m: ArrayLike<number>) {
+  // (Gauss-Jordan with partial pivoting on [m | I], rows of the row-major form)
+  const a: number[][] = [];
+  for (let r = 0; r < 4; r++) a.push([m[r], m[4 + r], m[8 + r], m[12 + r], r === 0 ? 1 : 0, r === 1 ? 1 : 0, r === 2 ? 1 : 0, r === 3 ? 1 : 0]);
+  for (let c = 0; c < 4; c++) {
+    let piv = c;
+    for (let r = c + 1; r < 4; r++) if (Math.abs(a[r][c]) > Math.abs(a[piv][c])) piv = r;
+    [a[c], a[piv]] = [a[piv], a[c]];
+    const d = a[c][c] || 1e-30;
+    for (let k = 0; k < 8; k++) a[c][k] /= d;
+    for (let r = 0; r < 4; r++) if (r !== c) { const f = a[r][c]; if (f) for (let k = 0; k < 8; k++) a[r][k] -= f * a[c][k]; }
+  }
+  const out = new Float64Array(16);
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) out[c * 4 + r] = a[r][4 + c];
+  return out;
+}
+
 const halton = (i: number, b: number) => { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; };
 
 export class Taau {
@@ -45,11 +72,19 @@ export class Taau {
    *  smoother, slower to settle); clip: the history's clip box width (sigmas); antiFlicker: how much a clipped history
    *  lets the new frame in; sharpen 0..1 (0: no sharpening pass); phases: the jitter sequence's length (more when
    *  upscaling further: about 8 × (output / render)²); debug: the history's rejections in red */
-  params = { on: true, feedback: 1 / 12, clip: 1, antiFlicker: 0.6, sharpen: 0.35, phases: 16, debug: false };
+  params = {
+    on: true, feedback: 1 / 12, clip: 1, antiFlicker: 0.6, sharpen: 0.35, phases: 16, debug: false,
+    /** the depth mismatch (relative) past which the history is dropped: what moved by itself, what was uncovered */
+    depthReject: 0.035,
+    /** the scene's exposure (or a function giving it each frame): the blend's tonemap sees what the eye will, so a
+     *  night scene's dim values and a day's bright ones are weighed alike */
+    exposure: 1 as number | (() => number),
+  };
   /** the jitter this frame was drawn with (render pixels, Camera.jitter's sense): for an app whose own ray marches
    *  build their rays without the camera's projection, to jitter them the same */
   jitter: [number, number] = [0, 0];
-  /** the anti-aliased picture at the output size (a Ref: bind it where the source was) */
+  /** the anti-aliased picture at the output size (a Ref: bind it where the source was; read its rgb — with sharpening
+   *  off its alpha is the history's depth) */
   readonly out: Ref<Texture>;
   /** the run items: put them after the scene's last pass that should be anti-aliased */
   readonly items: RunEntry[];
@@ -59,9 +94,13 @@ export class Taau {
   private resolveC: Compute;
   private sharpC: Compute | null;
   private view: View;
-  private prevVP = new Float32Array(16);
-  private curVP = new Float32Array(16);
-  private proj = new Float32Array(16);
+  // (last frame's unjittered projection, rotation and position, in doubles: the reprojection is made from the camera's
+  // step, never from world positions — two thousand kilometres up, a float's world position is ~12 cm coarse)
+  private prevP = new Float64Array(16);
+  private prevR = new Float64Array(9);
+  private prevPos = [0, 0, 0];
+  private toCur = new Float64Array(16);
+  private toPrev = new Float64Array(16);
   private have = false;
   private dropNext = true;
   private histSize = [0, 0];
@@ -140,32 +179,48 @@ export class Taau {
     const cam = this.view.camera, P = this.params;
     if (!P.on) { cam.jitter = [0, 0]; this.have = false; return; }
     const w = this.view.width, h = this.view.height;
-    // this frame's view-projection without its jitter (Camera.update writes it into the projection)
-    this.proj.set(cam.proj);
+    // this frame's projection with and without its jitter (Camera.update writes it into the projection)
+    const Pj = Float64Array.from(cam.proj), Pu = Float64Array.from(cam.proj);
     const jx = (cam.jitter[0] * 2) / w, jy = (cam.jitter[1] * 2) / h;
-    if (cam.ortho) { this.proj[12] -= jx; this.proj[13] -= jy; } else { this.proj[8] += jx; this.proj[9] += jy; }
-    mat4Mul(this.proj, cam.view, this.curVP);
+    if (cam.ortho) { Pu[12] -= jx; Pu[13] -= jy; } else { Pu[8] += jx; Pu[9] += jy; }
+    const V = cam.view, R = Float64Array.from([V[0], V[1], V[2], V[4], V[5], V[6], V[8], V[9], V[10]]);
+    const pos = [cam.position[0], cam.position[1], cam.position[2]];
     const hw = this.hist.a.width, hh = this.hist.a.height;
-    // (a camera cut — Camera.cut() — or a new output size starts the history over)
+    // (a camera cut — Camera.cut() — a jump, or a new output size starts the history over)
     const drop = this.dropNext || !this.have || hw !== this.histSize[0] || hh !== this.histSize[1] || cam.cuts !== this.cuts || this.jumped(cam);
     this.cuts = cam.cuts;
     this.histSize = [hw, hh];
-    // (a floating origin's move: last frame's matrix times a translation by it, prevVP · T(d))
-    const d = this.shifted, P0 = this.prevVP;
-    if (d[0] || d[1] || d[2]) {
-      for (let r = 0; r < 4; r++) P0[12 + r] += P0[r] * d[0] + P0[4 + r] * d[1] + P0[8 + r] * d[2];
-      d[0] = d[1] = d[2] = 0;
-    }
+    const iPj = inv4(Pj);
+    mul4(Pu, iPj, this.toCur);
+    if (this.have) {
+      // the camera's step: last frame's view times this frame's inverse = [Rp·Rcᵀ | Rp·(pc − pp + shift)]
+      const Rp = this.prevR, d = this.shifted;
+      const t = [pos[0] - this.prevPos[0] + d[0], pos[1] - this.prevPos[1] + d[1], pos[2] - this.prevPos[2] + d[2]];
+      const S = new Float64Array(16);
+      // (R as stored: column-major 3×3, R[c*3+r]; Rp·Rcᵀ: (r, c) = Σk Rp(r,k)·Rc(c,k))
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 3; c++) {
+          let v = 0;
+          for (let k = 0; k < 3; k++) v += Rp[k * 3 + r] * R[k * 3 + c];
+          S[c * 4 + r] = v;
+        }
+        S[12 + r] = Rp[r] * t[0] + Rp[3 + r] * t[1] + Rp[6 + r] * t[2];
+      }
+      S[15] = 1;
+      mul4(this.prevP, mul4(S, iPj), this.toPrev);
+    } else this.toPrev.set(this.toCur);
+    this.shifted = [0, 0, 0];
+    this.prevP.set(Pu); this.prevR.set(R); this.prevPos = pos;
+    const E = typeof P.exposure === 'function' ? P.exposure() : P.exposure;
     this.jitter = [cam.jitter[0], cam.jitter[1]];
     this.u.set({
-      curVP: this.curVP, prevVP: this.have ? this.prevVP : this.curVP,
+      toCur: Float32Array.from(this.toCur), toPrev: Float32Array.from(this.toPrev),
       jitter: [cam.jitter[0], cam.jitter[1], drop ? 1 : 0, Math.min(1, Math.max(0, P.sharpen))],
       k: [P.feedback, P.clip, P.antiFlicker, P.debug ? 1 : 0],
-      o: [this.velocity ? 1 : 0, 0, 0, 0],
+      o: [this.velocity ? 1 : 0, E > 0 && isFinite(E) ? E : 1, cam.ortho ? 1 : 0, Math.max(0, P.depthReject)],
     });
     // (uploaded now: the encoder's commands are submitted after this write)
     this.u.upload();
-    this.prevVP.set(this.curVP);
     this.have = true;
     this.dropNext = false;
     cam.jitter = this.nextJitter();

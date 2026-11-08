@@ -50,6 +50,8 @@ function town(): { boxes: Box[]; lights: PointLight[] } {
     lights.push({ pos: p, radius: 9 + rnd() * 6, color: [c[0] * s, c[1] * s, c[2] * s], size: 0.25 });
     boxes.push([p, [0.15, 0.2, 0.15], c, 30]);
   }
+  // (last: a thin pole that slides across the court by itself — what the TAAU mustn't ghost)
+  boxes.push([[0, 1.5, 4], [0.06, 1.5, 0.06], [0.9, 0.9, 0.95], 0]);
   return { boxes, lights };
 }
 
@@ -116,6 +118,8 @@ async function main() {
     cam.near = 0.1; cam.far = Infinity;
     cam.lookAt([eye[0] + sway, eye[1], eye[2]], at);
     kit.mainView.update(true);
+    // (the pole: a few metres a second side to side)
+    if (!q.has('nopole')) boxBuf.write(new Float32Array([Math.sin(t * 1.3) * 5, 1.5, 4, 0]), (boxes.length - 1) * 48);
     const cel = celestial(HOUR, DOY, LAT, 0);
     const mats = r.updateShadows(cam, cel.lightDir as V3);
     const ripple = r.ripples.update(cam.position, dt);

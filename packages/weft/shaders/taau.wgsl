@@ -1,18 +1,22 @@
 // TAAU: temporal anti-aliasing that upscales (taau.ts). The scene is drawn at the render size with the camera jittered
 // by a sub-pixel offset each frame (a Halton sequence); this pass gathers this frame's samples into a history at the
 // output size: each output pixel the render-size texels around it weighted by how near their (unjittered) centres
-// fall, the history reprojected by the camera's motion (depth + last frame's matrices, both without their jitter),
-// clipped to the colours this frame has around the pixel (variance clipping in YCoCg, so what moved or appeared
-// doesn't ghost), and blended — a share of this frame by how much of it landed on the pixel. Blended in a tonemapped
-// space so one bright texel doesn't flicker. Binds in group 3 of its own, whatever an app shares there.
+// fall, the history reprojected by the camera's motion (the nearest depth round the pixel taken back through this
+// frame's projection and forward through the camera's step and last frame's — matrices made in doubles from the step
+// alone, so far from the origin is as precise as near it), clipped to the colours this frame has around the pixel
+// (variance clipping in YCoCg) and dropped where the depth it remembers isn't the depth that should be there (what
+// moved by itself, what was uncovered), then blended — a share of this frame by how much of it landed on the pixel.
+// Blended in a tonemapped space (after the app's exposure) so one bright texel doesn't flicker. The history's alpha
+// keeps each pixel's depth. Binds in group 3 of its own, whatever an app shares there.
 #include "weft/frame"
 
 struct Taau {
-  curVP: mat4x4f,     // this frame's view-projection without its jitter
-  prevVP: mat4x4f,    // last frame's, without its jitter
+  toCur: mat4x4f,     // this frame's jittered NDC (x, y, depth, 1) → its clip space without the jitter
+  toPrev: mat4x4f,    // → last frame's clip space without its jitter (through the camera's step)
   jitter: vec4f,      // xy this frame's jitter (render pixels, Camera.jitter: +x right, +y up), z 1 drops the history, w sharpen 0..1
   k: vec4f,           // x the least share of this frame (1/16 typical), y the clip's width (sigmas), z anti-flicker, w debug view
-  o: vec4f,           // x 1: motion from taauVel (screen uv now − then, at the render size) in place of the camera's alone
+  o: vec4f,           // x 1: motion from taauVel (screen uv now − then, at the render size) in place of the camera's alone;
+                      // y exposure; z 1 orthographic; w the depth mismatch that drops the history (relative; 0 never)
 }
 @group(3) @binding(0) var<uniform> T: Taau;
 @group(3) @binding(1) var taauSrc: texture_2d<f32>;
@@ -24,8 +28,8 @@ struct Taau {
 
 fn tLuma(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 // (a reversible tonemap for blending: weights a sample by 1/(1+luma))
-fn tm(c: vec3f) -> vec3f { return c / (1.0 + tLuma(c)); }
-fn itm(c: vec3f) -> vec3f { return c / max(1.0 - tLuma(c), 1e-3); }
+fn tm(c0: vec3f) -> vec3f { let c = c0 * T.o.y; return c / (1.0 + tLuma(c)); }
+fn itm(c: vec3f) -> vec3f { return c / max(1.0 - tLuma(c), 1e-3) / T.o.y; }
 fn toYCoCg(c: vec3f) -> vec3f { return vec3f(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
 fn fromYCoCg(c: vec3f) -> vec3f { return vec3f(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
 fn finite3(c: vec3f) -> bool { return all(c == c) && all(abs(c) < vec3f(6.0e4)); }
@@ -117,6 +121,7 @@ fn resolveAt(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>) {
   var hi = vec3f(-1e9);
   var best = 0.0;
   var bestC = ic;
+  var anySky = false;
   for (var dy = -1; dy <= 1; dy++) {
     for (var dx = -1; dx <= 1; dx++) {
       let t = clamp(ic + vec2i(dx, dy), vec2i(0), inDim - 1);
@@ -136,6 +141,7 @@ fn resolveAt(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>) {
       // (the nearest surface around the pixel: reversed-Z, the greatest depth — edges move with what's in front)
       let zk = z[(dy + 1) * 3 + dx + 1];
       if (zk > best) { best = zk; bestC = t; }
+      anySky = anySky || zk <= 0.0;
     }
   }
   // (sharp where a sample landed near this output pixel, the smooth upsample where none did)
@@ -151,9 +157,15 @@ fn resolveAt(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>) {
 
   // ---- where this pixel was last frame
   let tuv = (vec2f(bestC) + 0.5) / inF;
-  let wp = frame.invViewProj * vec4f(tuv.x * 2.0 - 1.0, 1.0 - tuv.y * 2.0, best, 1.0);
-  let cc = T.curVP * wp;
-  let pc = T.prevVP * wp;
+  let ndc = vec4f(tuv.x * 2.0 - 1.0, 1.0 - tuv.y * 2.0, best, 1.0);
+  let cc = T.toCur * ndc;
+  let pc = T.toPrev * ndc;
+  // (the depth to remember here, and the one last frame should have had: the view distance (clip w) in perspective, the
+  // depth itself in orthographic; 0 the sky)
+  let ortho = T.o.z > 0.5;
+  let sky = best <= 0.0;
+  let dNow = select(select(min(cc.w, 6.0e4), cc.z / max(cc.w, 1e-9), ortho), 0.0, sky);
+  let dWas = select(select(min(pc.w, 6.0e4), pc.z / max(pc.w, 1e-9), ortho), 0.0, sky);
   var reset = T.jitter.z > 0.5;
   var huv = uv;
   if (T.o.x > 0.5) {
@@ -166,6 +178,20 @@ fn resolveAt(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>) {
     huv = uv - (cu - pu);
   }
   if (any(huv < vec2f(0.0)) || any(huv > vec2f(1.0))) { reset = true; }
+  // (the depth the history remembers round there: kept if any of the four texels under it agrees — an edge's own
+  // neighbours do — dropped if none does: what moved by itself, what was uncovered, what came in front. Not on a
+  // silhouette against the sky nor in it: there the jitter flips a pixel between the two, and the colours' clip has it)
+  let hdim = vec2i(textureDimensions(taauHist));
+  if (!reset && T.o.w > 0.0 && !anySky) {
+    let h0 = vec2i(floor(huv * vec2f(hdim) - 0.5));
+    var agree = false;
+    for (var k = 0; k < 4; k++) {
+      let hd = textureLoad(taauHist, clamp(h0 + vec2i(k & 1, k >> 1), vec2i(0), hdim - 1), 0).a;
+      let same = select(abs(hd - dWas) <= T.o.w * max(dWas, 1e-4), hd <= 0.0, sky);
+      agree = agree || same;
+    }
+    if (!agree) { reset = true; }
+  }
   var outT = curW;
   if (!reset) {
     var h = histCR(huv);
@@ -185,6 +211,9 @@ fn resolveAt(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>) {
     let reject = max(clamp(moved * T.k.z, 0.0, 0.6), fadeK * 0.6);
     var a = T.k.x * max(conf, 0.02);
     a = mix(a, 0.5, reject);
+    // (and less history the faster it moves: every reprojection resamples it — a little softer each time)
+    let mpx = length((uv - huv) * vec2f(outDim));
+    a = 1.0 - (1.0 - a) * exp(-mpx * 0.025);
     let curB = mix(curW, curN, conf * (1.0 - reject / 0.6));
     outT = mix(fromYCoCg(clipped), curB, a);
   }
@@ -194,7 +223,7 @@ fn resolveAt(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>) {
     // (debug: red where the history was dropped, the motion's size in green)
     o = select(vec3f(0.0, length((uv - huv) * vec2f(outDim)) * 0.5, 0.0), vec3f(4.0, 0.0, 0.0), reset);
   }
-  textureStore(taauOut, p, vec4f(o, 1.0));
+  textureStore(taauOut, p, vec4f(o, dNow));
 }
 
 // ---------------------------------------------------------------- sharpening (contrast adaptive, after the resolve)
