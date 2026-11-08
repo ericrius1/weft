@@ -1,15 +1,14 @@
 # @ericrius1/loom
 
-A cinematic WebGPU renderer on [`@ericrius1/weft`](https://www.npmjs.com/package/@ericrius1/weft) — the renderer the
-games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
+A cinematic WebGPU renderer on [`@ericrius1/weft`](https://github.com/ericrius1/weft).
 
 - **Sky & light**: a physically based atmosphere (after Hillaire 2020: transmittance + multiple-scattering LUTs, a
   sky-view LUT, aerial-perspective froxels), sun, moon with phase, stars; shadow cascades; the terrain's own long
   shadows from its heightfield; GTAO; valley mist; sun and moon shafts.
 - **Clouds** (`render/clouds`): Nubis-style shape and erosion noise over an evolving weather map, storm cells with
   anvils and lightning, a baked light volume, multiple-scattering octaves, two temporally resolved layers, holes torn
-  by things flying through. Or **sprite clouds** (`clouds: 'sprites'`, `render/skyclouds`): Boulder's procedural
-  heaps, storms, lenticulars and decks, every kind of its weather and Drake's Highland, eased from sky to sky.
+  by things flying through. Or **sprite clouds** (`clouds: 'sprites'`, `render/skyclouds`): procedural
+  heaps, storms, lenticulars and decks, every kind of weather, eased from sky to sky.
 - **Water**: Gerstner seas with a dispersive ripple sim round the player (Kelvin wakes, ring trains; any window size),
   refraction absorbed per channel, a planar mirror; under the sea, caustics and shafts through a medium a world can set
   (a lagoon, a peaty loch).
@@ -65,7 +64,7 @@ On a phone, make the renderer with the profile's construction options and apply 
 ```ts
 import { Renderer } from '@ericrius1/loom/render/renderer';
 import { applyQuality, loadQuality, phoneOr, rendererOptions } from '@ericrius1/loom/quality';
-const q = loadQuality('mygame', phoneOr('smooth'));            // 'mobile' on a phone unless the player picked
+const q = loadQuality('myapp', phoneOr('smooth'));            // 'mobile' on a phone unless the player picked
 const r = new Renderer(kit, terrain, atmo, half, rendererOptions(q)); // { msaa: 1, shadowSize: 1024, ... } on a phone
 applyQuality(kit, r, q);
 ```

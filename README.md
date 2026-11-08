@@ -1,17 +1,28 @@
 # weft & loom
 
-Two WebGPU libraries, the engine under the games at **[games.ericlevin.dev](https://games.ericlevin.dev)**
-(Starthread, Stormbreak, Rainline, Fauve, Smithereens, Night Owl Arcade) and under the bigger worlds round them: San
-Francisco, Boulder, Universe's dive from a cell to the edge of everything, the portfolio's home world, Drake's Highlands.
+Two WebGPU libraries: a thin kit, and a cinematic renderer built on it.
 
 | package | what it is |
 | --- | --- |
-| [`@ericrius1/weft`](packages/weft) | A thin WebGPU kit. A frame is an explicit, ordered list of passes over named resources; WGSL is the single definition of the data. A Vite plugin makes `.wgsl` files typed, hot-reloading imports. Temporal upscaling, GPU-driven draws, a frame budget that holds a phone's frame rate. |
+| [`@ericrius1/weft`](packages/weft) | A thin WebGPU kit. A frame is an explicit, ordered list of passes over named resources; WGSL is the single definition of the data. A Vite plugin makes `.wgsl` files typed, hot-reloading imports. Temporal upscaling, GPU-driven draws, a frame budget that holds the frame rate on a phone. |
 | [`@ericrius1/loom`](packages/loom) | A cinematic renderer built on weft: a physically based atmosphere, volumetric clouds and storm cells, the sea, rain, light in the air, light that bounces (irradiance probes), lamps by the hundred (clustered lighting), GTAO, bloom, eye adaptation and an AgX film grade — plus streamed land and forests, ink and toon light, breakable rubble on box3d, and a procedural audio engine. |
 
-This page is the tour: how a frame is put together, then a closer look at the techniques inside, each with what it's
-for, how it works and what it costs. The package READMEs are the reference; the long read on why it's built this way
-rather than on a scene graph is at **[games.ericlevin.dev/engine/](https://games.ericlevin.dev/engine/)**.
+**Highlights**
+
+- **TAAU** — temporal anti-aliasing that upscales: render at half the resolution, get a sharp, stable, anti-aliased
+  picture at full size. Jittered sub-pixel samples gathered over frames, reprojected in double precision, rejected by
+  colour and by depth where they're stale. [How it works ↓](#taau-a-full-size-picture-from-a-smaller-render)
+- **Irradiance probes** — light that bounces: a grid of L1 spherical-harmonic probes captured a few a frame, so shadows
+  are lit by what's actually around them. [↓](#light-that-bounces-irradiance-probes)
+- **Clustered lighting** — a thousand lamps for the cost of the few near each pixel, binned on the GPU every frame
+  (about 6× faster than looping them all). [↓](#lamps-by-the-hundred-clustered-lighting)
+- **A physically based sky**, volumetric clouds, dispersive water, a film pipeline (GTAO, energy-conserving bloom,
+  histogram eye adaptation, AgX), streamed terrain and GPU-culled forests. [↓](#deep-dives)
+- **The kit underneath**: WGSL as the source of truth (typed imports, bind by name, hot reload that keeps state),
+  pipelines compiled before they're needed, render bundles, multi-draw indirect, dynamic resolution.
+
+This page is the tour: how a frame is put together, then a closer look at each technique — what it's for, how it works
+and what it costs. The package READMEs are the reference.
 
 - [The idea in one screen](#the-idea-in-one-screen)
 - [A frame, from the ground up](#a-frame-from-the-ground-up): passes · WGSL as the source of truth · pipelines ·
@@ -57,7 +68,7 @@ running.
 
 A GPU frame is a sequence of jobs, each reading some resources and writing others: a compute dispatch steps a
 simulation, a render pass draws geometry into colour and depth targets, a fullscreen pass reads those and writes the
-next. Engines built on a scene graph (three.js, most game engines) decide that sequence for you: you describe objects
+next. Engines built on a scene graph (three.js and most engines) decide that sequence for you: you describe objects
 and materials, and a renderer walks the graph, sorts, batches and schedules. That's convenient until you want something
 the renderer didn't anticipate — a simulation feeding a shadow pass feeding a reflection — and then you're fighting
 the scheduler.
@@ -86,7 +97,7 @@ are WGSL `override` constants, not string templating.
 ### Pipelines, compiled before they're needed
 
 A pipeline (shader + layout + fixed state) costs real time to compile, and compiling one the first time it's drawn
-is the classic mid-game hitch. weft creates every pipeline eagerly and asynchronously when the draw is declared;
+is the classic hitch. weft creates every pipeline eagerly and asynchronously when the draw is declared;
 `await kit.ready()` waits for all of them. Draws that would make an identical pipeline share one compile. WebKit (every
 browser on an iPhone) compiles pipelines one at a time and answers nothing meanwhile — asked for a hundred at once, an
 iPhone 16e showed no frame for ten seconds — so a `SerialCompiler` can ask for one a frame instead.
@@ -152,7 +163,7 @@ The pieces, in the order the resolve runs:
    matrix that does it is built in JavaScript doubles from the camera's *step* — last frame's rotation times this
    frame's inverse, and the difference of the two positions — never from world positions. That matters more than it
    sounds: a float32 has a 24-bit mantissa, so two thousand kilometres from the origin a position is only good to about
-   12 cm, and San Francisco's coordinates are big too. Built from the step, a camera in orbit reprojects as precisely
+   12 cm. Built from the step, a camera in orbit reprojects as precisely
    as one at the origin. A floating origin's jump is passed in with `taau.shift(dx, dy, dz)`, and an app with its own
    motion vectors (what moves by itself) hands them over as `velocity`.
 4. **Rejecting stale history.** Reprojection is only right for things that moved with the camera. The defence is
@@ -174,10 +185,10 @@ The pieces, in the order the resolve runs:
 
 The history drops on `Camera.cut()`, on a jump (a step far past the last frame's, or a sharp turn), or on a new output
 size — but not on a render-scale change, since the history lives at the output size: AutoResolution can move the scale
-every second and the picture holds. An MSAA scene's depth is read directly. Measured in the real games: at 0.5–0.6 of
-the canvas it comes close to native resolution with TAA; in Boulder's forest at 0.6 scale, 0.16 % of pixels flicker
-between still frames against 2.24 % with Boulder's previous upscaler (its lab: 1.4 % against 10 %); in San Francisco,
-frame-to-frame change at street level fell to about a third of its previous TAA's at 0.6 scale. The resolve costs about 0.2–0.6 ms at 1600 × 900
+every second and the picture holds. An MSAA scene's depth is read directly. Measured: at 0.5–0.6 of the
+canvas it comes close to native resolution with TAA; in a dense forest scene at 0.6 scale, 0.16 % of pixels flicker
+between still frames against 2.24 % with a conventional render-size temporal upscaler (an indoor scene: 1.4 % against
+10 %), and frame-to-frame change in a city street fell to about a third. The resolve costs about 0.2–0.6 ms at 1600 × 900
 on an M3 Max.
 
 ### Light that bounces: irradiance probes
@@ -201,8 +212,8 @@ weighted integral of that over its hemisphere — its *irradiance*.
   factors `Â₀ = π`, `Â₁ = 2π/3`) leaves four coefficients per colour channel, and then `E(n)/π = c₀ + c₁ nᵧ + c₂ n_z + c₃ nₓ`:
   one dot product per channel at shading time.
 - **Capturing.** A probe is captured by drawing the scene into the six faces of a small cube (24 × 24 by default) from
-  its point. loom doesn't ask the game to submit its scene again: weft passes can *replay* another pass's draws from
-  their own view (`RenderPassOptions.replay`), so the probes see whatever the game already draws into the sea's mirror
+  its point. loom doesn't ask for the scene to be submitted again: weft passes can *replay* another pass's draws from
+  their own view (`RenderPassOptions.replay`), so the probes see whatever is already drawn into the sea's mirror
   pass — its terrain, buildings and sky — with what moves (a dragon, birds) filtered out. A compute pass then integrates
   each cube onto the SH basis, weighting every texel by the solid angle it covers on the sphere,
   `dω = 4 / (N² (1 + u² + v²)^{3/2})`.
@@ -370,7 +381,7 @@ npm run dev        # the lab
 WEFT_SRC=1 npm run dev   # the lab on the kit's source: engine edits without a rebuild
 ```
 
-Working on the engine and a game together: `npm link` the packages into the game, or point its dependency at a
+Working on the engine and an app together: `npm link` the packages into the app, or point its dependency at a
 local path (`"@ericrius1/weft": "file:../weft/packages/weft"`), then rebuild here as you go.
 
 ## Releasing
@@ -394,22 +405,18 @@ canonical one; copy it over the projects' when it changes), wired in as
 "weft":     "node tools/engine-latest.mjs --strict"
 ```
 
-and wherever a deploy builds without `npm run build`: the Vercel projects' `installCommand` (`npm ci && node
-tools/engine-latest.mjs --strict`: PortfolioII, Universe), Boulder's Dockerfile (Railway: after `npm ci`), and the
-deploy scripts that call `vite build` themselves (Seven Havens, Aether, Cell, Universe). It reads the tips of
-`dist/weft` and `dist/loom` over HTTPS (no git needed, ~0.3 s; nothing else happens when the project is already
-there), and when the installed or locked commit is behind, moves it: `npm update` where git is installed (the lockfile
-moves too: commit it), or `npm install --no-save` of the tip's commit where it isn't (Railway's slim Node image; npm
-takes the commit's tarball from GitHub). It checks the result. `--strict` fails the build when the tip can't be
-confirmed; without it (dev) an offline machine is told so and runs on what it has. `ENGINE_LATEST=0` skips it.
+and wherever a deploy builds without `npm run build` (a hosting provider's install command, a Dockerfile, a deploy
+script that calls `vite build` itself). It reads the tips of `dist/weft` and `dist/loom` over HTTPS (no git needed,
+~0.3 s; nothing else happens when the project is already there), and when the installed or locked commit is behind,
+moves it: `npm update` where git is installed (the lockfile moves too: commit it), or `npm install --no-save` of the
+tip's commit where it isn't (npm takes the commit's tarball from GitHub). It checks the result. `--strict` fails the
+build when the tip can't be confirmed; without it (dev) an offline machine is told so and runs on what it has.
+`ENGINE_LATEST=0` skips it.
 
 So a fix propagates by pushing weft's `main`: once dist.yml has pushed the branches (a minute or two), every project's
-next `npm run dev` or build has it. A project only *changes* when it is next built: Vercel/Railway projects on their
-next deploy, the builds copied into PortfolioII's `public/` (Cell, The Gem Dancers, Gong Bong) when they're rebuilt
-and copied, Seven Havens and Aether when their `tools/deploy.sh` runs again. Dev servers use the dist builds too, the
-same bits a deploy ships (loom's audio worker only loads from dist); `WEFT_LOCAL=1 npm run dev`, where a project has
-it, compiles `../weft`'s source in for live engine work. Bump the package's `version` and its CHANGELOG with what
-changed, so a project's lockfile says which it has.
+next `npm run dev` or build has it — a project only *changes* when it's next built. `WEFT_LOCAL=1 npm run dev`, where a
+project has it, compiles `../weft`'s source in for live engine work. Bump the package's `version` and its CHANGELOG with
+what changed, so a project's lockfile says which it has.
 
 ## License
 
