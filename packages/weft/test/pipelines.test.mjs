@@ -203,6 +203,8 @@ test('kit.ready(...items) waits for those alone; kit.ready() for everything', as
   // (a run list as it is: what has no pipeline is passed over, a record listed twice counted once)
   assert.deepEqual(pipelinesOf([fast, null, false, new RawItem(() => {}), [pass, [fast]]]), [fast.pipe, draw.pipe]);
   assert.deepEqual(pipelinesOf([]), []);
+  // (a run item made of passes of its own, a MipChain's: theirs)
+  assert.deepEqual(pipelinesOf([{ label: 'mips', passes: [pass] }]), [draw.pipe]);
   const r = await kit.ready([fast, pass]);
   assert.deepEqual(r, { pipelines: 2, distinct: 2, failed: 0 });
   assert.ok(fast.pipe.pipeline && draw.pipe.pipeline && !slow.pipe.pipeline && slow.pipe.pending);
