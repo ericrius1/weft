@@ -1,5 +1,5 @@
-import type { Kit, Texture, RenderPass, RunEntry, View, UniformBuffer, StorageBuffer, V3 } from '@ericrius1/weft';
-import { Camera } from '@ericrius1/weft';
+import type { Kit, Texture, RenderPass, RunEntry, View, UniformBuffer, StorageBuffer, V3, SharedGroup } from '@ericrius1/weft';
+import { Camera, Taau } from '@ericrius1/weft';
 import type { Atmosphere } from '../world/sky';
 import { Ripples, type RippleOptions } from '../world/ripples';
 import { TerrainShadow } from './hfshadow';
@@ -7,6 +7,8 @@ import { Clouds } from './clouds';
 import { SkyClouds, type SkyCloudOptions } from './skyclouds';
 import { Cinema } from './cinema';
 import { Underwater } from './underwater';
+import { LightClusters } from './clusters';
+import { ProbeGrid } from './probes';
 /** the defaults: the opaque scene's samples a pixel, a shadow cascade's size (texels a side) */
 export declare const MSAA = 4;
 export declare const SHADOW_SIZE = 2048;
@@ -56,6 +58,37 @@ export interface RendererOptions {
     terrainShadowSize?: number;
     /** the ripple window: cells across, metres a cell (default 256 at 0.22 m; `ripples.configure` changes it later) */
     ripples?: RippleOptions;
+    /** temporal anti-aliasing with upscaling (weft's Taau, r.taau): the picture comes out at the canvas's size, however
+     *  small the render (kit.renderScale) — so a lowered scale costs a little sharpness in motion, not a soft picture.
+     *  After the scene, the clouds, the air, the fx, motion blur and depth of field; before the bloom and the grade. With
+     *  it a phone can take msaa 1 and a lower scale. Off by default; { velocity } a game's own motion vectors (rg16float at
+     *  the render size: screen uv now − then) so what moves by itself reprojects too */
+    taau?: boolean | {
+        velocity?: Texture;
+    };
+    /** the point lights: `max` kept (default 32), `clustered` (default: when max > 32) binned into a grid round the
+     *  camera (r.clusters: LightClusters) so each pixel loops only those near it — hundreds of lamps; `cells`, `cap` the
+     *  grid's (32 × 16 × 32, 24 a cell) */
+    lights?: {
+        max?: number;
+        clustered?: boolean;
+        cells?: [number, number, number];
+        cap?: number;
+    };
+    /** diffuse GI from irradiance probes over a box (r.gi: ProbeGrid): least and greatest corners, spacing (m); the
+     *  probes see `source`'s draws (default the mirror pass: put what should bounce light there, as for the mirror —
+     *  with mirror off it isn't drawn, but the probes still replay it), `face` texels a cube side, `maxPerFrame`
+     *  probes captured at most a frame, `ground` lifts probes out of the terrain. Off unless given */
+    gi?: {
+        min: V3;
+        max: V3;
+        spacing: number;
+        source?: RenderPass;
+        face?: number;
+        maxPerFrame?: number;
+        ground?: (x: number, z: number) => number;
+        skip?: RegExp | ((label: string) => boolean);
+    };
 }
 export declare class Renderer {
     private kit;
@@ -82,6 +115,24 @@ export declare class Renderer {
     skyClouds: SkyClouds | null;
     cinema: Cinema;
     underwater: Underwater;
+    /** the temporal upscaler (RendererOptions.taau), or null: r.taau.params (on, sharpen, feedback…), r.taau.cut() */
+    taau: Taau | null;
+    /** the clustered point lights (RendererOptions.lights), or null: r.clusters.reach */
+    clusters: LightClusters | null;
+    /** with clusters: false has the surfaces loop every light (to compare) */
+    clustered: boolean;
+    /** the irradiance probes (RendererOptions.gi), or null: r.gi.params, r.gi.setVolume(min, max, spacing) */
+    gi: ProbeGrid | null;
+    /** the environment's extras (envx.wgsl): the light grid's and the probes' values, set by update() */
+    envx: UniformBuffer<any>;
+    /** the shared environment group (env.wgsl, group 1) */
+    env: SharedGroup;
+    /** the most point lights kept (RendererOptions.lights.max) */
+    readonly maxLights: number;
+    /** where the light grid's cells and the probes start in the point lights' buffer (64-byte records) */
+    private bases;
+    private cellsCopy;
+    private probesCopy;
     /** the opaque scene (MSAA): add draws to it */
     scene: RenderPass;
     /** the mirror image over the sea (half res, single sample; a mirrored camera, so draw with cull 'none') */
@@ -201,9 +252,11 @@ export declare class Renderer {
     private lensPass;
     lensU: UniformBuffer<any>;
     constructor(kit: Kit, terrain: TerrainMaps, atmo: Atmosphere, half: number, opts?: RendererOptions);
+    private laidOut;
     /** the sky goes last in the opaque passes, where nothing wrote depth (a game's own sky shader, or loom's) */
     addSky(shader?: any, bind?: Record<string, unknown>): void;
-    /** small point lights (fallen stars, lamps, blooms): the nearest MAX_LIGHTS to the camera are kept */
+    /** small point lights (fallen stars, lamps, blooms): the nearest `maxLights` to the camera are kept (clustered: in
+     *  that order, so a crowded cell of the grid keeps its nearest) */
     setPointLights(list: PointLight[], cam: ArrayLike<number>): void;
     /** fit the three cascades around the camera's view for a key light direction (each a sphere round its stretch of the
      *  view, the light's eye and depth from its radius: shadowFit), texel-snapped so they don't crawl */

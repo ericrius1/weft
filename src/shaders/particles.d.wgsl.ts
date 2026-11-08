@@ -74,6 +74,15 @@ export interface Lighting {
   sh: ArrayLike<number> | Vec4[];
   keyAlt: ArrayLike<number> | Vec4[];
 }
+export interface EnvX {
+  grid: Vec4;
+  gridR: Vec4;
+  gridN: Vec4;
+  giMin: Vec4;
+  giN: Vec4;
+  giK: Vec4;
+  bases: Vec4;
+}
 export interface PointLight {
   pos: Vec3;
   radius: number;
@@ -157,5 +166,5 @@ export interface GOut {
   vz: number;
 }
 
-declare const shader: Shader<{ Frame: Frame; World: World; Lighting: Lighting; PointLight: PointLight; TerrainSurf: TerrainSurf; Particle: Particle; Emit: Emit; Kinds: Kinds; PU: PU; Glint: Glint; VOut: VOut; GOut: GOut }, 'frame' | 'world' | 'P' | 'K' | 'lighting' | 'plights' | 'parts' | 'emits' | 'partsR' | 'glints' | 'skyTex' | 'aerialTex' | 'heightTex' | 'normalTex' | 'splatTex' | 'maskTex' | 'shadowTex' | 'rippleTex' | 'hfShadowTex' | 'cloudShadowTex' | 'sceneDepth' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;
+declare const shader: Shader<{ Frame: Frame; World: World; Lighting: Lighting; EnvX: EnvX; PointLight: PointLight; TerrainSurf: TerrainSurf; Particle: Particle; Emit: Emit; Kinds: Kinds; PU: PU; Glint: Glint; VOut: VOut; GOut: GOut }, 'frame' | 'world' | 'envx' | 'P' | 'K' | 'lighting' | 'plights' | 'parts' | 'emits' | 'partsR' | 'glints' | 'skyTex' | 'aerialTex' | 'heightTex' | 'normalTex' | 'splatTex' | 'maskTex' | 'shadowTex' | 'rippleTex' | 'hfShadowTex' | 'cloudShadowTex' | 'sceneDepth' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;
 export default shader;

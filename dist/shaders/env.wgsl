@@ -2,6 +2,7 @@
 // cascades and the ripple sim. Every surface shader includes this and gets these bindings without passing them.
 #include "./globals"
 #include "./lighting"
+#include "./envx"
 
 @group(1) @binding(0) var<storage, read> lighting: Lighting;
 @group(1) @binding(1) var skyTex: texture_2d<f32>;       // sky-view LUT
@@ -16,7 +17,9 @@
 @group(1) @binding(10) var cloudShadowTex: texture_2d<f32>;  // the clouds' shadow map (clouds.wgsl bakeShadow)
 // (a spot when cosOuter > -1: lit within its cone round dir, fading from cosInner to cosOuter — headlights, lamps)
 struct PointLight { pos: vec3f, radius: f32, color: vec3f, size: f32, dir: vec3f, cosOuter: f32, cosInner: f32, p0: f32, p1: f32, p2: f32 }
-@group(1) @binding(11) var<storage, read> plights: array<PointLight, 32>;
+// (after the lights, world.lights.x of them: the light grid's cells and the irradiance probes — envx.bases)
+@group(1) @binding(11) var<storage, read> plights: array<PointLight>;
+@group(1) @binding(12) var<uniform> envx: EnvX;
 
 // ---------------------------------------------------------------- terrain maps
 fn worldUV(xz: vec2f) -> vec2f { return xz / (2.0 * world.worldHalf) + 0.5; }
@@ -268,12 +271,31 @@ fn spotK(l: PointLight, away: vec3f) -> f32 {
   }
   return smoothstep(l.cosOuter, l.cosInner, dot(a, l.dir)) * cut;
 }
+/** the i-th float of plights read as a count or an index (the light grid's cells are records of floats there) */
+fn plWord(i: u32) -> u32 {
+  let r = plights[i >> 4u];
+  let q = (i >> 2u) & 3u;
+  var v = vec4f(r.pos, r.radius);
+  if (q == 1u) { v = vec4f(r.color, r.size); } else if (q == 2u) { v = vec4f(r.dir, r.cosOuter); } else if (q == 3u) { v = vec4f(r.cosInner, r.p0, r.p1, r.p2); }
+  return u32(v[i & 3u]);
+}
+/** the point lights that may reach wp: x where its cell's indices start (in plights' floats; 0xffffffff: the plain
+ *  list, plights 0 … y-1), y how many. With the lights clustered, only its cell's; without, all of world.lights.x */
+fn plList(wp: vec3f) -> vec2u {
+  if (envx.grid.w < 0.5) { return vec2u(0xffffffffu, u32(world.lights.x)); }
+  let c = lightCell(envx, wp);
+  if (c < 0) { return vec2u(0u, 0u); }
+  let base = (u32(envx.bases.x) + u32(c) * u32(envx.bases.z)) * 16u;
+  return vec2u(base + 1u, min(plWord(base), u32(envx.gridR.z)));
+}
+fn plAt(list: vec2u, k: u32) -> u32 { if (list.x == 0xffffffffu) { return k; } return plWord(list.x + k); }
+
 /** the light of the point lights reaching a surface (radiance x cosine; a light's own size softens it up close) */
 fn pointLightsAt(wp: vec3f, n: vec3f, wrap: f32) -> vec3f {
   var s = vec3f(0.0);
-  let cnt = u32(world.lights.x);
-  for (var i = 0u; i < cnt; i++) {
-    let l = plights[i];
+  let L = plList(wp);
+  for (var k = 0u; k < L.y; k++) {
+    let l = plights[plAt(L, k)];
     if (plSkip > 0.0 && l.p0 == plSkip) { continue; }
     let d = l.pos - wp;
     let r2 = dot(d, d);
@@ -290,9 +312,9 @@ fn pointLightsAt(wp: vec3f, n: vec3f, wrap: f32) -> vec3f {
  *  a grazing view these stretch into the long streaks of headlights and lamps on a wet road */
 fn pointLightsSpec(wp: vec3f, n: vec3f, v: vec3f, rough: f32, f0: f32) -> vec3f {
   var s = vec3f(0.0);
-  let cnt = u32(world.lights.x);
-  for (var i = 0u; i < cnt; i++) {
-    let l = plights[i];
+  let L = plList(wp);
+  for (var k = 0u; k < L.y; k++) {
+    let l = plights[plAt(L, k)];
     if (plSkip > 0.0 && l.p0 == plSkip) { continue; }
     let d = l.pos - wp;
     let r2 = dot(d, d);
@@ -313,9 +335,9 @@ fn pointLightsSpec(wp: vec3f, n: vec3f, v: vec3f, rough: f32, f0: f32) -> vec3f 
  *  it forward (g) — a lamp behind the mist lights it up */
 fn pointLightsIn(p: vec3f, toEye: vec3f, g: f32) -> vec3f {
   var s = vec3f(0.0);
-  let cnt = u32(world.lights.x);
-  for (var i = 0u; i < cnt; i++) {
-    let l = plights[i];
+  let L = plList(p);
+  for (var k = 0u; k < L.y; k++) {
+    let l = plights[plAt(L, k)];
     let d = l.pos - p;
     let r2 = dot(d, d);
     if (r2 > l.radius * l.radius) { continue; }
@@ -337,6 +359,51 @@ fn rippleAt(xz: vec2f) -> vec4f {
   return textureSampleLevel(rippleTex, samp_repeat, xz / size, 0.0) * k;
 }
 
+// ---------------------------------------------------------------- the irradiance probes (diffuse GI)
+// A grid of probes (probes.ts), each the light arriving at its point from every direction as L1 spherical harmonics:
+// what it saw of the sky past what's in the way, and of the lit surfaces around it — the light they bounce. A probe is
+// a record of plights past envx.bases.y (red's four coefficients where a light has pos + radius, green's in colour +
+// size, blue's in dir + cosOuter, its validity in cosInner: 0 where it sat inside something), the coefficients
+// premultiplied by the validity, so the trilinear blend of the eight round a point, divided by their blended validity,
+// leaves out the probes that can't be trusted.
+/** the probes' irradiance / π at wp facing n (as shIrradiance), and how far to trust it (a: 0 outside the volume) */
+fn giProbe(wp: vec3f, n: vec3f) -> vec4f {
+  if (envx.giN.w < 0.5) { return vec4f(0.0); }
+  let sp = envx.giMin.w;
+  // (off the surface along its normal and toward the eye: the probes behind a wall don't leak through it)
+  let p = wp + n * (envx.giK.y * sp) + normalize(frame.camPos - wp) * (envx.giK.z * sp);
+  let N = envx.giN.xyz;
+  let g = (p - envx.giMin.xyz) / sp;
+  // (fading out over the volume's last stretch, to the sky's light outside it)
+  let edge = min(g, N - 1.0 - g);
+  let fade = sat(min(edge.x, min(edge.y, edge.z)) / max(envx.giK.w, 1e-3) + 1.0);
+  if (fade <= 0.0) { return vec4f(0.0); }
+  let q = clamp(g, vec3f(0.0), N - 1.0);
+  let i0 = vec3u(min(floor(q), N - 2.0));
+  let f = q - vec3f(i0);
+  let nx = u32(N.x);
+  let nxy = nx * u32(N.y);
+  let base = u32(envx.bases.y);
+  var r = vec4f(0.0); var gg = vec4f(0.0); var b = vec4f(0.0); var v = 0.0;
+  for (var c = 0u; c < 8u; c++) {
+    let o = vec3u(c & 1u, (c >> 1u) & 1u, c >> 2u);
+    let w = select(1.0 - f.x, f.x, o.x == 1u) * select(1.0 - f.y, f.y, o.y == 1u) * select(1.0 - f.z, f.z, o.z == 1u);
+    let i = i0 + o;
+    let pr = plights[base + i.z * nxy + i.y * nx + i.x];
+    r += vec4f(pr.pos, pr.radius) * w; gg += vec4f(pr.color, pr.size) * w; b += vec4f(pr.dir, pr.cosOuter) * w; v += pr.cosInner * w;
+  }
+  if (v < 1e-3) { return vec4f(0.0); }
+  let basis = vec4f(1.0, n.y, n.z, n.x);
+  let e = max(vec3f(dot(r, basis), dot(gg, basis), dot(b, basis)) / v, vec3f(0.0));
+  return vec4f(e * envx.giK.x, fade * sat(v * 3.0));
+}
+/** the ambient light (the sky's, bounced) on a surface / π: the probes' where there are any, the sky's elsewhere */
+fn ambientAt(wp: vec3f, n: vec3f) -> vec3f {
+  let sky = shIrradiance(n);
+  let g = giProbe(wp, n);
+  return mix(sky, g.rgb, g.a);
+}
+
 // ---------------------------------------------------------------- shading
 /** sun / moon + sky light on a diffuse surface with a soft wrap */
 fn lightDiffuse(albedo: vec3f, n: vec3f, wp: vec3f, px: vec2f, ao: f32, wrap: f32) -> vec3f {
@@ -344,7 +411,7 @@ fn lightDiffuse(albedo: vec3f, n: vec3f, wp: vec3f, px: vec2f, ao: f32, wrap: f3
   let ndl = (dot(n, l) + wrap) / (1.0 + wrap);
   let sh = shadowAt(wp, n, px);
   let direct = lighting.keyRad.rgb * PI * max(ndl, 0.0) * sh;
-  let amb = shIrradiance(n) * PI * ao;
+  let amb = ambientAt(wp, n) * PI * ao;
   return albedo * ((direct + amb) / PI + pointLightsAt(wp, n, wrap));
 }
 

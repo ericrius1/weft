@@ -74,6 +74,15 @@ export interface Lighting {
   sh: ArrayLike<number> | Vec4[];
   keyAlt: ArrayLike<number> | Vec4[];
 }
+export interface EnvX {
+  grid: Vec4;
+  gridR: Vec4;
+  gridN: Vec4;
+  giMin: Vec4;
+  giN: Vec4;
+  giK: Vec4;
+  bases: Vec4;
+}
 export interface PointLight {
   pos: Vec3;
   radius: number;
@@ -139,5 +148,5 @@ export interface ClRay {
   zW: number;
 }
 
-declare const shader: Shader<{ Frame: Frame; World: World; Lighting: Lighting; PointLight: PointLight; TerrainSurf: TerrainSurf; FullscreenOut: FullscreenOut; CloudU: CloudU; ClSample: ClSample; ClRay: ClRay }, 'frame' | 'world' | 'C' | 'lighting' | 'plights' | 'farOut' | 'farZOut' | 'nearOut' | 'nearZOut' | 'outLT' | 'outM' | 'smapOut' | 'weatherOut' | 'groundOut' | 'lightOut' | 'wakeOut' | 'probeOut' | 'cTower' | 'towerOut' | 'skyTex' | 'aerialTex' | 'heightTex' | 'normalTex' | 'splatTex' | 'maskTex' | 'shadowTex' | 'rippleTex' | 'hfShadowTex' | 'cloudShadowTex' | 'cBase' | 'cDetail' | 'cWeather' | 'cGround' | 'sceneDepth' | 'inLT' | 'inZ' | 'histLT' | 'histM' | 'farLT' | 'farM' | 'nearLT' | 'nearM' | 'heightIn' | 'cLight' | 'cWake' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;
+declare const shader: Shader<{ Frame: Frame; World: World; Lighting: Lighting; EnvX: EnvX; PointLight: PointLight; TerrainSurf: TerrainSurf; FullscreenOut: FullscreenOut; CloudU: CloudU; ClSample: ClSample; ClRay: ClRay }, 'frame' | 'world' | 'envx' | 'C' | 'lighting' | 'plights' | 'farOut' | 'farZOut' | 'nearOut' | 'nearZOut' | 'outLT' | 'outM' | 'smapOut' | 'weatherOut' | 'groundOut' | 'lightOut' | 'wakeOut' | 'probeOut' | 'cTower' | 'towerOut' | 'skyTex' | 'aerialTex' | 'heightTex' | 'normalTex' | 'splatTex' | 'maskTex' | 'shadowTex' | 'rippleTex' | 'hfShadowTex' | 'cloudShadowTex' | 'cBase' | 'cDetail' | 'cWeather' | 'cGround' | 'sceneDepth' | 'inLT' | 'inZ' | 'histLT' | 'histM' | 'farLT' | 'farM' | 'nearLT' | 'nearM' | 'heightIn' | 'cLight' | 'cWake' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;
 export default shader;

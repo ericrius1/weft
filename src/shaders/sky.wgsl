@@ -57,11 +57,12 @@ fn fs(i: FullscreenOut) -> @location(0) vec4f {
     let vis = clamp(1.0 - luminance(col) * 60.0, 0.0, 1.0) * night;
     col += starField(d) * vis * 0.04;
   }
-  // sun disc with limb darkening (only the transmittance-coloured disc; the glow is in the LUT)
+  // sun disc with limb darkening (only the transmittance-coloured disc; the glow is in the LUT). Not in the mirror, nor
+  // in an irradiance probe's capture (user.y: the sun's light is the surfaces' direct light, not their ambient)
   let mu = dot(d, world.sunDir);
   let sunR = 0.0093;
   let ca = cos(sunR);
-  if (mu > ca && frame.user.x < 0.5) {
+  if (mu > ca && frame.user.x < 0.5 && frame.user.y < 0.5) {
     let r = sqrt(max(0.0, 1.0 - (1.0 - mu) / (1.0 - ca)));
     col += lighting.sunRad.rgb * 2400.0 * (0.4 + 0.6 * pow(r, 0.45));
   }

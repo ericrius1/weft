@@ -74,6 +74,15 @@ export interface Lighting {
   sh: ArrayLike<number> | Vec4[];
   keyAlt: ArrayLike<number> | Vec4[];
 }
+export interface EnvX {
+  grid: Vec4;
+  gridR: Vec4;
+  gridN: Vec4;
+  giMin: Vec4;
+  giN: Vec4;
+  giK: Vec4;
+  bases: Vec4;
+}
 export interface PointLight {
   pos: Vec3;
   radius: number;
@@ -111,5 +120,5 @@ export interface MistOut {
   z: Vec4;
 }
 
-declare const shader: Shader<{ Frame: Frame; World: World; Lighting: Lighting; PointLight: PointLight; TerrainSurf: TerrainSurf; FullscreenOut: FullscreenOut; FX: FX; MistOut: MistOut }, 'frame' | 'world' | 'X' | 'lighting' | 'plights' | 'skyTex' | 'aerialTex' | 'heightTex' | 'normalTex' | 'splatTex' | 'maskTex' | 'shadowTex' | 'rippleTex' | 'hfShadowTex' | 'cloudShadowTex' | 'depthFull' | 'zHalf' | 'texA' | 'texB' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;
+declare const shader: Shader<{ Frame: Frame; World: World; Lighting: Lighting; EnvX: EnvX; PointLight: PointLight; TerrainSurf: TerrainSurf; FullscreenOut: FullscreenOut; FX: FX; MistOut: MistOut }, 'frame' | 'world' | 'envx' | 'X' | 'lighting' | 'plights' | 'skyTex' | 'aerialTex' | 'heightTex' | 'normalTex' | 'splatTex' | 'maskTex' | 'shadowTex' | 'rippleTex' | 'hfShadowTex' | 'cloudShadowTex' | 'depthFull' | 'zHalf' | 'texA' | 'texB' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;
 export default shader;
