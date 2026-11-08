@@ -1,7 +1,7 @@
 # @ericrius1/weft
 
 A thin WebGPU kit: **a frame is an explicit, ordered list of passes over named resources, and WGSL is the single
-definition of the data.** The engine under [games.ericlevin.dev](https://games.ericlevin.dev).
+definition of the data.**
 
 1. **Passes are the unit of work**, run in the order you list them (`kit.run([...])`). No scene graph, no hidden
    scheduling.
@@ -9,7 +9,7 @@ definition of the data.** The engine under [games.ericlevin.dev](https://games.e
    bindings, entry points, overrides) and writes a `.d.wgsl.ts` beside it, so struct fields and binding names are
    type-checked. Bindings are passed by WGSL variable name.
 3. **Pipelines are created eagerly and asynchronously**; `await kit.ready()` waits for all of them — the whole app's,
-   every one declared so far — so nothing compiles mid-game. To run a pass before then (a bake while loading), wait
+   every one declared so far — so nothing compiles mid-frame. To run a pass before then (a bake while loading), wait
    for its own: `await kit.ready(fill, info)` or `await pass.ready()`. Draws and computes that would make the same
    pipeline (labels and bound resources aside) share one compile and one GPU pipeline. Variants are WGSL `override`s.
    (Where pipelines compile one at a time, WebKit, an app can set a compile scheduler, `kit.compiler`, that defers
@@ -24,8 +24,8 @@ definition of the data.** The engine under [games.ericlevin.dev](https://games.e
    backquote key) lists the passes that ran with GPU timings and on/off switches, any texture, and sliders built from
    `// @range(…)` annotations in WGSL structs.
 7. **A frame budget**: `kit.maxFps` and `AutoResolution` (GPU timestamps → render scale; the frames' intervals where there are none, as on a phone's Safari).
-   `FrameBudget` is the one Boulder and San Francisco run (tuned on an iPhone 16e: paced by the frames on WebKit, the
-   governor's `starved`/`roomy`, the scale that held kept for the next visit); `LoadGuard` steps a load down a ladder of
+   `FrameBudget` adds what a phone needs (paced by the frames on WebKit, a governor's `starved`/`roomy`, the scale
+   that held kept for the next visit); `LoadGuard` steps a load down a ladder of
    profiles after one that crashed; `isWebKit`, `isPhone`, `gpuName`, `isAppleGpu`.
 8. **Encoding is cheap.** Bind groups are checked by number, not rebuilt as keys: a group of direct resources is reused
    until something is reallocated, and anything else (a `Ref`) is resolved once per run epoch (each `kit.run` and each
@@ -147,7 +147,7 @@ perfBeacon(kit, { url: '/__beacon', extra: () => ({ profile }) });   // every 5 
 The big files on R2, content-addressed, and the layers too big to fetch whole streamed as tiles out of packs:
 
 ```ts
-const assets = await new Assets({ keep: 'mygame-objects' }).init();   // remote.json: path → objects/<sha256>/<name>
+const assets = await new Assets({ keep: 'myapp-objects' }).init();   // remote.json: path → objects/<sha256>/<name>
 const pack = await Pack.load(assets, 'height0');                       // tiles/height0.json + its pack
 const bytes = await pack.bytes(row, col, signal);                      // a Range request, retried
 const metres = await decodeH16(bytes!, pack.index.tile, pack.index.q!);
