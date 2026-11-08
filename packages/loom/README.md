@@ -13,6 +13,11 @@ games at [games.ericlevin.dev](https://games.ericlevin.dev) share.
 - **Water**: Gerstner seas with a dispersive ripple sim round the player (Kelvin wakes, ring trains; any window size),
   refraction absorbed per channel, a planar mirror; under the sea, caustics and shafts through a medium a world can set
   (a lagoon, a peaty loch).
+- **Light that bounces, lamps by the hundred** (opt-in, `RendererOptions`): `gi` — irradiance probes over a box
+  (`render/probes`: L1 spherical harmonics captured a few a frame from the mirror pass's draws, the sky past what's in
+  the way and the lit surfaces' bounce, read by `ambientAt(wp, n)` / `lightDiffuse`); `lights: { max }` — the point
+  lights clustered in a grid round the camera (`render/clusters`), each pixel looping only those near it; `taau` —
+  weft's temporal upscaler after the scene. Both live in the point lights' buffer: no shader binds more for them.
 - **Weather & lamps**: rain drawn from index and time (nothing simulated), splashes placed on the depth buffer; spot and
   point lights with headlamp profiles; light in the air sampled equi-angularly (Kulla & Fajardo). For a world with its
   own renderer, **rainfall** (`weather/rainfall`, `#include "loom/rainfall"`): rain round the eye from a weather's

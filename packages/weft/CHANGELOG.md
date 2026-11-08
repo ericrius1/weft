@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.7
+
+- **`Taau`** (`src/taau.ts`, `shaders/taau.wgsl`): temporal anti-aliasing that upscales. The view's camera is jittered
+  by a Halton offset each frame (set for the next frame as its items run, so every pass of a frame sees one jitter);
+  each frame's render-size samples are gathered into a history at the canvas's size (`output: 'render'` for AA alone),
+  reprojected by the camera's motion through depth and both frames' unjittered matrices, or by the app's own motion
+  vectors (`velocity`, rg: uv now − then), clipped to the frame's neighbourhood (variance box in YCoCg, tonemapped
+  blend), a wide-kernel upsample wherever the history can't be used, then sharpened by local contrast (`sharpen:
+  false` saves that canvas-size texture). An MSAA scene's depth is read as it is (its first sample). The history drops
+  on `Camera.cut()` (new: `camera.cuts`), on a jump (`jump`: a step far past the last one, a sharp turn), on a new
+  output size; a render-scale change keeps it. `shift(dx, dy, dz)` carries it across a floating origin's move;
+  `taau.jitter` the frame's jitter for ray marches that build their own rays. Tried in San Francisco, Universe,
+  PortfolioII's home and drake: at 0.5–0.6 of the canvas it comes close to native with TAA.
+- **`RenderPassOptions.replay`** (and `replayFilter`): a pass draws another pass's draws — its bundles opened up —
+  from its own view into its own targets (same formats), e.g. a probe's six cube faces seeing the scene.
+- **Plugin**: a page load reloads any shader changed on disk since it was loaded (a rebuilt package's dist, deleted or
+  renamed into place, could drop the watcher's hold and serve the old one).
+
 ## 0.2.6
 
 - **`Pack.range(a, n, signal)`**: a run of a pack's bytes in one Range request, retried like a tile (San Francisco's

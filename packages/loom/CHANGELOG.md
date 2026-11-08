@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.15
+
+All opt-in (`RendererOptions`); without them nothing renders differently. Needs weft 0.2.7.
+
+- **Diffuse GI from irradiance probes** (`gi: { min, max, spacing, … }`, `render/probes.ts`, `shaders/probes.wgsl`):
+  a box of probes, each L1 spherical harmonics of the light arriving at its point — the sky past what's in the way and
+  the lit surfaces round it, so their bounce. Captured a few a frame (`maxPerFrame`, `params.perFrame`) by replaying
+  the mirror pass's draws (or `source`'s; `skip` leaves out what moves) into six small cube faces, never-captured
+  probes nearest the camera first, then round and round, each recapture blended in (`blend`): it fills in over seconds,
+  follows the time of day, and gains a bounce each round. Probes inside things are untrusted and left out of the blend;
+  `ground` lifts those under the terrain. Read through `ambientAt(wp, n)` (`lightDiffuse` uses it): a game's own
+  shader swaps `shIrradiance(n)` for it to take part. Capture views set Frame.user.y = 1 (loom's sky leaves the sun's
+  disc out there).
+- **Clustered point lights** (`lights: { max, clustered, cells, cap }`, `render/clusters.ts`): a grid of cells round
+  the camera, small near it and growing with distance, binned on the GPU each frame; `pointLightsAt`,
+  `pointLightsSpec` and `pointLightsIn` loop their cell's lights only. 1000 lamps: ~6× faster than the plain loop on an
+  M3 Max. `r.clustered = false` loops them all (to compare); a shader looping `plights[i]` for `world.lights.x` still
+  works.
+- **`taau`** (`true` or `{ velocity }`): weft's Taau after the fx, motion blur and depth of field, before bloom; bloom,
+  the grade and the lens read its canvas-size output.
+- The grid's cells and the probes are records of the point lights' own buffer (env.wgsl `plights`, now runtime-sized):
+  the shaders that include env bind nothing new for them but the `envx` uniform — a probe texture had pushed the cloud
+  march past a phone's 16 sampled textures. Lab: `examples/lab/town.html`.
+
 ## 0.1.14
 
 - **Forests on the GPU** (`world/forest.ts`, `shaders/forest.wgsl` — `#include "loom/forest"`): San Francisco's
