@@ -33,6 +33,12 @@ definition of the data.** The engine under [games.ericlevin.dev](https://games.e
    bundle (`pass.bundle()`), replayed with one call a frame.
 9. **HDR when the display has it** (`createKit(canvas, { hdr: true })`): an rgba16float canvas with extended tone
    mapping, Display P3 where supported; `kit.hdr` says what you got, and `weft/output` encodes for either.
+10. **Temporal upscaling** (`new Taau(kit, hdr, depth)`): the camera jittered a sub-pixel each frame, each frame
+   gathered into a history at the canvas's size, reprojected by the camera's motion (or the app's own motion vectors:
+   `velocity`), clipped to what the frame has round each pixel, sharpened by local contrast. Anti-aliased, and at full
+   size from a smaller render: AutoResolution's lowered scale costs a little sharpness in motion, not a soft picture.
+   An MSAA scene's depth is read as it is; `Camera.cut()`, a jump, or `taau.shift()` (a floating origin) are handled.
+   A pass can also draw another pass's draws from its own view (`replay`): a probe's cube faces, a second camera.
 
 ```bash
 npm install @ericrius1/weft

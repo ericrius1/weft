@@ -196,6 +196,12 @@ export interface RenderPassOptions {
     shared?: Record<number, Record<string, unknown>>;
     viewport?: Nums;
     enabled?: boolean | (() => boolean);
+    /** draw another pass's draws (and its bundles' draws, one by one) from this pass's view, into its own targets — a
+     *  probe's cube faces, a second camera — instead of draws of its own. The two passes' targets must have the same
+     *  formats and samples (the draws' pipelines are made for the source's). */
+    replay?: RenderPass;
+    /** (with replay) which of the source's draws to draw: what moves (a dragon, creatures) left out of a probe's capture */
+    replayFilter?: (d: Draw) => boolean;
 }
 /** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
 export interface DrawEncoder {
@@ -294,8 +300,9 @@ export declare class Draw<S extends Shader = Shader> {
     set(name: keyof NonNullable<DrawOptions<S>['bind']> & string, value: Bindable): this;
     private descriptor;
     encode(pe: GPURenderPassEncoder): void;
-    /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready) */
-    encodeInto(enc: DrawEncoder): void;
+    /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready); `view` and `shared` in
+     *  place of its pass's (a pass replaying it: RenderPassOptions.replay) */
+    encodeInto(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>): void;
     /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset and count, a
      *  scheduler's gate */
     get watched(): boolean;
@@ -330,6 +337,8 @@ export declare class RenderPass implements RunItem {
     }>;
     /** a fullscreen triangle (the shader includes weft/fullscreen and has a fragment entry) */
     fullscreen<S extends Shader>(shader: S, opts?: DrawOptions<S>): Draw<S>;
+    private replayChecked;
+    private encodeReplay;
     private targetFormat;
     formats(): {
         colors: GPUTextureFormat[];

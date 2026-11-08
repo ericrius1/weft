@@ -21,6 +21,7 @@ export { Assets, Pack, fetchKept, isLasting, inflate, decodeH16, unpackH16, pack
 export { loadImageTexture, loadImageArray, loadBitmap, bitmapOf, textureFromBitmaps, generateMips, warmMips, solidTexture } from './images';
 export { isWebKit, isPhone, gpuName, isAppleGpu, LoadGuard } from './device';
 export { FrameBudget } from './budget';
+export { Taau } from './taau';
 export { shot } from './shot';
 export { perfBeacon } from './beacon';
 //# sourceMappingURL=index.js.map

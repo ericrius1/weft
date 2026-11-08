@@ -39,8 +39,10 @@ export declare class Camera {
     lookAt(eye: ArrayLike<number>, target: ArrayLike<number>): this;
     /** recompute matrices for a viewport (width, height in pixels) */
     update(width: number, height: number): void;
-    /** forget motion history (after a cut, so motion vectors don't smear) */
+    /** forget motion history (after a cut, so motion vectors don't smear; a Taau drops its history too) */
     cut(): void;
+    /** how many times it's been cut (temporal filters watch this) */
+    cuts: number;
     /** sphere-in-frustum test using the last update's planes */
     sees(c: ArrayLike<number>, r: number): boolean;
     /** world-space ray through a pixel (for picking) */

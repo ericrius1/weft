@@ -20,6 +20,7 @@ export { Assets, Pack, fetchKept, isLasting, inflate, decodeH16, unpackH16, pack
 export { loadImageTexture, loadImageArray, loadBitmap, bitmapOf, textureFromBitmaps, generateMips, warmMips, solidTexture, type ImageTextureOptions } from './images';
 export { isWebKit, isPhone, gpuName, isAppleGpu, LoadGuard, type LoadGuardKeys } from './device';
 export { FrameBudget, type FrameBudgetOptions } from './budget';
+export { Taau, type TaauOptions } from './taau';
 export { shot, type ShotOptions } from './shot';
 export { perfBeacon, type BeaconOptions, type BeaconReport } from './beacon';
 //# sourceMappingURL=index.d.ts.map

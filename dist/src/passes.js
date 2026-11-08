@@ -482,8 +482,9 @@ export class Draw {
         return desc;
     }
     encode(pe) { this.encodeInto(pe); }
-    /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready) */
-    encodeInto(enc) {
+    /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready); `view` and `shared` in
+     *  place of its pass's (a pass replaying it: RenderPassOptions.replay) */
+    encodeInto(enc, view, shared) {
         // (enabled first: a compile scheduler makes a deferred pipeline on the spot when it's read)
         if (!on(this.on_))
             return;
@@ -497,7 +498,7 @@ export class Draw {
             tracked.__weftPipeline = p;
             enc.setPipeline(p);
         }
-        this.binder.apply(enc, this.pass.opts.view ?? this.kit.mainView, this.pass.opts.shared);
+        this.binder.apply(enc, view ?? this.pass.opts.view ?? this.kit.mainView, shared ?? this.pass.opts.shared);
         const vb = o.vertexBuffers;
         if (vb)
             for (let i = 0; i < vb.length; i++)
@@ -603,6 +604,29 @@ export class RenderPass {
     fullscreen(shader, opts = {}) {
         return this.draw(shader, { vertex: 'vs_fullscreen', cull: 'none', count: 3, depthWrite: false, depthCompare: 'always', ...opts });
     }
+    replayChecked = null;
+    // (another pass's draws, bundles opened up, bound with this pass's view and shared values)
+    encodeReplay(pe, src) {
+        if (this.replayChecked !== src) {
+            const a = this.formats(), b = src.formats();
+            if (a.samples !== b.samples || a.depth !== b.depth || a.colors.join() !== b.colors.join()) {
+                this.kit.warnOnce(`replay:${this.label}`, `${this.label}: replays ${src.label}, whose targets differ (${b.colors.join()}/${b.depth ?? '-'}×${b.samples} vs ${a.colors.join()}/${a.depth ?? '-'}×${a.samples}): nothing drawn`);
+                return;
+            }
+            this.replayChecked = src;
+        }
+        const view = this.opts.view ?? this.kit.mainView, shared = this.opts.shared, keep = this.opts.replayFilter;
+        for (const d of src.draws) {
+            if (d instanceof Draw) {
+                if (!keep || keep(d))
+                    d.encodeInto(pe, view, shared);
+            }
+            else if (on(d.enabled))
+                for (const x of d.draws)
+                    if (!keep || keep(x))
+                        x.encodeInto(pe, view, shared);
+        }
+    }
     targetFormat(t) {
         if (t === 'screen')
             return { format: this.kit.format, samples: 1 };
@@ -658,8 +682,11 @@ export class RenderPass {
             pe.setViewport(v[0], v[1], v[2], v[3], 0, 1);
             pe.setScissorRect(Math.max(0, Math.floor(v[0])), Math.max(0, Math.floor(v[1])), Math.max(1, Math.floor(v[2])), Math.max(1, Math.floor(v[3])));
         }
-        for (const d of this.draws)
-            d.encode(pe);
+        if (o.replay)
+            this.encodeReplay(pe, o.replay);
+        else
+            for (const d of this.draws)
+                d.encode(pe);
         pe.end();
     }
 }

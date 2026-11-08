@@ -393,6 +393,12 @@ export interface RenderPassOptions {
   shared?: Record<number, Record<string, unknown>>;
   viewport?: Nums;
   enabled?: boolean | (() => boolean);
+  /** draw another pass's draws (and its bundles' draws, one by one) from this pass's view, into its own targets — a
+   *  probe's cube faces, a second camera — instead of draws of its own. The two passes' targets must have the same
+   *  formats and samples (the draws' pipelines are made for the source's). */
+  replay?: RenderPass;
+  /** (with replay) which of the source's draws to draw: what moves (a dragon, creatures) left out of a probe's capture */
+  replayFilter?: (d: Draw) => boolean;
 }
 
 /** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
@@ -552,8 +558,9 @@ export class Draw<S extends Shader = Shader> {
   }
 
   encode(pe: GPURenderPassEncoder) { this.encodeInto(pe); }
-  /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready) */
-  encodeInto(enc: DrawEncoder) {
+  /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready); `view` and `shared` in
+   *  place of its pass's (a pass replaying it: RenderPassOptions.replay) */
+  encodeInto(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>) {
     // (enabled first: a compile scheduler makes a deferred pipeline on the spot when it's read)
     if (!on(this.on_)) return;
     const p = this.pipe.pipeline;
@@ -562,7 +569,7 @@ export class Draw<S extends Shader = Shader> {
     // (consecutive draws with one pipeline set it once)
     const tracked = enc as TrackedEncoder;
     if (tracked.__weftPipeline !== p) { tracked.__weftPipeline = p; enc.setPipeline(p); }
-    this.binder.apply(enc, this.pass.opts.view ?? this.kit.mainView, this.pass.opts.shared);
+    this.binder.apply(enc, view ?? this.pass.opts.view ?? this.kit.mainView, shared ?? this.pass.opts.shared);
     const vb = o.vertexBuffers;
     if (vb) for (let i = 0; i < vb.length; i++) enc.setVertexBuffer(i, gpuBuf(vb[i].buffer), vb[i].offset ?? 0);
     if (o.indices) enc.setIndexBuffer(gpuBuf(o.indices.buffer), o.indices.format ?? 'uint32', o.indices.offset ?? 0);
@@ -652,6 +659,24 @@ export class RenderPass implements RunItem {
     return this.draw(shader, { vertex: 'vs_fullscreen', cull: 'none', count: 3, depthWrite: false, depthCompare: 'always', ...opts });
   }
 
+  private replayChecked: RenderPass | null = null;
+  // (another pass's draws, bundles opened up, bound with this pass's view and shared values)
+  private encodeReplay(pe: GPURenderPassEncoder, src: RenderPass) {
+    if (this.replayChecked !== src) {
+      const a = this.formats(), b = src.formats();
+      if (a.samples !== b.samples || a.depth !== b.depth || a.colors.join() !== b.colors.join()) {
+        this.kit.warnOnce(`replay:${this.label}`, `${this.label}: replays ${src.label}, whose targets differ (${b.colors.join()}/${b.depth ?? '-'}×${b.samples} vs ${a.colors.join()}/${a.depth ?? '-'}×${a.samples}): nothing drawn`);
+        return;
+      }
+      this.replayChecked = src;
+    }
+    const view = this.opts.view ?? this.kit.mainView, shared = this.opts.shared, keep = this.opts.replayFilter;
+    for (const d of src.draws) {
+      if (d instanceof Draw) { if (!keep || keep(d)) d.encodeInto(pe, view, shared); }
+      else if (on(d.enabled)) for (const x of d.draws) if (!keep || keep(x)) x.encodeInto(pe, view, shared);
+    }
+  }
+
   private targetFormat(t: Target): { format: GPUTextureFormat; samples: number } {
     if (t === 'screen') return { format: this.kit.format, samples: 1 };
     const v = deref(t);
@@ -701,7 +726,8 @@ export class RenderPass implements RunItem {
       pe.setViewport(v[0], v[1], v[2], v[3], 0, 1);
       pe.setScissorRect(Math.max(0, Math.floor(v[0])), Math.max(0, Math.floor(v[1])), Math.max(1, Math.floor(v[2])), Math.max(1, Math.floor(v[3])));
     }
-    for (const d of this.draws) d.encode(pe);
+    if (o.replay) this.encodeReplay(pe, o.replay);
+    else for (const d of this.draws) d.encode(pe);
     pe.end();
   }
 }
