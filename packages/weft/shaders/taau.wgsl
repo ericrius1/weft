@@ -1,0 +1,175 @@
+// TAAU: temporal anti-aliasing that upscales (taau.ts). The scene is drawn at the render size with the camera jittered
+// by a sub-pixel offset each frame (a Halton sequence); this pass gathers this frame's samples into a history at the
+// output size: each output pixel the render-size texels around it weighted by how near their (unjittered) centres
+// fall, the history reprojected by the camera's motion (depth + last frame's matrices, both without their jitter),
+// clipped to the colours this frame has around the pixel (variance clipping in YCoCg, so what moved or appeared
+// doesn't ghost), and blended — a share of this frame by how much of it landed on the pixel. Blended in a tonemapped
+// space so one bright texel doesn't flicker. Binds in group 3 of its own, whatever an app shares there.
+#include "weft/frame"
+
+struct Taau {
+  curVP: mat4x4f,     // this frame's view-projection without its jitter
+  prevVP: mat4x4f,    // last frame's, without its jitter
+  jitter: vec4f,      // xy this frame's jitter (render pixels, Camera.jitter: +x right, +y up), z 1 drops the history, w sharpen 0..1
+  k: vec4f,           // x the least share of this frame (1/16 typical), y the clip's width (sigmas), z anti-flicker, w debug view
+}
+@group(3) @binding(0) var<uniform> T: Taau;
+@group(3) @binding(1) var taauSrc: texture_2d<f32>;
+@group(3) @binding(2) var taauDepth: texture_depth_2d;
+@group(3) @binding(3) var taauHist: texture_2d<f32>;
+@group(3) @binding(4) var taauOut: texture_storage_2d<rgba16float, write>;
+
+fn tLuma(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
+// (a reversible tonemap for blending: weights a sample by 1/(1+luma))
+fn tm(c: vec3f) -> vec3f { return c / (1.0 + tLuma(c)); }
+fn itm(c: vec3f) -> vec3f { return c / max(1.0 - tLuma(c), 1e-3); }
+fn toYCoCg(c: vec3f) -> vec3f { return vec3f(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
+fn fromYCoCg(c: vec3f) -> vec3f { return vec3f(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+fn finite3(c: vec3f) -> bool { return all(c == c) && all(abs(c) < vec3f(6.0e4)); }
+
+/** the history at uv, Catmull-Rom (five bilinear taps, the corners dropped): sharp where a bilinear read would soften
+ *  the image a little more every frame it's carried */
+fn histCR(uv: vec2f) -> vec3f {
+  let size = vec2f(textureDimensions(taauHist));
+  let p = uv * size;
+  let c = floor(p - 0.5) + 0.5;
+  let f = p - c;
+  let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  let w3 = f * f * (-0.5 + 0.5 * f);
+  let w12 = w1 + w2;
+  let o12 = w2 / w12;
+  let t0 = (c - 1.0) / size;
+  let t3 = (c + 2.0) / size;
+  let t12 = (c + o12) / size;
+  var r = vec3f(0.0);
+  r += textureSampleLevel(taauHist, samp_linear, vec2f(t12.x, t0.y), 0.0).rgb * (w12.x * w0.y);
+  r += textureSampleLevel(taauHist, samp_linear, vec2f(t0.x, t12.y), 0.0).rgb * (w0.x * w12.y);
+  r += textureSampleLevel(taauHist, samp_linear, vec2f(t12.x, t12.y), 0.0).rgb * (w12.x * w12.y);
+  r += textureSampleLevel(taauHist, samp_linear, vec2f(t3.x, t12.y), 0.0).rgb * (w3.x * w12.y);
+  r += textureSampleLevel(taauHist, samp_linear, vec2f(t12.x, t3.y), 0.0).rgb * (w12.x * w3.y);
+  let wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+  return max(r / wsum, vec3f(0.0));
+}
+
+/** clip a colour toward the box's centre until it's inside (all YCoCg) */
+fn clipBox(h: vec3f, lo: vec3f, hi: vec3f, toward: vec3f) -> vec3f {
+  let c = 0.5 * (hi + lo);
+  let e = 0.5 * (hi - lo) + 1e-5;
+  let v = h - c;
+  let a = abs(v / e);
+  let m = max(a.x, max(a.y, a.z));
+  if (m > 1.0) { return c + v / m; }
+  return h;
+}
+
+@compute @workgroup_size(8, 8) fn resolve(@builtin(global_invocation_id) id: vec3u) {
+  let outDim = vec2i(textureDimensions(taauOut));
+  let p = vec2i(id.xy);
+  if (any(p >= outDim)) { return; }
+  let inDim = vec2i(textureDimensions(taauSrc));
+  let inF = vec2f(inDim);
+  let uv = (vec2f(p) + 0.5) / vec2f(outDim);
+  // (this output pixel in render pixels; a texel centred at c holds what, unjittered, is at c - J)
+  let pos = uv * inF;
+  let J = vec2f(T.jitter.x, -T.jitter.y);
+  let ic = vec2i(floor(pos + J));
+  // (each sample weighted by its distance in output pixels: when upscaling a sample lands near only some output pixels
+  // a frame — those catch it, the rest keep their history until the jitter brings one near: sharp, not smeared)
+  let scale = vec2f(outDim) / inF;
+  let fw = max(1.0, 0.5 * (scale.x + scale.y));
+  var sum = vec3f(0.0);
+  var wsum = 0.0;
+  var m1 = vec3f(0.0);
+  var m2 = vec3f(0.0);
+  var lo = vec3f(1e9);
+  var hi = vec3f(-1e9);
+  var best = 0.0;
+  var bestC = ic;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let t = clamp(ic + vec2i(dx, dy), vec2i(0), inDim - 1);
+      var c = textureLoad(taauSrc, t, 0).rgb;
+      if (!finite3(c)) { c = vec3f(0.0); }
+      let ct = tm(max(c, vec3f(0.0)));
+      let y = toYCoCg(ct);
+      m1 += y; m2 += y * y;
+      lo = min(lo, y); hi = max(hi, y);
+      let d = (vec2f(t) + 0.5 - J - pos) * fw;
+      // (Blackman-Harris, approximated by a Gaussian)
+      let w = exp(-2.29 * dot(d, d));
+      sum += ct * w; wsum += w;
+      // (the nearest surface around the pixel: reversed-Z, the greatest depth — edges move with what's in front)
+      let z = textureLoad(taauDepth, t, 0);
+      if (z > best) { best = z; bestC = t; }
+    }
+  }
+  let cur = sum / max(wsum, 1e-4);
+  let mean = m1 / 9.0;
+  let sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3f(0.0)));
+  let g = T.k.y;
+  let blo = max(lo, mean - sigma * g);
+  let bhi = min(hi, mean + sigma * g);
+
+  // ---- where this pixel was last frame
+  let tuv = (vec2f(bestC) + 0.5) / inF;
+  let wp = frame.invViewProj * vec4f(tuv.x * 2.0 - 1.0, 1.0 - tuv.y * 2.0, best, 1.0);
+  let cc = T.curVP * wp;
+  let pc = T.prevVP * wp;
+  var reset = T.jitter.z > 0.5 || pc.w <= 1e-6 || cc.w <= 1e-6;
+  var huv = uv;
+  if (!reset) {
+    let cu = vec2f(cc.x / cc.w * 0.5 + 0.5, 0.5 - cc.y / cc.w * 0.5);
+    let pu = vec2f(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
+    huv = uv - (cu - pu);
+    if (any(huv < vec2f(0.0)) || any(huv > vec2f(1.0))) { reset = true; }
+  }
+  var outT = cur;
+  if (!reset) {
+    var h = histCR(huv);
+    if (!finite3(h)) { h = itm(cur); }
+    let hy = toYCoCg(tm(h));
+    let cy = toYCoCg(cur);
+    let clipped = clipBox(hy, blo, bhi, cy);
+    // (this frame's share: the least where a sample fell right on the pixel; more where history was clipped hard —
+    // something changed there — and less of it where the samples fell far from the pixel, when upscaling)
+    let moved = length(clipped - hy) / max(clipped.x + 0.02, 0.02);
+    let coverage = clamp(wsum, 0.02, 1.0);
+    var a = T.k.x * coverage;
+    a = mix(a, 0.5, clamp(moved * T.k.z, 0.0, 0.6));
+    outT = mix(fromYCoCg(clipped), cur, a);
+  }
+  var o = itm(max(outT, vec3f(0.0)));
+  if (!finite3(o)) { o = vec3f(0.0); }
+  if (T.k.w > 0.5) {
+    // (debug: red where the history was dropped, the motion's size in green)
+    o = select(vec3f(0.0, length((uv - huv) * vec2f(outDim)) * 0.1, 0.0), vec3f(1.0, 0.0, 0.0), reset);
+  }
+  textureStore(taauOut, p, vec4f(o, 1.0));
+}
+
+// ---------------------------------------------------------------- sharpening (contrast adaptive, after the resolve)
+// The history read by Catmull-Rom stays sharp, but an upscale from a much smaller render softens; this restores the
+// edges by each pixel's local contrast (AMD's CAS in spirit: less where the neighbourhood already has contrast).
+@group(3) @binding(5) var sharpSrc: texture_2d<f32>;
+@group(3) @binding(6) var sharpOut: texture_storage_2d<rgba16float, write>;
+@compute @workgroup_size(8, 8) fn sharpen(@builtin(global_invocation_id) id: vec3u) {
+  let dim = vec2i(textureDimensions(sharpOut));
+  let p = vec2i(id.xy);
+  if (any(p >= dim)) { return; }
+  let ld = dim - 1;
+  let e = textureLoad(sharpSrc, p, 0).rgb;
+  let b = textureLoad(sharpSrc, clamp(p + vec2i(0, -1), vec2i(0), ld), 0).rgb;
+  let d = textureLoad(sharpSrc, clamp(p + vec2i(-1, 0), vec2i(0), ld), 0).rgb;
+  let f = textureLoad(sharpSrc, clamp(p + vec2i(1, 0), vec2i(0), ld), 0).rgb;
+  let h = textureLoad(sharpSrc, clamp(p + vec2i(0, 1), vec2i(0), ld), 0).rgb;
+  let te = tm(e); let tb = tm(b); let td = tm(d); let tf = tm(f); let th = tm(h);
+  let mn = min(te, min(min(tb, td), min(tf, th)));
+  let mx = max(te, max(max(tb, td), max(tf, th)));
+  let amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3f(1e-4)), vec3f(0.0), vec3f(1.0)));
+  let peak = -1.0 / mix(8.0, 5.0, T.jitter.w);
+  let w = amp * peak;
+  let r = (tb * w + td * w + tf * w + th * w + te) / (1.0 + 4.0 * w);
+  textureStore(sharpOut, p, vec4f(itm(clamp(r, vec3f(0.0), vec3f(0.999))), 1.0));
+}

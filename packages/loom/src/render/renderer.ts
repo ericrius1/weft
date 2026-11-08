@@ -7,8 +7,8 @@
 //   → bloom (down, eye adaptation, up) → the film grade to the screen (or, with the lens on, to a display-space
 //   target and then the lens pass — halation, chromatic fringes, barrel, sharpening, scope bars — to the screen).
 // The environment every surface needs is one shared bind group (env.wgsl, group 1).
-import type { Kit, Texture, RenderPass, RunEntry, View, UniformBuffer, StorageBuffer, V3 } from '@ericrius1/weft';
-import { Camera, orthoReversed, lookAt, mat4Mul } from '@ericrius1/weft';
+import type { Kit, Texture, RenderPass, RunEntry, View, UniformBuffer, StorageBuffer, V3, SharedGroup } from '@ericrius1/weft';
+import { Camera, orthoReversed, lookAt, mat4Mul, Taau } from '@ericrius1/weft';
 import envShader from '../shaders/env.wgsl';
 import skyShader from '../shaders/sky.wgsl';
 import dofShader from '../shaders/dof.wgsl';
@@ -22,10 +22,13 @@ import { Clouds } from './clouds';
 import { SkyClouds, type SkyCloudOptions } from './skyclouds';
 import { Cinema } from './cinema';
 import { Underwater } from './underwater';
+import { LightClusters } from './clusters';
+import { ProbeGrid } from './probes';
 
 /** the defaults: the opaque scene's samples a pixel, a shadow cascade's size (texels a side) */
 export const MSAA = 4;
 export const SHADOW_SIZE = 2048;
+/** point lights kept without clustering (RendererOptions.lights) */
 const MAX_LIGHTS = 32;
 const BLOOM_LEVELS = 6;
 
@@ -70,6 +73,20 @@ export interface RendererOptions {
   terrainShadowSize?: number;
   /** the ripple window: cells across, metres a cell (default 256 at 0.22 m; `ripples.configure` changes it later) */
   ripples?: RippleOptions;
+  /** temporal anti-aliasing with upscaling (weft's Taau, r.taau): the picture comes out at the canvas's size, however
+   *  small the render (kit.renderScale) — so a lowered scale costs a little sharpness in motion, not a soft picture.
+   *  After the scene, the clouds, the air, the fx, motion blur and depth of field; before the bloom and the grade. With
+   *  it a phone can take msaa 1 and a lower scale. Off by default */
+  taau?: boolean;
+  /** the point lights: `max` kept (default 32), `clustered` (default: when max > 32) binned into a grid round the
+   *  camera (r.clusters: LightClusters) so each pixel loops only those near it — hundreds of lamps; `cells`, `cap` the
+   *  grid's (32 × 16 × 32, 24 a cell) */
+  lights?: { max?: number; clustered?: boolean; cells?: [number, number, number]; cap?: number };
+  /** diffuse GI from irradiance probes over a box (r.gi: ProbeGrid): least and greatest corners, spacing (m); the
+   *  probes see `source`'s draws (default the mirror pass: put what should bounce light there, as for the mirror —
+   *  with mirror off it isn't drawn, but the probes still replay it), `face` texels a cube side, `maxPerFrame`
+   *  probes captured at most a frame, `ground` lifts probes out of the terrain. Off unless given */
+  gi?: { min: V3; max: V3; spacing: number; source?: RenderPass; face?: number; maxPerFrame?: number; ground?: (x: number, z: number) => number };
 }
 
 export class Renderer {
@@ -96,6 +113,20 @@ export class Renderer {
   skyClouds: SkyClouds | null = null;
   cinema: Cinema;
   underwater: Underwater;
+  /** the temporal upscaler (RendererOptions.taau), or null: r.taau.params (on, sharpen, feedback…), r.taau.cut() */
+  taau: Taau | null = null;
+  /** the clustered point lights (RendererOptions.lights), or null: r.clusters.reach */
+  clusters: LightClusters | null = null;
+  /** with clusters: false has the surfaces loop every light (to compare) */
+  clustered = true;
+  /** the irradiance probes (RendererOptions.gi), or null: r.gi.params, r.gi.setVolume(min, max, spacing) */
+  gi: ProbeGrid | null = null;
+  /** the environment's extras (envx.wgsl): the light grid's and the probes' values, set by update() */
+  envx: UniformBuffer<any>;
+  /** the shared environment group (env.wgsl, group 1) */
+  env: SharedGroup;
+  /** the most point lights kept (RendererOptions.lights.max) */
+  readonly maxLights: number;
   /** the opaque scene (MSAA): add draws to it */
   scene: RenderPass;
   /** the mirror image over the sea (half res, single sample; a mirrored camera, so draw with cull 'none') */
@@ -126,7 +157,7 @@ export class Renderer {
   private adapt: RunEntry;
   private composite: RenderPass;
   private lights: StorageBuffer;
-  private lightData = new Float32Array(MAX_LIGHTS * 16);
+  private lightData: Float32Array;
   lightCount = 0;
   expo: StorageBuffer;
   cascades = [24, 90, 320];
@@ -181,17 +212,24 @@ export class Renderer {
     this.reflDepth = k.texture({ label: 'refl.depth', format: 'depth32float', size: 'render', scale: 0.5, usage: ['render'] });
     this.bloom = k.texture({ label: 'bloom', format: 'rgba16float', size: 'render', scale: 0.5, mips: BLOOM_LEVELS, usage: ['render', 'sample'] });
     this.shadow = k.texture({ label: 'shadow', format: 'depth32float', size: [SZ, SZ, 3], usage: ['render', 'sample'] });
-    this.lights = k.storage({ label: 'pointLights', size: MAX_LIGHTS * 64 });
+    const clustered = opts.lights?.clustered ?? (opts.lights?.max ?? MAX_LIGHTS) > MAX_LIGHTS;
+    this.maxLights = Math.max(1, Math.round(opts.lights?.max ?? (clustered ? 256 : MAX_LIGHTS)));
+    this.lightData = new Float32Array(this.maxLights * 16);
+    this.lights = k.storage({ label: 'pointLights', size: this.maxLights * 64 });
+    this.envx = k.uniforms(envShader.structs.EnvX, 'envx');
+    if (clustered) this.clusters = new LightClusters(k, this.lights, this.envx, { cells: opts.lights?.cells, cap: opts.lights?.cap });
+    const noCells = this.clusters ? null : k.storage({ label: 'lightCells.none', size: 16 });
+    const noGi = k.texture({ label: 'gi.none', format: 'rgba16float', size: [4, 1, 1], dimension: '3d', usage: ['sample', 'copy-dst'] });
     this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
     this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
     this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: (opts.clouds ?? 'volumetric') === 'volumetric' });
 
     // the environment, shared by every surface shader (group 1)
-    k.shareGroup(1, envShader, {
+    this.env = k.shareGroup(1, envShader, {
       lighting: atmo.lighting, skyTex: atmo.skyView, aerialTex: atmo.aerial,
       heightTex: terrain.heightTex, normalTex: terrain.normalTex, splatTex: terrain.splatTex, maskTex: terrain.maskTex,
       shadowTex: this.shadow, rippleTex: this.ripples.out, hfShadowTex: this.hf.shown, cloudShadowTex: this.clouds.smap,
-      plights: this.lights,
+      plights: this.lights, envx: this.envx, lightCells: this.clusters?.buffer ?? noCells, giTex: noGi,
     }, 'env');
     this.clouds.build();
     // the sprite clouds in the march's place (its resources never made: clouds 'sprites' isn't volumetric)
@@ -225,6 +263,12 @@ export class Renderer {
       this.resolve = k.pass({ label: 'depth.resolve', depth: { target: this.depth, clear: 0 } });
       this.resolve.fullscreen(postShader, { label: 'depth.resolve', fragment: 'fs_depth', bind: { depthMS: this.depthMS }, depthWrite: true, depthCompare: 'always' });
     }
+    if (opts.gi) {
+      const g = opts.gi;
+      this.gi = new ProbeGrid(k, { source: g.source ?? this.reflPass, min: g.min, max: g.max, spacing: g.spacing, face: g.face, maxPerFrame: g.maxPerFrame, ground: g.ground });
+      this.env.set('giTex', this.gi.tex);
+      this.gi.onTexture = (t) => this.env.set('giTex', t);
+    }
     this.copy = k.copy(this.hdr, this.sceneCopy, 'scene.copy');
     this.water = k.pass({ label: 'water', color: [{ target: this.hdr, clear: false }], depth: { target: this.depth, readOnly: true } });
     // (the shafts are cut by the clouds: the march's output, or the sprite clouds' cover)
@@ -247,9 +291,12 @@ export class Renderer {
     this.dofU = k.uniforms(dofShader.structs.Dof, 'dof');
     this.copyDof = k.copy(this.hdr, this.sceneCopy, 'dof.copy');
     this.dofPass = k.compute(dofShader, { label: 'dof', entry: 'gather', bind: { dof: this.dofU, dofSrc: this.sceneCopy, dofDepth: this.depth, dofOut: this.hdr }, threads: () => [this.hdr.width, this.hdr.height] });
+    // (the temporal upscale: what follows — bloom, the grade, the lens — reads its output, at the canvas's size)
+    if (opts.taau) this.taau = new Taau(k, this.hdr, this.depth);
+    const graded = this.taau ? this.taau.out : this.hdr;
     for (let i = 0; i < BLOOM_LEVELS; i++) {
       const p = k.pass({ label: `bloom.down${i}`, color: [{ target: this.bloom.mip(i), clear: [0, 0, 0, 1] }] });
-      p.fullscreen(postShader, { fragment: 'fs_down', bind: { src: i === 0 ? this.hdr : this.bloom.mip(i - 1), P: i === 0 ? this.postFirst : this.post, expo: this.expo } });
+      p.fullscreen(postShader, { fragment: 'fs_down', bind: { src: i === 0 ? graded : this.bloom.mip(i - 1), P: i === 0 ? this.postFirst : this.post, expo: this.expo } });
       this.bloomPasses.push(p);
     }
     this.adapt = k.compute(postShader, { label: 'adapt', entry: 'adapt', bind: { P: this.post, lumSrc: this.bloom.mip(4), expoOut: this.expo }, workgroups: [1] });
@@ -259,11 +306,11 @@ export class Renderer {
       this.bloomPasses.push(p);
     }
     this.composite = k.pass({ label: 'composite', color: [{ target: 'screen', clear: [0, 0, 0, 1] }] });
-    this.composite.fullscreen(postShader, { fragment: 'fs_composite', bind: { src: this.hdr, bloomTex: this.bloom.mip(0), P: this.post, expo: this.expo } });
+    this.composite.fullscreen(postShader, { fragment: 'fs_composite', bind: { src: graded, bloomTex: this.bloom.mip(0), P: this.post, expo: this.expo } });
     // (with the lens on: the grade into a display-space target, the lens from it to the screen)
-    this.ldr = k.texture({ label: 'ldr', format: 'rgba16float', size: 'render', usage: ['render', 'sample'] });
+    this.ldr = k.texture({ label: 'ldr', format: 'rgba16float', size: this.taau ? 'canvas' : 'render', usage: ['render', 'sample'] });
     this.compositeLdr = k.pass({ label: 'composite.ldr', color: [{ target: this.ldr, clear: [0, 0, 0, 1] }] });
-    this.compositeLdr.fullscreen(postShader, { fragment: 'fs_composite', bind: { src: this.hdr, bloomTex: this.bloom.mip(0), P: this.post, expo: this.expo } });
+    this.compositeLdr.fullscreen(postShader, { fragment: 'fs_composite', bind: { src: graded, bloomTex: this.bloom.mip(0), P: this.post, expo: this.expo } });
     this.lensU = k.uniforms(lensShader.structs.Lens, 'lens');
     this.lensPass = k.pass({ label: 'lens', color: [{ target: 'screen', clear: [0, 0, 0, 1] }] });
     this.lensPass.fullscreen(lensShader, { fragment: 'fs_lens', bind: { LN: this.lensU, lensSrc: this.ldr } });
@@ -275,15 +322,18 @@ export class Renderer {
     this.reflPass.fullscreen(shader, { label: 'sky.refl', depthCompare: 'equal', bind } as never);
   }
 
-  /** small point lights (fallen stars, lamps, blooms): the nearest MAX_LIGHTS to the camera are kept */
+  /** small point lights (fallen stars, lamps, blooms): the nearest `maxLights` to the camera are kept (clustered: in
+   *  that order, so a crowded cell of the grid keeps its nearest) */
   setPointLights(list: PointLight[], cam: ArrayLike<number>) {
-    // (the ones whose light can reach anywhere near the camera; then the nearest MAX_LIGHTS)
+    // (the ones whose light can reach anywhere near the camera; then the nearest maxLights)
     const near = list.filter((l) => l.radius > 1000 || Math.sqrt(dist2(l.pos, cam)) - l.radius < this.lightCull);
-    const sorted = near.length > MAX_LIGHTS ? [...near].sort((a, b) => dist2(a.pos, cam) - dist2(b.pos, cam)).slice(0, MAX_LIGHTS) : near;
+    const max = this.maxLights;
+    const sorted = near.length > max || (this.clusters && near.length > 1) ? [...near].sort((a, b) => dist2(a.pos, cam) - dist2(b.pos, cam)).slice(0, max) : near;
     this.lightData.fill(0);
     sorted.forEach((l, i) => this.lightData.set([...l.pos, l.radius, ...l.color, l.size ?? 0.3, ...(l.dir ?? [0, -1, 0]), l.dir ? Math.cos(l.outer ?? 0.6) : -2, l.dir ? Math.cos(l.inner ?? 0.35) : -2, l.owner ?? 0, l.squash ?? 1, l.haze ?? 1], i * 16));
-    this.lights.write(this.lightData);
+    this.lights.write(this.lightData.subarray(0, Math.max(1, sorted.length) * 16));
     this.lightCount = sorted.length;
+    this.clusters?.update(cam, sorted.length);
   }
 
   /** fit the three cascades around the camera's view for a key light direction (each a sphere round its stretch of the
@@ -360,15 +410,22 @@ export class Renderer {
     this.skyClouds?.update(o.dt, o.cam.position as V3, { night: o.night, light: o.light });
     this.clouds.update(o.dt, o.cam.position, o.cover, o.cam.fovY);
     this.underwater.update(o.time, o.dt, o.cam.position[1], o.seaLevel);
+    // (the light grid's and the probes' values for the shaders)
+    this.gi?.follow(o.cam.position);
+    const ex: Record<string, number[]> = { grid: [0, 0, 0, 0], giN: [1, 1, 1, 0] };
+    if (this.clusters) Object.assign(ex, this.clusters.envx(this.clustered));
+    if (this.gi) Object.assign(ex, this.gi.envx());
+    this.envx.set(ex);
   }
 
   items(light: V3): RunEntry[] {
     return [
       ...this.ripples.items(), ...(this.hfOn ? this.hf.items(light) : []), ...this.clouds.bakes(), ...this.compute,
-      ...this.shadowPasses, this.reflPass, this.scene, this.resolve, ...this.cinema.aoItems, this.copy, this.water,
+      ...(this.clusters?.items ?? []), ...this.shadowPasses, ...(this.gi?.items ?? []), this.reflPass, this.scene, this.resolve, ...this.cinema.aoItems, this.copy, this.water,
       ...this.clouds.render(), this.cloudsBelow, ...this.cinema.airItems, this.cloudsAbove, ...this.underwater.items, ...this.beforeFx, this.fx,
       this.motionBlur.shutter > 0 ? this.copyMB : null, this.motionBlur.shutter > 0 ? this.mb : null,
       this.dof.on ? this.copyDof : null, this.dof.on ? this.dofPass : null,
+      ...(this.taau?.items ?? []),
       ...this.bloomPasses.slice(0, BLOOM_LEVELS), this.adapt, ...this.bloomPasses.slice(BLOOM_LEVELS),
       ...(this.lens.on ? [this.compositeLdr, this.lensPass] : [this.composite]),
     ];
