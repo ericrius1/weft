@@ -95,8 +95,10 @@ export class Camera {
     if (this.first) { this.prevViewProj.set(this.viewProj); this.first = false; }
   }
 
-  /** forget motion history (after a cut, so motion vectors don't smear) */
-  cut() { this.first = true; }
+  /** forget motion history (after a cut, so motion vectors don't smear; a Taau drops its history too) */
+  cut() { this.first = true; this.cuts++; }
+  /** how many times it's been cut (temporal filters watch this) */
+  cuts = 0;
 
   /** sphere-in-frustum test using the last update's planes */
   sees(c: ArrayLike<number>, r: number) {

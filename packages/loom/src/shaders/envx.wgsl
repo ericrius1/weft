@@ -1,9 +1,11 @@
 // The environment's extras (env.wgsl binds this as envx; clusters.wgsl and probes.wgsl their own copy): the light grid
-// (clustered point lights: clusters.ts) and the irradiance probe volume (diffuse GI: probes.ts).
+// (clustered point lights: clusters.ts) and the irradiance probe volume (diffuse GI: probes.ts). Both live in the point
+// lights' own buffer (env.wgsl plights), after the lights — one 64-byte record a probe, `bases.z` records a cell — so
+// they cost the shaders that include env no binding of their own (a phone's 16 textures, 8 storage buffers a stage).
 //
 // The light grid is centred on the camera and warped (a cell's index along each axis from sqrt of the distance), so
 // cells are small near the eye and grow with distance: GX × GY × GZ cells over ±reach. Each cell holds the count of
-// the lights touching it and then their indices into plights (at most `cap`, the nearest the camera first).
+// the lights touching it and then their indices into plights (at most `cap`, the nearest the camera first), as floats.
 struct EnvX {
   grid: vec4f,     // xyz the grid's centre (the camera), w 1 when the lights are clustered
   gridR: vec4f,    // x reach across (m), y reach up and down (m), z cap (lights a cell), w lights in plights
@@ -11,6 +13,7 @@ struct EnvX {
   giMin: vec4f,    // the probe volume's least corner, w the probes' spacing (m)
   giN: vec4f,      // probes x, y, z, w 1 when GI is on
   giK: vec4f,      // x strength, y normal bias (spacings), z view bias (spacings), w the edge's fade (spacings)
+  bases: vec4f,    // where in plights (records): x the cells, y the probes; z records a cell
 }
 
 /** the grid's cell containing a world point, or -1 outside it */

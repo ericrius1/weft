@@ -16,8 +16,8 @@ struct Probes {
 @group(2) @binding(0) var<uniform> PB: Probes;
 @group(2) @binding(1) var capColor: texture_2d_array<f32>;
 @group(2) @binding(2) var capDepth: texture_depth_2d_array;
-@group(2) @binding(3) var giPrev: texture_3d<f32>;
-@group(2) @binding(4) var giNext: texture_storage_3d<rgba16float, write>;
+struct Probe { r: vec4f, g: vec4f, b: vec4f, v: vec4f }   // (a point light's record: env.wgsl reads it as one)
+@group(2) @binding(3) var<storage, read_write> probes: array<Probe>;
 
 const WG: u32 = 64u;
 var<workgroup> acc: array<array<f32, 14>, 64>;
@@ -73,14 +73,16 @@ var<workgroup> acc: array<array<f32, 14>, 64>;
   let valid = 1.0 - smoothstep(PB.k.z * 0.5, PB.k.z, inside);
   let N = vec3i(PB.n.xyz);
   let p = S.at.xyz;
-  // (what it held, un-premultiplied; the new capture blended in by the slot's share — 1 the first time)
-  let ov = textureLoad(giPrev, vec3i(p.x + 3 * N.x, p.y, p.z), 0).x;
+  let idx = (p.z * N.y + p.y) * N.x + p.x;
+  // (what it held, un-premultiplied; the new capture blended in by the slot's share — all of it the first time)
+  let old = probes[idx];
+  let ov = old.v.x;
   let keep = select(0.0, 1.0 - S.k.x, ov > 1e-3);
-  for (var ch = 0; ch < 3; ch++) {
-    let nw = vec4f(acc[0][ch * 4], acc[0][ch * 4 + 1], acc[0][ch * 4 + 2], acc[0][ch * 4 + 3]) * norm;
-    let old = textureLoad(giPrev, vec3i(p.x + ch * N.x, p.y, p.z), 0) / max(ov, 1e-3);
-    let m = mix(nw, old, keep);
-    textureStore(giNext, vec3i(p.x + ch * N.x, p.y, p.z), m * valid);
-  }
-  textureStore(giNext, vec3i(p.x + 3 * N.x, p.y, p.z), vec4f(valid, 0.0, 0.0, 0.0));
+  let inv = 1.0 / max(ov, 1e-3);
+  var o: Probe;
+  o.r = mix(vec4f(acc[0][0], acc[0][1], acc[0][2], acc[0][3]) * norm, old.r * inv, keep) * valid;
+  o.g = mix(vec4f(acc[0][4], acc[0][5], acc[0][6], acc[0][7]) * norm, old.g * inv, keep) * valid;
+  o.b = mix(vec4f(acc[0][8], acc[0][9], acc[0][10], acc[0][11]) * norm, old.b * inv, keep) * valid;
+  o.v = vec4f(valid, 0.0, 0.0, 0.0);
+  probes[idx] = o;
 }

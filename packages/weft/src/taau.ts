@@ -51,6 +51,7 @@ export class Taau {
   private dropNext = true;
   private histSize = [0, 0];
   private index = 0;
+  private cuts = -1;
 
   constructor(private kit: Kit, readonly src: Texture, readonly depth: Texture, opts: TaauOptions = {}) {
     const k = kit, label = opts.label ?? 'taau', size = opts.output ?? 'canvas';
@@ -95,7 +96,9 @@ export class Taau {
     if (cam.ortho) { this.proj[12] -= jx; this.proj[13] -= jy; } else { this.proj[8] += jx; this.proj[9] += jy; }
     mat4Mul(this.proj, cam.view, this.curVP);
     const hw = this.hist.a.width, hh = this.hist.a.height;
-    const drop = this.dropNext || !this.have || hw !== this.histSize[0] || hh !== this.histSize[1];
+    // (a camera cut — Camera.cut() — or a new output size starts the history over)
+    const drop = this.dropNext || !this.have || hw !== this.histSize[0] || hh !== this.histSize[1] || cam.cuts !== this.cuts;
+    this.cuts = cam.cuts;
     this.histSize = [hw, hh];
     this.u.set({
       curVP: this.curVP, prevVP: this.have ? this.prevVP : this.curVP,

@@ -13,7 +13,7 @@
 // Probes inside something (a wall, a rock: most of their cube a surface right up against them) are marked untrusted
 // and left out of the blend; `ground` lifts the ones under the terrain onto it. The capture views set Frame.user.y = 1,
 // so a sky shader can leave its sun's disc out (the sun's light is the surfaces' direct light, not their ambient).
-import type { Kit, RenderPass, RunEntry, Texture, UniformBuffer, V3, Compute, View } from '@ericrius1/weft';
+import type { Kit, RenderPass, RunEntry, Texture, UniformBuffer, StorageBuffer, V3, Compute, View } from '@ericrius1/weft';
 import { Camera, lookAt, RunAction } from '@ericrius1/weft';
 import probeShader from '../shaders/probes.wgsl';
 
@@ -28,6 +28,8 @@ export interface ProbeGridOptions {
   maxPerFrame?: number;
   /** the ground's height at (x, z): probes under it are lifted onto it (or left out when that's beyond their cell) */
   ground?: (x: number, z: number) => number;
+  /** which of the source's draws the probes leave out, by label (what moves: a dragon, birds; a pattern or a test) */
+  skip?: RegExp | ((label: string) => boolean);
 }
 
 const FACES: [V3, V3][] = [[[1, 0, 0], [0, 1, 0]], [[-1, 0, 0], [0, 1, 0]], [[0, 1, 0], [0, 0, 1]], [[0, -1, 0], [0, 0, -1]], [[0, 0, 1], [0, 1, 0]], [[0, 0, -1], [0, 1, 0]]];
@@ -45,14 +47,14 @@ export class ProbeGrid {
   n: [number, number, number] = [1, 1, 1];
   min: V3 = [0, 0, 0];
   spacing = 1;
-  /** the volume the surfaces read (env group: giTex) */
-  tex: Texture;
+  /** the probes' records (64 bytes each: red's, green's, blue's coefficients, validity), copied by the Renderer into
+   *  the point lights' buffer after the lights and the light grid (env.wgsl giProbe) */
+  probes: StorageBuffer;
   /** the run items (before the opaque scene: the frame's surfaces read what it captured) */
   readonly items: RunEntry[];
   /** probes captured since the volume was last set or invalidated, and in all */
   captured = 0;
   total = 0;
-  private next: Texture;
   private capColor: Texture;
   private capDepth: Texture;
   private u: UniformBuffer<any>;
@@ -75,10 +77,11 @@ export class ProbeGrid {
     this.maxSlots = Math.max(1, Math.min(MAX_SLOTS, opts.maxPerFrame ?? 2));
     this.ground = opts.ground;
     const F = this.F, L = this.maxSlots * 6;
+    const sk = opts.skip;
+    const skip = sk ? (d: { label: string }) => !(typeof sk === 'function' ? sk(d.label) : sk.test(d.label)) : undefined;
     this.capColor = k.texture({ label: 'gi.capture', format: 'rgba16float', size: [F, F, L], usage: ['render', 'sample'] });
     this.capDepth = k.texture({ label: 'gi.captureDepth', format: 'depth32float', size: [F, F, L], usage: ['render', 'sample'] });
-    this.tex = this.volume('gi.probes', ['sample', 'copy-dst']);
-    this.next = this.volume('gi.probes.next', ['storage', 'copy-src']);
+    this.probes = k.storage({ label: 'gi.probes', size: 64 });
     this.u = k.uniforms(probeShader.structs.Probes, 'gi');
     for (let s = 0; s < this.maxSlots; s++) {
       const row: { pass: RenderPass; cam: Camera; view: View }[] = [];
@@ -91,7 +94,7 @@ export class ProbeGrid {
         view.user = [0, 1, 0, 0];
         const slot = s;
         const pass = k.pass({
-          label: `gi.capture.s${s}f${f}`, view, replay: opts.source, enabled: () => this.params.on && slot < this.slotsUsed,
+          label: `gi.capture.s${s}f${f}`, view, replay: opts.source, replayFilter: skip, enabled: () => this.params.on && slot < this.slotsUsed,
           color: [{ target: this.capColor.layer(s * 6 + f), clear: [0, 0, 0, 1] }], depth: { target: this.capDepth.layer(s * 6 + f), clear: 0 },
         });
         row.push({ pass, cam, view });
@@ -110,25 +113,10 @@ export class ProbeGrid {
     this.u.set({ fwd, right, up } as never);
     this.project = k.compute(probeShader, {
       label: 'gi.project', entry: 'project', enabled: () => this.params.on && this.slotsUsed > 0, workgroups: () => [this.slotsUsed],
-      bind: { PB: this.u, capColor: this.capColor, capDepth: this.capDepth, giPrev: this.tex, giNext: this.next },
+      bind: { PB: this.u, capColor: this.capColor, capDepth: this.capDepth, probes: this.probes },
     });
-    const copy = k.raw((enc) => {
-      if (!this.params.on) return;
-      const N = this.n;
-      for (let s = 0; s < this.slotsUsed; s++) {
-        const i = this.slotProbe[s], x = i % N[0], y = Math.floor(i / N[0]) % N[1], z = Math.floor(i / (N[0] * N[1]));
-        for (let sl = 0; sl < 4; sl++) {
-          const o = [x + sl * N[0], y, z];
-          enc.copyTextureToTexture({ texture: this.next.gpu, origin: o }, { texture: this.tex.gpu, origin: o }, [1, 1, 1]);
-        }
-      }
-    }, 'gi.store');
-    this.items = [new RunAction(() => this.schedule(), 'gi.schedule'), ...this.faces.flat().map((f) => f.pass), this.project, copy];
+    this.items = [new RunAction(() => this.schedule(), 'gi.schedule'), ...this.faces.flat().map((f) => f.pass), this.project];
     this.setVolume(opts.min, opts.max, opts.spacing);
-  }
-
-  private volume(label: string, usage: ('sample' | 'copy-dst' | 'storage' | 'copy-src')[]) {
-    return this.kit.texture({ label, format: 'rgba16float', size: [4 * this.n[0], this.n[1], this.n[2]], dimension: '3d', usage });
   }
 
   /** (re)place the volume: least and greatest corners, spacing (m). Its probes start over (the sky's light meanwhile) */
@@ -136,17 +124,11 @@ export class ProbeGrid {
     this.spacing = Math.max(0.05, spacing);
     const n = [0, 1, 2].map((a) => Math.max(2, Math.min(a === 0 ? 256 : 128, Math.round((max[a] - min[a]) / this.spacing) + 1))) as [number, number, number];
     this.min = [...min];
-    const grew = n[0] !== this.n[0] || n[1] !== this.n[1] || n[2] !== this.n[2];
     this.n = n;
-    if (grew) {
-      this.kit.release(this.tex, this.next);
-      this.tex = this.volume('gi.probes', ['sample', 'copy-dst']);
-      this.next = this.volume('gi.probes.next', ['storage', 'copy-src']);
-      this.project.set('giPrev', this.tex);
-      this.project.set('giNext', this.next);
-      this.onTexture?.(this.tex);
-    }
     const count = n[0] * n[1] * n[2];
+    // (a bigger volume: a bigger buffer, and the Renderer lays the point lights' buffer out again)
+    this.probes.ensure(count * 64);
+    this.onResize?.(count);
     this.stamp = new Float64Array(count).fill(-1);
     this.valid = new Uint8Array(count).fill(1);
     this.lift = new Float32Array(count);
@@ -163,13 +145,14 @@ export class ProbeGrid {
   invalidate() {
     this.stamp.fill(-1);
     this.captured = 0;
-    // (the volume itself cleared: nothing trusted until captured again)
-    const N = this.n, zero = new Uint16Array(4 * N[0] * N[1] * N[2] * 4);
-    this.kit.device.queue.writeTexture({ texture: this.tex.gpu }, zero, { bytesPerRow: 4 * N[0] * 8, rowsPerImage: N[1] }, [4 * N[0], N[1], N[2]]);
+    // (the records cleared: nothing trusted until captured again)
+    this.probes.write(new Uint8Array(this.count * 64));
   }
 
-  /** told when the volume's texture is made again (a bigger volume): the env group has to bind the new one */
-  onTexture: ((t: Texture) => void) | null = null;
+  /** probes in the volume */
+  get count() { return this.n[0] * this.n[1] * this.n[2]; }
+  /** told when the volume's size changes (the Renderer lays the point lights' buffer out again) */
+  onResize: ((count: number) => void) | null = null;
 
   /** the camera's position (probes nearer it come first) */
   follow(cam: ArrayLike<number>) { this.cam = cam; }
@@ -240,6 +223,6 @@ export class ProbeGrid {
 
   dispose() {
     for (const row of this.faces) for (const f of row) f.pass.dispose();
-    this.kit.release(this.project, this.capColor, this.capDepth, this.tex, this.next, this.u);
+    this.kit.release(this.project, this.capColor, this.capDepth, this.probes, this.u);
   }
 }

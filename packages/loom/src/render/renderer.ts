@@ -86,7 +86,7 @@ export interface RendererOptions {
    *  probes see `source`'s draws (default the mirror pass: put what should bounce light there, as for the mirror —
    *  with mirror off it isn't drawn, but the probes still replay it), `face` texels a cube side, `maxPerFrame`
    *  probes captured at most a frame, `ground` lifts probes out of the terrain. Off unless given */
-  gi?: { min: V3; max: V3; spacing: number; source?: RenderPass; face?: number; maxPerFrame?: number; ground?: (x: number, z: number) => number };
+  gi?: { min: V3; max: V3; spacing: number; source?: RenderPass; face?: number; maxPerFrame?: number; ground?: (x: number, z: number) => number; skip?: RegExp | ((label: string) => boolean) };
 }
 
 export class Renderer {
@@ -127,6 +127,10 @@ export class Renderer {
   env: SharedGroup;
   /** the most point lights kept (RendererOptions.lights.max) */
   readonly maxLights: number;
+  /** where the light grid's cells and the probes start in the point lights' buffer (64-byte records) */
+  private bases = [0, 0];
+  private cellsCopy: RunEntry;
+  private probesCopy: RunEntry;
   /** the opaque scene (MSAA): add draws to it */
   scene: RenderPass;
   /** the mirror image over the sea (half res, single sample; a mirrored camera, so draw with cull 'none') */
@@ -215,11 +219,10 @@ export class Renderer {
     const clustered = opts.lights?.clustered ?? (opts.lights?.max ?? MAX_LIGHTS) > MAX_LIGHTS;
     this.maxLights = Math.max(1, Math.round(opts.lights?.max ?? (clustered ? 256 : MAX_LIGHTS)));
     this.lightData = new Float32Array(this.maxLights * 16);
+    // (the point lights' buffer: the lights, then the light grid's cells, then the probes — laidOut())
     this.lights = k.storage({ label: 'pointLights', size: this.maxLights * 64 });
     this.envx = k.uniforms(envShader.structs.EnvX, 'envx');
     if (clustered) this.clusters = new LightClusters(k, this.lights, this.envx, { cells: opts.lights?.cells, cap: opts.lights?.cap });
-    const noCells = this.clusters ? null : k.storage({ label: 'lightCells.none', size: 16 });
-    const noGi = k.texture({ label: 'gi.none', format: 'rgba16float', size: [4, 1, 1], dimension: '3d', usage: ['sample', 'copy-dst'] });
     this.ripples = new Ripples(k, terrain.heightTex, half, opts.ripples);
     this.hf = new TerrainShadow(k, terrain.heightTex, half, opts.terrainShadowSize ?? 2048);
     this.clouds = new Clouds(k, terrain.heightTex, this.depth, half, { volumetric: (opts.clouds ?? 'volumetric') === 'volumetric' });
@@ -229,7 +232,7 @@ export class Renderer {
       lighting: atmo.lighting, skyTex: atmo.skyView, aerialTex: atmo.aerial,
       heightTex: terrain.heightTex, normalTex: terrain.normalTex, splatTex: terrain.splatTex, maskTex: terrain.maskTex,
       shadowTex: this.shadow, rippleTex: this.ripples.out, hfShadowTex: this.hf.shown, cloudShadowTex: this.clouds.smap,
-      plights: this.lights, envx: this.envx, lightCells: this.clusters?.buffer ?? noCells, giTex: noGi,
+      plights: this.lights, envx: this.envx,
     }, 'env');
     this.clouds.build();
     // the sprite clouds in the march's place (its resources never made: clouds 'sprites' isn't volumetric)
@@ -265,10 +268,19 @@ export class Renderer {
     }
     if (opts.gi) {
       const g = opts.gi;
-      this.gi = new ProbeGrid(k, { source: g.source ?? this.reflPass, min: g.min, max: g.max, spacing: g.spacing, face: g.face, maxPerFrame: g.maxPerFrame, ground: g.ground });
-      this.env.set('giTex', this.gi.tex);
-      this.gi.onTexture = (t) => this.env.set('giTex', t);
+      this.gi = new ProbeGrid(k, { source: g.source ?? this.reflPass, min: g.min, max: g.max, spacing: g.spacing, face: g.face, maxPerFrame: g.maxPerFrame, ground: g.ground, skip: g.skip });
+      this.gi.onResize = () => this.laidOut();
     }
+    this.laidOut();
+    // (the grid's cells and the probes into the point lights' buffer each frame, after they're made)
+    this.cellsCopy = k.raw((enc) => {
+      const c = this.clusters;
+      if (c) enc.copyBufferToBuffer(c.buffer.gpu, 0, this.lights.gpu, this.bases[0] * 64, c.records * 64);
+    }, 'lights.cells');
+    this.probesCopy = k.raw((enc) => {
+      const g = this.gi;
+      if (g && g.params.on) enc.copyBufferToBuffer(g.probes.gpu, 0, this.lights.gpu, this.bases[1] * 64, g.count * 64);
+    }, 'gi.store');
     this.copy = k.copy(this.hdr, this.sceneCopy, 'scene.copy');
     this.water = k.pass({ label: 'water', color: [{ target: this.hdr, clear: false }], depth: { target: this.depth, readOnly: true } });
     // (the shafts are cut by the clouds: the march's output, or the sprite clouds' cover)
@@ -314,6 +326,13 @@ export class Renderer {
     this.lensU = k.uniforms(lensShader.structs.Lens, 'lens');
     this.lensPass = k.pass({ label: 'lens', color: [{ target: 'screen', clear: [0, 0, 0, 1] }] });
     this.lensPass.fullscreen(lensShader, { fragment: 'fs_lens', bind: { LN: this.lensU, lensSrc: this.ldr } });
+  }
+
+  // (the point lights' buffer laid out: the lights, the cells, the probes; grown to hold them)
+  private laidOut() {
+    const cells = this.maxLights, probes = cells + (this.clusters?.records ?? 0);
+    this.bases = [cells, probes];
+    this.lights.ensure((probes + (this.gi?.count ?? 0)) * 64);
   }
 
   /** the sky goes last in the opaque passes, where nothing wrote depth (a game's own sky shader, or loom's) */
@@ -412,7 +431,7 @@ export class Renderer {
     this.underwater.update(o.time, o.dt, o.cam.position[1], o.seaLevel);
     // (the light grid's and the probes' values for the shaders)
     this.gi?.follow(o.cam.position);
-    const ex: Record<string, number[]> = { grid: [0, 0, 0, 0], giN: [1, 1, 1, 0] };
+    const ex: Record<string, number[]> = { grid: [0, 0, 0, 0], giN: [2, 2, 2, 0], bases: [this.bases[0], this.bases[1], this.clusters?.perCell ?? 1, 0] };
     if (this.clusters) Object.assign(ex, this.clusters.envx(this.clustered));
     if (this.gi) Object.assign(ex, this.gi.envx());
     this.envx.set(ex);
@@ -421,7 +440,7 @@ export class Renderer {
   items(light: V3): RunEntry[] {
     return [
       ...this.ripples.items(), ...(this.hfOn ? this.hf.items(light) : []), ...this.clouds.bakes(), ...this.compute,
-      ...(this.clusters?.items ?? []), ...this.shadowPasses, ...(this.gi?.items ?? []), this.reflPass, this.scene, this.resolve, ...this.cinema.aoItems, this.copy, this.water,
+      ...(this.clusters ? [...this.clusters.items, this.cellsCopy] : []), ...this.shadowPasses, ...(this.gi ? [...this.gi.items, this.probesCopy] : []), this.reflPass, this.scene, this.resolve, ...this.cinema.aoItems, this.copy, this.water,
       ...this.clouds.render(), this.cloudsBelow, ...this.cinema.airItems, this.cloudsAbove, ...this.underwater.items, ...this.beforeFx, this.fx,
       this.motionBlur.shutter > 0 ? this.copyMB : null, this.motionBlur.shutter > 0 ? this.mb : null,
       this.dof.on ? this.copyDof : null, this.dof.on ? this.dofPass : null,

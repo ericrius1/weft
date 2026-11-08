@@ -7,7 +7,7 @@
 struct GridLight { pos: vec3f, radius: f32, color: vec3f, size: f32, dir: vec3f, cosOuter: f32, cosInner: f32, p0: f32, p1: f32, p2: f32 }
 @group(2) @binding(0) var<uniform> gx: EnvX;
 @group(2) @binding(1) var<storage, read> gridLights: array<GridLight>;
-@group(2) @binding(2) var<storage, read_write> cellsOut: array<u32>;
+@group(2) @binding(2) var<storage, read_write> cellsOut: array<f32>;   // (copied into plights after the lights: bases.x)
 
 @compute @workgroup_size(64) fn bin(@builtin(global_invocation_id) id: vec3u) {
   let n = vec3u(gx.gridN.xyz);
@@ -21,7 +21,7 @@ struct GridLight { pos: vec3f, radius: f32, color: vec3f, size: f32, dir: vec3f,
   let lo = gx.grid.xyz + vec3f(cellEdge(f32(cx), nf.x, gx.gridR.x), cellEdge(f32(cy), nf.y, gx.gridR.y), cellEdge(f32(cz), nf.z, gx.gridR.x));
   let hi = gx.grid.xyz + vec3f(cellEdge(f32(cx + 1u), nf.x, gx.gridR.x), cellEdge(f32(cy + 1u), nf.y, gx.gridR.y), cellEdge(f32(cz + 1u), nf.z, gx.gridR.x));
   let cap = u32(gx.gridR.z);
-  let base = i * (cap + 1u);
+  let base = i * u32(gx.bases.z) * 16u;
   let cnt = u32(gx.gridR.w);
   var k = 0u;
   for (var li = 0u; li < cnt; li++) {
@@ -42,9 +42,9 @@ struct GridLight { pos: vec3f, radius: f32, color: vec3f, size: f32, dir: vec3f,
         if (l.p1 <= 1.0 && ang > acos(clamp(l.cosOuter, -1.0, 1.0)) + asin(clamp(rad / dist, 0.0, 1.0))) { continue; }
       }
     }
-    cellsOut[base + 1u + k] = li;
+    cellsOut[base + 1u + k] = f32(li);
     k++;
     if (k >= cap) { break; }
   }
-  cellsOut[base] = k;
+  cellsOut[base] = f32(k);
 }

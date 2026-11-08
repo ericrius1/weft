@@ -61,7 +61,8 @@ const VIEWS: Record<string, [V3, V3, number]> = {
 async function main() {
   const canvas = document.getElementById('c') as HTMLCanvasElement;
   const hud = document.getElementById('hud')!;
-  const kit = await createKit(canvas, { maxPixelRatio: 1, powerPreference: 'high-performance' });
+  // (?lowlimits: the baseline WebGPU limits a phone may have, to catch a shader that binds too much)
+  const kit = await createKit(canvas, { maxPixelRatio: 1, powerPreference: 'high-performance', ...(q.has('lowlimits') ? { limits: { maxSampledTexturesPerShaderStage: 16, maxStorageBuffersPerShaderStage: 8, maxStorageTexturesPerShaderStage: 4 } } : {}) });
   kit.profiler.force = true;
   kit.renderScale = +(q.get('scale') ?? 1);
   const W = kit.uniforms(globals.structs.World, 'world');
@@ -71,7 +72,7 @@ async function main() {
   const atmo = new Atmosphere(kit, terrain.heightTex);
   const { boxes, lights } = town();
   const r = new Renderer(kit, terrain, atmo, HALF, {
-    clouds: 'none', msaa: 1, taau: flag('taau', true),
+    clouds: (q.get('clouds') ?? 'none') as 'none' | 'volumetric' | 'sprites', msaa: 1, taau: flag('taau', true),
     lights: { max: Math.max(32, NLIGHTS), clustered: true },
     gi: { min: [-36, 0.5, -36], max: [36, 14.5, 36], spacing: 2, face: 24, maxPerFrame: 8 },
   });

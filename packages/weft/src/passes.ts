@@ -397,6 +397,8 @@ export interface RenderPassOptions {
    *  probe's cube faces, a second camera — instead of draws of its own. The two passes' targets must have the same
    *  formats and samples (the draws' pipelines are made for the source's). */
   replay?: RenderPass;
+  /** (with replay) which of the source's draws to draw: what moves (a dragon, creatures) left out of a probe's capture */
+  replayFilter?: (d: Draw) => boolean;
 }
 
 /** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
@@ -668,10 +670,10 @@ export class RenderPass implements RunItem {
       }
       this.replayChecked = src;
     }
-    const view = this.opts.view ?? this.kit.mainView, shared = this.opts.shared;
+    const view = this.opts.view ?? this.kit.mainView, shared = this.opts.shared, keep = this.opts.replayFilter;
     for (const d of src.draws) {
-      if (d instanceof Draw) d.encodeInto(pe, view, shared);
-      else if (on(d.enabled)) for (const x of d.draws) x.encodeInto(pe, view, shared);
+      if (d instanceof Draw) { if (!keep || keep(d)) d.encodeInto(pe, view, shared); }
+      else if (on(d.enabled)) for (const x of d.draws) if (!keep || keep(x)) x.encodeInto(pe, view, shared);
     }
   }
 

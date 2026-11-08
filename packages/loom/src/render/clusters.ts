@@ -18,7 +18,11 @@ export class LightClusters {
   reach = { across: 400, up: 200 };
   readonly cells: [number, number, number];
   readonly cap: number;
-  /** the cells' lists (env group: lightCells) */
+  /** 64-byte records a cell (its count and up to `cap` indices, as floats) */
+  readonly perCell: number;
+  /** records in all (the Renderer copies `buffer` into the point lights' buffer, after the lights) */
+  readonly records: number;
+  /** the cells' lists, binned each frame */
   readonly buffer: StorageBuffer;
   readonly items: RunEntry[];
   private bin: Compute;
@@ -26,10 +30,13 @@ export class LightClusters {
   private count = 0;
 
   constructor(private kit: Kit, lights: StorageBuffer, envx: UniformBuffer<any>, opts: LightClusterOptions = {}) {
+    // (lights: the point lights' buffer, read for the lights alone — its first records)
     this.cells = opts.cells ?? [32, 16, 32];
     this.cap = Math.max(1, Math.min(255, Math.round(opts.cap ?? 24)));
     const total = this.cells[0] * this.cells[1] * this.cells[2];
-    this.buffer = kit.storage({ label: 'lightCells', size: total * (this.cap + 1) * 4 });
+    this.perCell = Math.ceil((this.cap + 1) / 16);
+    this.records = total * this.perCell;
+    this.buffer = kit.storage({ label: 'lightCells', size: this.records * 64 });
     this.bin = kit.compute(clusterShader, {
       label: 'lights.bin', entry: 'bin', threads: [total], enabled: () => this.count > 0,
       bind: { gx: envx, gridLights: lights, cellsOut: this.buffer },
