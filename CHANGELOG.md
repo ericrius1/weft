@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **`weft/skin`** (`shaders/skin.wgsl`): dual-quaternion skinning for a mesh posed on the CPU — four bones and weights
+  blended into one dual quaternion (antipodal ones the short way round), a point and a direction through it, faded to
+  linear blending where the bones are nearly half a turn apart (a lunge's thighs: no flip from frame to frame). The
+  including file declares `DQ: array<vec4f>` (two a bone). The skinning Boulder's heroes and townsfolk, Seven Havens'
+  and Codevember's shaman each carried a copy of; it also skins what's laid on a body at run time (cards anchored to
+  its vertices: `skinBlend` from a packed `unpackBones` and unpacked weights).
+- **`kit.ready(mipChain)`** waits for a `MipChain`'s own passes (pipelinesOf takes any run item made of passes), and
+  `mipChain.ready()` does the same: a chain run before its pipelines compiled drew nothing and left the mips black
+  (a texture's far mips then, seen at a grazing angle or from afar, black).
+
 ## 0.2.7
 
 - **`Taau`** (`src/taau.ts`, `shaders/taau.wgsl`): temporal anti-aliasing that upscales. The view's camera is jittered

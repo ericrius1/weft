@@ -233,7 +233,8 @@ export class PipelineRecord {
         this.changed = null;
     }
 }
-/** the pipeline records of passes (their draws and bundles), computes, draws, bundles and lists of them, once each */
+/** the pipeline records of passes (their draws and bundles), computes, draws, bundles, run items made of passes (a
+ *  MipChain) and lists of them, once each */
 export function pipelinesOf(items, out = new Set()) {
     for (const it of items) {
         if (!it || typeof it !== 'object')
@@ -246,6 +247,9 @@ export function pipelinesOf(items, out = new Set()) {
             out.add(it.pipe);
         else if ('draws' in it && Array.isArray(it.draws))
             pipelinesOf(it.draws, out);
+        // (a run item made of passes of its own: a MipChain's)
+        else if ('passes' in it && Array.isArray(it.passes))
+            pipelinesOf(it.passes, out);
     }
     return [...out];
 }

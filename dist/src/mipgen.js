@@ -1,9 +1,12 @@
+import { pipelinesOf, settle } from './passes';
 import mipShader from '../shaders/mipgen.wgsl';
 export class MipChain {
     kit;
     texture;
     label;
     enabled = true;
+    /** its passes, a level each (kit.ready(chain) waits for their pipelines: a chain run before they're compiled
+     *  draws nothing, and the mips stay black) */
     passes = [];
     builtFor = -1;
     constructor(kit, texture) {
@@ -30,6 +33,8 @@ export class MipChain {
         for (const p of this.passes)
             p.encode(enc);
     }
+    /** its pipelines compiled (the same as kit.ready(chain)) */
+    ready() { return settle(() => pipelinesOf(this.passes)); }
     /** stop it for good (its passes' pipelines leave the kit) */
     dispose() {
         for (const p of this.passes)

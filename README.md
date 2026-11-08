@@ -172,7 +172,8 @@ it, as must any shader that rebuilds view rays from the projection (`proj[2].xy`
 dome whatever a view draws in screen space that can't be stitched: vignetting, grain, chromatic aberration, lens flares
 and screen-space sun shafts, camera motion blur, temporal accumulation.
 
-In WGSL, `#include "weft/frame"`, `"weft/fullscreen"`, `"weft/mesh"`, `"weft/output"` reach the kit's shader library;
+In WGSL, `#include "weft/frame"`, `"weft/fullscreen"`, `"weft/mesh"`, `"weft/output"`, `"weft/skin"` (dual-quaternion
+skinning) reach the kit's shader library;
 `libs` in the plugin options adds your own prefixes (a directory, or a package name).
 
 Exports: `@ericrius1/weft` (the kit), `/vite` (the plugin), `/wgsl` (the compiler: include resolution, reflection,

@@ -121,7 +121,8 @@ export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipe
 /** what kit.ready() waits for: passes, computes, draws, bundles, pipeline records and lists of them (a run list:
  *  what has no pipeline in it is passed over) */
 export type Waitable = RunItem | RunAction | PassItem | AnyPipelineRecord | null | undefined | false | readonly Waitable[];
-/** the pipeline records of passes (their draws and bundles), computes, draws, bundles and lists of them, once each */
+/** the pipeline records of passes (their draws and bundles), computes, draws, bundles, run items made of passes (a
+ *  MipChain) and lists of them, once each */
 export declare function pipelinesOf(items: readonly Waitable[], out?: Set<AnyPipelineRecord>): AnyPipelineRecord[];
 /** wait till none of `records()` is compiling, asking again after each wait (up to 20 times) for those declared or
  *  rebuilt meanwhile; those a compile scheduler holds back (deferred) aren't waited for */

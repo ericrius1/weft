@@ -248,7 +248,8 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
  *  what has no pipeline in it is passed over) */
 export type Waitable = RunItem | RunAction | PassItem | AnyPipelineRecord | null | undefined | false | readonly Waitable[];
 
-/** the pipeline records of passes (their draws and bundles), computes, draws, bundles and lists of them, once each */
+/** the pipeline records of passes (their draws and bundles), computes, draws, bundles, run items made of passes (a
+ *  MipChain) and lists of them, once each */
 export function pipelinesOf(items: readonly Waitable[], out = new Set<AnyPipelineRecord>()): AnyPipelineRecord[] {
   for (const it of items) {
     if (!it || typeof it !== 'object') continue;
@@ -256,6 +257,8 @@ export function pipelinesOf(items: readonly Waitable[], out = new Set<AnyPipelin
     else if (it instanceof PipelineRecord) out.add(it as AnyPipelineRecord);
     else if ('pipe' in it && it.pipe instanceof PipelineRecord) out.add(it.pipe as AnyPipelineRecord);
     else if ('draws' in it && Array.isArray(it.draws)) pipelinesOf(it.draws as PassItem[], out);
+    // (a run item made of passes of its own: a MipChain's)
+    else if ('passes' in it && Array.isArray((it as { passes: unknown }).passes)) pipelinesOf((it as { passes: Waitable[] }).passes, out);
   }
   return [...out];
 }
