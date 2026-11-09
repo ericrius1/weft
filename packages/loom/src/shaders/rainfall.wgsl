@@ -60,12 +60,13 @@ fn rainBoxOf(i: u32) -> u32 {
   return select(select(2u, 1u, u < rainP.box[1].w), 0u, u < rainP.box[0].w);
 }
 
-// the drop's place: its spot in the box, moved by the fall, wrapped round the eye (centred on it)
+// the drop's place: its spot in the box, moved by the fall (`fall` is how far the drops have gone, the velocity's way:
+// added, so they come down and drift downwind), wrapped round the eye (centred on it)
 fn rainPlaced(i: u32, k: u32, fall: vec3f) -> vec4f {
   let B = rainP.box[k].xyz;
   let s = vec3f(rainHash(i * 7u + 1u), rainHash(i * 7u + 2u), rainHash(i * 7u + 3u));
   let c = frame.camPos;
-  let rel = fract((s * B - fall - c) / B + 0.5);
+  let rel = fract((s * B + fall - c) / B + 0.5);
   // (faded out near the box's faces, where it wraps round)
   let e = max(max(abs(rel.x - 0.5), abs(rel.y - 0.5)), abs(rel.z - 0.5)) * 2.0;
   return vec4f(c + (rel - 0.5) * B, 1.0 - smoothstep(0.78, 1.0, e));

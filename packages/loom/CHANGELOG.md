@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Rainfall falls down**: `rainPlaced` took the fall away from each drop's spot instead of adding it, so the drops
+  (their streaks drawn the right way up) rose from the ground and drifted upwind.
+
 ## 0.1.15
 
 All opt-in (`RendererOptions`); without them nothing renders differently. Needs weft 0.2.7.
