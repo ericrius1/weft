@@ -1,0 +1,51 @@
+{
+  "name": "@ericrius1/cast",
+  "version": "0.1.0",
+  "description": "The cast's procedural character runtime, shared by every project: the hero rig (gait, flight, swimming, seats and holds, the arm fit with elbow continuity, finger IK, verlet hair and cloth, the face), garments, strands, a stroke planner for anything swung, keyed tracks, the whole-body solver, and the articulation of a body playing an instrument. CPU only, no renderer.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Eric Levin",
+  "homepage": "https://github.com/ericrius1/weft/tree/main/packages/cast#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericrius1/weft.git",
+    "directory": "packages/cast"
+  },
+  "bugs": {
+    "url": "https://github.com/ericrius1/weft/issues"
+  },
+  "keywords": [
+    "character",
+    "rig",
+    "procedural-animation",
+    "inverse-kinematics",
+    "locomotion",
+    "verlet",
+    "facial-animation"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "MIGRATION.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm run build"
+  }
+}

@@ -2,9 +2,9 @@
   "name": "weft-workspace",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/weft", "packages/loom", "examples/*"],
+  "workspaces": ["packages/weft", "packages/loom", "packages/cast", "examples/*"],
   "scripts": {
-    "build": "npm run build -w @ericrius1/weft && npm run build -w @ericrius1/loom",
+    "build": "npm run build -w @ericrius1/weft && npm run build -w @ericrius1/loom && npm run build -w @ericrius1/cast",
     "dev": "npm run dev -w weft-lab",
     "typecheck": "npm run build"
   },

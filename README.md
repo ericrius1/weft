@@ -1,11 +1,12 @@
 # weft & loom
 
-Two WebGPU libraries: a thin kit, and a cinematic renderer built on it.
+Two WebGPU libraries: a thin kit, and a cinematic renderer built on it — and the characters' runtime the games share.
 
 | package | what it is |
 | --- | --- |
 | [`@ericrius1/weft`](packages/weft) | A thin WebGPU kit. A frame is an explicit, ordered list of passes over named resources; WGSL is the single definition of the data. A Vite plugin makes `.wgsl` files typed, hot-reloading imports. Temporal upscaling, GPU-driven draws, a frame budget that holds the frame rate on a phone. |
 | [`@ericrius1/loom`](packages/loom) | A cinematic renderer built on weft: a physically based atmosphere, volumetric clouds and storm cells, the sea, rain, light in the air, light that bounces (irradiance probes), lamps by the hundred (clustered lighting), GTAO, bloom, eye adaptation and an AgX film grade — plus streamed land and forests, ink and toon light, breakable rubble on box3d, and a procedural audio engine. |
+| [`@ericrius1/cast`](packages/cast) | The cast's procedural character runtime, CPU only: a hero rig that walks, runs, flies, swims, sits, holds and plays (the arm fit's elbow continuity, finger IK, verlet hair and cloth, the face), garments and strands, a stroke planner for anything swung, keyed tracks, the whole-body solver, and the articulation of a body playing an instrument. Each project keeps its own mesh and shader. |
 
 **Highlights**
 

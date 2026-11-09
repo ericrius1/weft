@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// engine-latest: put this project's weft and loom at the tips of their dist branches (dist/weft, dist/loom on
-// github.com/ericrius1/weft), so no build or dev server runs on an engine older than the latest push to weft's main.
+// engine-latest: put this project's weft, loom and cast at the tips of their dist branches (dist/weft, dist/loom,
+// dist/cast on github.com/ericrius1/weft), so no build or dev server runs on an engine older than the latest push to
+// weft's main (a project without one of them skips it).
 // The canonical copy is weft/tools/engine-latest.mjs; every project has the same file in its tools/ and calls it
 //   "predev":   "node tools/engine-latest.mjs"            (soft: offline, it says so and the dev server starts anyway)
 //   "prebuild": "node tools/engine-latest.mjs --strict"   (a build that can't confirm the tip fails)
@@ -32,7 +33,7 @@ if (!pkg) fail(`no package.json in ${root}`);
 
 // the engine deps this project takes from a dist branch: { name, repo: 'ericrius1/weft', branch: 'dist/weft' }
 const deps = [];
-for (const name of ['@ericrius1/weft', '@ericrius1/loom']) {
+for (const name of ['@ericrius1/weft', '@ericrius1/loom', '@ericrius1/cast']) {
   const spec = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
   if (!spec) continue;
   const m = /github(?:\.com[/:]|:)([\w.-]+\/[\w.-]+?)(?:\.git)?#(.+)$/.exec(spec);

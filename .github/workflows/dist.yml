@@ -1,9 +1,10 @@
-# Every push to main, built and on GitHub for the games to take — no version to bump, nothing to publish: both packages
+# Every push to main, built and on GitHub for the games to take — no version to bump, nothing to publish: every package
 # built and tested, then each packed exactly as npm would get it (`npm pack`: its `files`) and committed to a branch of
-# its own, dist/weft and dist/loom, the package at its root. A game depends on them by branch,
+# its own, dist/weft, dist/loom and dist/cast, the package at its root. A game depends on them by branch,
 #   "@ericrius1/weft": "git+https://github.com/ericrius1/weft.git#dist/weft",
 #   "@ericrius1/loom": "git+https://github.com/ericrius1/weft.git#dist/loom",
-# and takes the latest with `npm update @ericrius1/weft @ericrius1/loom` (its lockfile holds the commit until then; npm
+#   "@ericrius1/cast": "git+https://github.com/ericrius1/weft.git#dist/cast",
+# and takes the latest with `npm update @ericrius1/weft @ericrius1/loom @ericrius1/cast` (its lockfile holds the commit until then; npm
 # install with the spec would write it back as the github: shorthand). On the branches: no scripts (nothing builds on install) and loom takes
 # whatever weft the game has. Each commit's message names the main commit it was built from. This is the only release:
 # npm is retired (nothing is published there; the projects all take these branches).
@@ -32,13 +33,14 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test -w @ericrius1/weft
+      - run: npm test -w @ericrius1/cast
       - name: Each package, built, onto its dist branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           sha=$(git rev-parse --short HEAD)
           subject=$(git log -1 --format=%s | cut -c1-140)
-          for pkg in weft loom; do
+          for pkg in weft loom cast; do
             out="$RUNNER_TEMP/pkg-$pkg" wt="$RUNNER_TEMP/wt-$pkg" branch="dist/$pkg"
             mkdir -p "$out"
             npm pack -w "@ericrius1/$pkg" --pack-destination "$RUNNER_TEMP" > /dev/null
