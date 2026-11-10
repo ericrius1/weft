@@ -23,7 +23,8 @@ Two WebGPU libraries: a thin kit, and a cinematic renderer built on it — and t
   pipelines compiled before they're needed, render bundles, multi-draw indirect, dynamic resolution.
 
 This page is the tour: how a frame is put together, then a closer look at each technique — what it's for, how it works
-and what it costs. The package READMEs are the reference.
+and what it costs. The package READMEs are the reference, and [`packages/weft/AGENTS.md`](packages/weft/AGENTS.md) is the
+guide for coding agents: the API on a page, the rules that bite, and recipes.
 
 - [The idea in one screen](#the-idea-in-one-screen)
 - [A frame, from the ground up](#a-frame-from-the-ground-up): passes · WGSL as the source of truth · pipelines ·

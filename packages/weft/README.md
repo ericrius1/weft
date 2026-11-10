@@ -180,4 +180,5 @@ Exports: `@ericrius1/weft` (the kit), `/vite` (the plugin), `/wgsl` (the compile
 declarations), `/runtime` (the shader registry the generated modules use), `/client` (fallback `.wgsl` typings).
 
 See the [repo](https://github.com/ericrius1/weft) for the lab example (`bench.html` prices encoding many draws,
-`checks.html` exercises the kit in the browser). MIT.
+`checks.html` exercises the kit in the browser). For coding agents, [`AGENTS.md`](AGENTS.md)
+(`node_modules/@ericrius1/weft/AGENTS.md` in a project) covers the kit, loom and cast on a page. MIT.

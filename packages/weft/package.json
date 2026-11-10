@@ -59,6 +59,7 @@
     "shaders",
     "client.d.ts",
     "README.md",
+    "AGENTS.md",
     "LICENSE",
     "tools"
   ],
