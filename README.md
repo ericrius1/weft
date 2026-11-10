@@ -73,4 +73,6 @@ Modules are imported by path (`@ericrius1/loom/<dir>/<module>`); shaders by `@er
 Multithreaded physics wants box3d.js's `dist/box3d.mt.*` copied to your app's `public/box3d/` and a cross-origin
 isolated page (`loadBox3D({ mtUrl })` to put it elsewhere).
 
+For coding agents: weft's `AGENTS.md` (`node_modules/@ericrius1/weft/AGENTS.md`) covers loom's renderer too.
+
 MIT.
