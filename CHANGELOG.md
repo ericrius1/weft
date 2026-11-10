@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`AGENTS.md`**, shipped in the package (`node_modules/@ericrius1/weft/AGENTS.md`): a guide for coding agents in the
+  projects. It covers the kit, loom's renderer and cast on one page: the model, setup, every call with its options, the WGSL
+  side (group 0, reversed-Z, uv, includes, the shared helpers), the rules that cost hours (an uncompiled draw is
+  skipped silently, one uniform value per run, draw order, the binding budget, WebKit's compiles), debugging, recipes,
+  and where in the source to look.
 - **`weft/skin`** (`shaders/skin.wgsl`): dual-quaternion skinning for a mesh posed on the CPU — four bones and weights
   blended into one dual quaternion (antipodal ones the short way round), a point and a direction through it, faded to
   linear blending where the bones are nearly half a turn apart (a lunge's thighs: no flip from frame to frame). The
