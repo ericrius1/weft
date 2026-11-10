@@ -193,6 +193,15 @@ export class Renderer {
   /** inside a cloud: the exposure lifted by (1 + lift), the vignette cut by this share */
   inCloud = { lift: 0.8, vignette: 0.7 };
   film = { exposure: 1.24, bloom: 0.22, saturation: 1.06, contrast: 1.06, vignette: 0.28, grain: 0.035, warmth: 0, bloomWide: 1.12, splitTone: 1, autoExposure: 1, vivid: false,
+    /** the eye's exposure as a white card's (0..1: how much; the rest the scene's own brightness, histogram-adapted): a
+     *  level white card mapped to `dayCard` on the screen by day (pre-tone-map), `nightCard` on a moonlit night — what
+     *  the card's light is at noon and by such a night (`cardNoon`, `cardNight`: the lighting block's radiance) — so a
+     *  painted sky or a dark wall filling the frame doesn't swing the land's brightness (Seven Havens' eye) */
+    card: 0.3, dayCard: 0.5, nightCard: 0.2, cardNoon: 6, cardNight: 0.24,
+    /** the painter's grade (Seven Havens'): the warm-cool split by the time of day (shadows lavender, highlights gold,
+     *  most at golden hour), the reds' and golds' richness, the glow on what's bright (its strength, and the brightness
+     *  on the screen it glows from), film's red halation, the dusk's magenta-violet. 0 leaves each out */
+    split: 0.5, rich: 0.2, glow: 0.18, glowFrom: 0.9, halation: 0.05, dusk: 1,
     /** the grade's lift (added to the shadows) and gain (the highlights' multiplier), per channel */
     lift: [0, 0, 0] as V3, gain: [1, 1, 1] as V3 };
   /** the lens after the grade (off unless on): halation (strength, radius px at 1080, threshold, warmth), chromatic
@@ -204,7 +213,7 @@ export class Renderer {
   private lensPass: RenderPass;
   lensU: UniformBuffer<any>;
 
-  constructor(private kit: Kit, terrain: TerrainMaps, atmo: Atmosphere, half: number, opts: RendererOptions = {}) {
+  constructor(private kit: Kit, terrain: TerrainMaps, readonly atmo: Atmosphere, half: number, opts: RendererOptions = {}) {
     const k = kit;
     const msaa = this.msaa = opts.msaa === 1 ? 1 : MSAA;
     const SZ = this.shadowSize = Math.max(256, Math.round(opts.shadowSize ?? SHADOW_SIZE));
@@ -312,7 +321,7 @@ export class Renderer {
       p.fullscreen(postShader, { fragment: 'fs_down', bind: { src: i === 0 ? graded : this.bloom.mip(i - 1), P: i === 0 ? this.postFirst : this.post, expo: this.expo } });
       this.bloomPasses.push(p);
     }
-    this.adapt = k.compute(postShader, { label: 'adapt', entry: 'adapt', bind: { P: this.post, lumSrc: this.bloom.mip(4), expoOut: this.expo }, workgroups: [1] });
+    this.adapt = k.compute(postShader, { label: 'adapt', entry: 'adapt', bind: { P: this.post, lumSrc: this.bloom.mip(4), expoOut: this.expo, litIn: atmo.lighting }, workgroups: [1] });
     for (let i = BLOOM_LEVELS - 2; i >= 0; i--) {
       const p = k.pass({ label: `bloom.up${i}`, color: [{ target: this.bloom.mip(i), clear: false }] });
       p.fullscreen(postShader, { fragment: 'fs_up', blend: 'add', bind: { src: this.bloom.mip(i + 1), P: this.post } });
@@ -404,16 +413,20 @@ export class Renderer {
   }
 
   /** per frame: post, motion blur, the cinema's and the clouds' uniforms */
-  update(o: { time: number; dt: number; cam: Camera; light: V3; night: number; hour: number; seaLevel: number; cover: number; under: number }) {
+  update(o: { time: number; dt: number; cam: Camera; light: V3; night: number; hour: number; seaLevel: number; cover: number; under: number; sun?: V3 }) {
     const f = this.film;
+    // (the air's look for the hour: the sun's altitude from its own direction, else from the key light by day)
+    const sunY = o.sun ? o.sun[1] : o.night < 0.5 ? o.light[1] : -0.3;
+    this.atmo.setHour(o.hour, Math.asin(Math.max(-1, Math.min(1, sunY))) * 180 / Math.PI);
     let norm = 0;
     for (let i = 0; i < BLOOM_LEVELS; i++) norm += f.bloomWide ** i;
     const p = {
       // (inside a cloud: brighter — the eye's adaptation alone would pull the glowing white fog down to a dull grey — and
       // no vignette darkening its edges)
       exposure: f.exposure * (1 + this.inCloud.lift * this.clouds.inside), bloom: f.bloom * (1 + 0.6 * o.night), bloomThreshold: 0, saturation: f.saturation, contrast: f.contrast,
-      warmth: f.warmth, vignette: f.vignette * (1 - this.inCloud.vignette * this.clouds.inside), grain: f.grain, time: o.time, autoExposure: f.autoExposure, first: 0,
+      warmth: f.warmth, vignette: f.vignette * (1 - this.inCloud.vignette * this.clouds.inside), grain: f.grain, time: o.time, autoExposure: f.autoExposure, first: 0, card: f.card,
       lift: [f.lift[0], f.lift[1], f.lift[2], o.night], gain: [f.gain[0], f.gain[1], f.gain[2], 1], look: [f.vivid ? 0 : 1, f.bloomWide, 1 / norm, f.splitTone], uw: [o.under * 0.6, o.under * 0.5, o.under * 0.3, o.under],
+      ex: [f.dayCard, f.nightCard, f.cardNoon, f.cardNight], hv: [f.split, f.rich, f.glow, f.glowFrom], hv2: [f.halation, f.dusk, 0, 0],
     };
     this.post.set(p);
     this.postFirst.set({ ...p, first: 1 });

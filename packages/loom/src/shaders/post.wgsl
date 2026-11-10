@@ -3,16 +3,23 @@
 // protection and an exposure compensation curve, AgX with a firmer film base, a hue-selective grade with split toning,
 // scotopic night vision, vignette, grain and dither.
 #include "./globals"
+#include "./lighting"
 #include "weft/fullscreen"
 
 struct Post {
   exposure: f32, bloom: f32, bloomThreshold: f32, saturation: f32,
   contrast: f32, warmth: f32, vignette: f32, grain: f32,
-  time: f32, autoExposure: f32, first: f32, pad: f32,
+  time: f32, autoExposure: f32, first: f32,
+  card: f32,       // how much the eye's exposure is a white card's (0: the scene's own brightness alone; Seven Havens')
   lift: vec4f,     // rgb lift, w nightness
   gain: vec4f,
   look: vec4f,     // x the film look, y bloom: weight of each wider level, z 1 / sum of level weights, w split tone
   uw: vec4f,       // under water: x the glow's spread, y the vignette, z exposure lift (stops), w how far under
+  ex: vec4f,       // the white card: x its place on the screen by day, y by a moonlit night (pre-tone-map: 1 white), z the
+                   // card's light at noon, w on a moonlit night (its radiance: the lighting block's units)
+  hv: vec4f,       // the painter's grade (Seven Havens'): x the warm-cool split by the time of day, y the reds' and golds'
+                   // richness, z the glow on what's bright, w the brightness on the screen it glows from
+  hv2: vec4f,      // x halation (film's red glow round highlights), y the dusk's magenta-violet, zw -
 }
 @group(2) @binding(0) var<uniform> P: Post;
 @group(2) @binding(1) var src: texture_2d<f32>;
@@ -21,6 +28,14 @@ struct Post {
 @group(2) @binding(4) var<storage, read_write> expoOut: array<f32, 4>;
 @group(2) @binding(5) var depthMS: texture_depth_multisampled_2d;
 @group(2) @binding(6) var lumSrc: texture_2d<f32>;
+@group(2) @binding(11) var<storage, read> litIn: Lighting;
+
+/** the light on a level white card (its radiance): the key's straight down on it and the sky's from above it */
+fn cardLight() -> f32 {
+  let sh = litIn.sh;
+  let sky = sh[0].rgb * 0.282095 + sh[1].rgb * 0.488603 - sh[6].rgb * 0.315392 - sh[8].rgb * 0.546274;
+  return luminance(litIn.keyRad.rgb * max(world.lightDir.y, 0.0) + max(sky, vec3f(0.0)));
+}
 
 // ---------------------------------------------------------------- depth resolve: the farthest sample (reversed-Z: min)
 // so edges don't eat the water behind them
@@ -133,6 +148,39 @@ fn filmGrade(d0: vec3f, amt: f32) -> vec3f {
   }
   return d;
 }
+/** the reds', oranges' and golds' chroma raised by s about their luminance, no channel pushed past the gamut's edge
+ *  (Seven Havens' fxRicher: from red to gold, easing out toward yellow and quickly toward crimson) */
+fn richer(d: vec3f, s: f32) -> vec3f {
+  let mx = max(d.r, max(d.g, d.b));
+  let ch = mx - min(d.r, min(d.g, d.b));
+  if (s <= 0.0 || ch < 1e-4) { return d; }
+  let h = hue01(d);
+  let w = select(smoothstep(0.965, 0.995, h), 1.0 - smoothstep(0.12, 0.18, h), h < 0.5);
+  let l = luminance(d);
+  let up = (vec3f(1.0) - l) / max(d - l, vec3f(1e-5));
+  let dn = l / max(l - d, vec3f(1e-5));
+  let edge = min(min(select(dn.x, up.x, d.x > l), select(dn.y, up.y, d.y > l)), select(dn.z, up.z, d.z > l));
+  return l + (d - l) * min(1.0 + s * w, max(edge, 1.0));
+}
+/** the painter's grade by the time of day (Seven Havens' fxGrade): the shadows toward lavender (indigo by night), the
+ *  highlights toward gold, both most at golden hour; the dusk's magenta-violet over everything; the reds and golds
+ *  richer, more so at golden hour */
+fn painterGrade(d0: vec3f) -> vec3f {
+  let alt = degrees(asin(clamp(world.sunDir.y, -1.0, 1.0)));
+  let golden = smoothstep(-3.0, 2.0, alt) * (1.0 - smoothstep(5.0, 13.0, alt));
+  let dusk = smoothstep(-13.0, -5.0, alt) * (1.0 - smoothstep(-3.0, 1.0, alt));
+  let night = P.lift.w;
+  var d = d0;
+  let l = luminance(d);
+  let shK = 1.0 - smoothstep(0.02, 0.5, l);
+  let hiK = smoothstep(0.4, 0.95, l);
+  let cool = mix(vec3f(0.002, -0.004, 0.028), vec3f(0.0, -0.004, 0.034), night);
+  let warm = vec3f(0.024, 0.008, -0.026);
+  d += (cool * shK * (1.0 + 0.6 * golden + 0.5 * dusk) + warm * hiK * (1.0 + 1.6 * golden) * (1.0 - 0.6 * night)) * P.hv.x;
+  d += vec3f(0.006, -0.008, 0.018) * dusk * P.hv2.y;
+  return richer(d, P.hv.y * (1.0 + 0.5 * golden));
+}
+
 /** the vivid look (a stylized world): the brightest channel through a soft shoulder and the others kept in proportion —
  *  a saturated colour stays saturated as it brightens (AgX bleaches it toward white, as film does); far past the
  *  shoulder a little white comes in, so lights still glow. To display (sRGB-ish) */
@@ -152,6 +200,10 @@ fn h21(p: vec2f) -> f32 { var q = fract(vec3f(p.xyx) * 0.1031); q += dot(q, q.yz
   // spreads every light's glow further)
   c = mix(c, bl, P.bloom + (0.5 - P.bloom) * 0.55 * sat(P.uw.x));
   let ex = P.exposure * mix(1.0, expo[0], P.autoExposure);
+  // the glow on what's bright (gold in the sun, lanterns, fire, the moon): the bloom of what's brighter on the screen
+  // than the knee, added in its own colour; and film's red halation round highlights (little by night)
+  c += max(bl - vec3f(P.hv.w / max(ex, 1e-9)), vec3f(0.0)) * P.hv.z;
+  c += bl * vec3f(1.0, 0.32, 0.1) * P.hv2.x * (1.0 - 0.75 * P.lift.w);
   c *= ex;
   // scotopic (night) vision: dim light loses its colour and shifts blue (Purkinje)
   let lum0 = luminance(c);
@@ -159,6 +211,7 @@ fn h21(p: vec2f) -> f32 { var q = fract(vec3f(p.xyx) * 0.1031); q += dot(q, q.yz
   c = mix(c, vec3f(lum0) * vec3f(0.62, 0.78, 1.15), scot * 0.75);
   c *= vec3f(1.0 + P.warmth * 0.1, 1.0, 1.0 - P.warmth * 0.1);
   var d = select(filmGrade(agxFilm(c), P.look.w), vividTone(c), P.look.x < 0.5);
+  d = painterGrade(d);
   let l = luminance(d);
   d = mix(vec3f(l), d, P.saturation);
   d = (d - 0.5) * P.contrast + 0.5;
@@ -208,6 +261,17 @@ fn h21(p: vec2f) -> f32 { var q = fract(vec3f(p.xyx) * 0.1031); q += dot(q, q.yz
   var tgt = clamp(key / max(avg, 1e-6), 0.04, mix(40.0, 600.0, P.lift.w));
   // protect the highlights (by up to ~1.5 stops)
   tgt = max(min(tgt, 4.5 / exp2(hi)), tgt * 0.35);
+  // the white card (Seven Havens' eye): a level white card mapped to its place on the screen — by day it rises only
+  // slowly with the light (noon isn't a white sheet, an overcast isn't grey mush), by night a few stops under — so a
+  // painted sky, a bright cloud or a dark wall filling the frame doesn't swing the land's brightness
+  if (P.card > 0.0) {
+    let E = max(cardLight(), 1e-6);
+    let day = P.ex.x * pow(E / P.ex.z, 0.14);
+    let dark = P.ex.y * pow(E / P.ex.w, 0.16);
+    let card = exp(mix(log(day), log(dark), P.lift.w)) / E;
+    // (by night the scene's own brightness leads: a card held there lost the land and the cast in the dark)
+    tgt = exp(mix(log(tgt), log(card), P.card * (1.0 - 0.7 * P.lift.w)));
+  }
   let cur = expoOut[0];
   let dt = P.time - expoOut[1];
   let early = 1.0 - smoothstep(20.0, 90.0, expoOut[3]);

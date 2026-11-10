@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.1.16
+
+The Seven Havens look as loom's default: the air painted, the eye a white card's, the grade a painter's by the hour.
+Everything below is on by default with gentle settings; `atmo.look = AIR_PLAIN` with `film.card`, `split`, `rich`,
+`glow`, `halation` and `dusk` at 0 gives back 0.1.15's picture.
+
+- **The air as a painter takes it** (`Atmosphere.look: AirLook`, `AIR_DEFAULT`, `AIR_HAVENS`, `AIR_PLAIN`,
+  `AIR_PRESETS`, `airAt`; atmosphere.wgsl `Air`): the Rayleigh scattering leaned toward sea green (`tint`), a dust layer
+  pooled over low ground that follows the day (`dust`, `dustColor`, `dustBase`: the night's settled layer, dawn's
+  pooled one, the afternoon's golden haze), the sun's sky painted brighter than the air makes it and leaned with the hour
+  (`sky`, `skyTint`, `twilight`, `golden`: teal-ish by day, rose at golden hour, violet in the twilight), the far air
+  going toward the painted dome with distance (`farKm`, `farPaint`), the sky's light on the land kept near the air's own
+  and leaned lavender (`skyLight`, `shadeTint`, `shadeDawn`, `shadeGolden`), the haze over the land leaned at dawn and
+  golden hour (`hazeDawn`, `hazeGolden`), and the moon's sky navy (`night`). The Renderer's `update` sets the hour's air
+  each frame (pass `sun` for the sun's own direction; else it's taken from the key light by day). The static tables are
+  rebuilt when the dust or the lean moves.
+- **The eye as a white card's** (`film.card`, `dayCard`, `nightCard`, `cardNoon`, `cardNight`; post.wgsl `adapt`): a
+  level white card under the key light and the sky mapped to its place on the screen, blended (`card`, 0.3) with the
+  histogram adaptation, less of it by night — so a painted sky, a bright cloud or a dark wall filling the frame swings
+  the land's brightness less.
+- **The painter's grade** (`film.split`, `rich`, `glow`, `glowFrom`, `halation`, `dusk`; post.wgsl `painterGrade`): the
+  shadows toward lavender (indigo by night) and the highlights toward gold, most at golden hour; the reds and golds
+  richer; the glow on what's brighter on the screen than a knee (gold in the sun, lamps, fire); film's red halation; the
+  dusk's magenta-violet.
+- A shader of a game's own that reads `skySample` from the atmosphere's lighting pass sees the painted dome; the light
+  on the land (`lighting.sh`, `ambientAt`, `shIrradiance`) is the air's own, leaned by `shade`.
 
 - **Rainfall falls down**: `rainPlaced` took the fall away from each drop's spot instead of adding it, so the drops
   (their streaks drawn the right way up) rose from the ground and drifted upwind.

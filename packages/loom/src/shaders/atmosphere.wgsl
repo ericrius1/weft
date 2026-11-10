@@ -1,7 +1,24 @@
 // Physically based atmosphere (after Hillaire 2020), from waterbending: transmittance + multiple-scattering LUTs
 // (once), the sky-view LUT, aerial-perspective froxels and the scene's lighting block (every frame). Units: km.
+// The air as a painter takes it (`air`, world/sky.ts AirLook and airAt: from Seven Havens): the Rayleigh scattering
+// leaned toward sea green (0: the earth's blue), a dust layer pooled over low ground — warm in the light it scatters,
+// golden toward a low sun — the sun's sky painted brighter than the air makes it and leaned (the dome, and the far air
+// going to it with distance), while its light on the land stays near the air's own, leaned toward lavender (the
+// shadows go violet, not grey-blue); the haze over the land leaned (dawn's cool lavender, the evening's gold); the
+// moon's sky as the eye takes it (navy and indigo, not a dim day).
 #include "./globals"
 #include "./lighting"
+
+struct Air {
+  tint: vec4f,     // x the Rayleigh's lean toward sea green (0..1), y the dust's density over low ground (/km), z its scale
+                   // height (km), w the height (km) it's as dense as that up to
+  dust: vec4f,     // rgb the dust's single-scattering albedo (its colour), w -
+  paint: vec4f,    // rgb the sun's sky as painted (the dome's gain by channel), w how far off (km) the far air has most of it
+  shade: vec4f,    // rgb the sun's sky's light on the land (the ambient's gain by channel), w -
+  haze: vec4f,     // rgb the gain on the sun's light scattered in the air between the eye and a surface, w how much of
+                   // the dome's paint the far air takes (1: all of it, going to the dome with distance)
+  night: vec4f,    // rgb the moon's sky (its light in the air and on the land) as the eye takes it, w -
+}
 
 @group(2) @binding(0) var transTex: texture_2d<f32>;
 @group(2) @binding(1) var msTex: texture_2d<f32>;
@@ -10,6 +27,7 @@
 @group(2) @binding(4) var<storage, read_write> lightOut: Lighting;
 @group(2) @binding(5) var skyIn: texture_2d<f32>;
 @group(2) @binding(6) var heightIn: texture_2d<f32>;   // the terrain heights (mips): the mountains' shadow in the air
+@group(2) @binding(7) var<uniform> air: Air;
 const PR: f32 = 6360.0;
 const AR: f32 = 6460.0;
 const RAY_S: vec3f = vec3f(5.802e-3, 13.558e-3, 33.1e-3);
@@ -24,16 +42,20 @@ const SKW: u32 = 256u; const SKH: u32 = 128u;
 const APN: u32 = 32u;
 const AP_FAR: f32 = 48.0; // km covered by the froxel grid
 
-struct Med { scat: vec3f, mieS: f32, ext: vec3f };
+struct Med { scat: vec3f, mie: vec3f, ext: vec3f };
 fn medium(h: f32) -> Med {
   let hr = exp(-max(h, 0.0) / 8.0);
   // a little extra haze low down: mountain valleys are rarely perfectly clear
   let hm = exp(-max(h, 0.0) / 1.2) * world.haze;
   let ho = max(0.0, 1.0 - abs(h - 25.0) / 15.0);
+  // the dust: as dense as it is over the low ground anywhere lower, thinning above it; it takes more of the blue than it
+  // sends on (its albedo), so what it scatters is warm and what comes through it yellows
+  let dd = air.tint.y * exp(-max(h - air.tint.w, 0.0) / max(air.tint.z, 0.05));
   var m: Med;
-  m.scat = RAY_S * hr;
-  m.mieS = MIE_S * hm;
-  m.ext = RAY_S * hr + vec3f(MIE_E * hm) + OZ_A * ho;
+  // (the earth's Rayleigh coefficients leaned toward ones that scatter the greens nearly as much as the blues)
+  m.scat = mix(RAY_S, vec3f(3.4e-3, 20.5e-3, 19.0e-3), air.tint.x) * hr;
+  m.mie = vec3f(MIE_S * hm) + air.dust.rgb * dd;
+  m.ext = m.scat + vec3f(MIE_E * hm + dd) + OZ_A * ho;
   return m;
 }
 
@@ -124,7 +146,7 @@ fn multiScatMain(@builtin(global_invocation_id) id: vec3u) {
         let r = length(p);
         let up = p / r;
         let m = medium(r - PR);
-        let sc = m.scat + vec3f(m.mieS);
+        let sc = m.scat + m.mie;
         let Ts = getTrans(r - PR, dot(up, sunD));
         let S = Ts * sc / (4.0 * PI);
         let st = exp(-m.ext * dt);
@@ -156,6 +178,8 @@ fn skyDirFromUV(uv: vec2f) -> vec3f {
 }
 
 struct Scat { L: vec3f, T: vec3f };
+/** along a view ray: the sun's light scattered toward the eye (painted: the dome's gain), the moon's (as the eye takes
+ *  it), and what's left of the light behind */
 fn integrate(ro: vec3f, rd: vec3f, tLimit: f32, N: i32) -> Scat {
   let atm = raySphere(ro, rd, AR);
   let gnd = raySphere(ro, rd, PR);
@@ -184,8 +208,9 @@ fn integrate(ro: vec3f, rd: vec3f, tLimit: f32, N: i32) -> Scat {
     let muM = dot(up, world.moonDir);
     let Ts = getTrans(h, muS);
     let Tm = getTrans(h, muM);
-    var S = Ts * (m.scat * prS + m.mieS * pmS) * SUN_I + Tm * (m.scat * prM + m.mieS * pmM) * mI;
-    S += (getMS(h, muS) * SUN_I + getMS(h, muM) * mI) * (m.scat + vec3f(m.mieS));
+    let Ss = (Ts * (m.scat * prS + m.mie * pmS) + getMS(h, muS) * (m.scat + m.mie)) * SUN_I;
+    let Sm = (Tm * (m.scat * prM + m.mie * pmM) + getMS(h, muM) * (m.scat + m.mie)) * mI;
+    let S = Ss * air.paint.rgb + Sm * air.night.rgb;
     let st = exp(-m.ext * dt);
     L += T * (S - S * st) / max(m.ext, vec3f(1e-7));
     T *= st;
@@ -263,8 +288,12 @@ fn aerialMain(@builtin(global_invocation_id) id: vec3u) {
       let muS = dot(up, world.sunDir);
       let muM = dot(up, world.moonDir);
       let vis = airSunVis(frame.camPos + rd * (t * 1000.0), world.sunDir);
-      var S = getTrans(h, muS) * (m.scat * prS + m.mieS * pmS) * SUN_I * vis + getTrans(h, muM) * (m.scat * prM + m.mieS * pmM) * mI;
-      S += (getMS(h, muS) * SUN_I + getMS(h, muM) * mI) * (m.scat + vec3f(m.mieS));
+      // (the sun's share painted brighter with distance, as the dome is, and leaned as the haze is; the moon's as the
+      // eye takes it)
+      let far = 1.0 + (air.paint.rgb - 1.0) * (1.0 - exp(-t / max(air.paint.w, 0.1))) * air.haze.w;
+      let Ss = (getTrans(h, muS) * (m.scat * prS + m.mie * pmS) * vis + getMS(h, muS) * (m.scat + m.mie)) * SUN_I;
+      let Sm = (getTrans(h, muM) * (m.scat * prM + m.mie * pmM) + getMS(h, muM) * (m.scat + m.mie)) * mI;
+      let S = Ss * far * air.haze.rgb + Sm * air.night.rgb;
       let st = exp(-m.ext * dt);
       L += T * (S - S * st) / max(m.ext, vec3f(1e-7));
       T *= st;
@@ -281,6 +310,8 @@ fn skySample(d: vec3f) -> vec3f {
   let v = 0.5 + 0.5 * sign(el) * sqrt(abs(el) / (PI * 0.5));
   return textureSampleLevel(skyIn, samp_repeat, vec2f(az / TAU + 0.5, 1.0 - v), 0.0).rgb;
 }
+/** the sky's light on the land from a way: the dome as painted, taken back to the air's own and leaned as the shade is */
+fn skyLightFrom(d: vec3f) -> vec3f { return skySample(d) * air.shade.rgb / max(air.paint.rgb, vec3f(1e-3)); }
 
 @compute @workgroup_size(1)
 fn lightingMain() {
@@ -301,7 +332,7 @@ fn lightingMain() {
   // (under an overcast the light comes down from the deck's grey underside: a quarter of what reaches its top, brighter
   // overhead than toward the horizon)
   let oc = clamp(world.sky.x, 0.0, 1.0);
-  let deck = vec3f(0.25 * (luminance(key) * max(world.lightDir.y, 0.05) + luminance(skySample(vec3f(0.0, 1.0, 0.0))))) * vec3f(0.95, 0.98, 1.04);
+  let deck = vec3f(0.25 * (luminance(key) * max(world.lightDir.y, 0.05) + luminance(skyLightFrom(vec3f(0.0, 1.0, 0.0))))) * vec3f(0.95, 0.98, 1.04);
   let NA = 24; let NE = 12;
   let gAlb = vec3f(0.12, 0.11, 0.09);
   var wsum = 0.0;
@@ -314,7 +345,7 @@ fn lightingMain() {
       let ph = (f32(j) + 0.5) / f32(NA) * TAU;
       let d = vec3f(st * sin(ph), ct, -st * cos(ph));
       var L: vec3f;
-      if (ct > 0.0) { L = mix(skySample(d), deck * (0.55 + 0.45 * ct), oc); } else { L = gAlb * (key * max(world.lightDir.y, 0.0) * (1.0 - 0.8 * oc) + vec3f(0.0)); }
+      if (ct > 0.0) { L = mix(skyLightFrom(d), deck * (0.55 + 0.45 * ct), oc); } else { L = gAlb * (key * max(world.lightDir.y, 0.0) * (1.0 - 0.8 * oc) + vec3f(0.0)); }
       var b = array<f32, 9>(0.282095, 0.488603 * d.y, 0.488603 * d.z, 0.488603 * d.x, 1.092548 * d.x * d.y, 1.092548 * d.y * d.z,
                             0.315392 * (3.0 * d.z * d.z - 1.0), 1.092548 * d.x * d.z, 0.546274 * (d.x * d.x - d.y * d.y));
       for (var k = 0; k < 9; k++) { sh[k] += L * b[k]; }
