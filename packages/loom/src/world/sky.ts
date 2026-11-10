@@ -65,8 +65,8 @@ export interface AirLook {
  *  the land, its light on the land a little lavender, a golden dust low down in the afternoon, rose at golden hour, a
  *  violet twilight, a navy night */
 export const AIR_DEFAULT: AirLook = {
-  tint: 0.08, dust: 0.1, dustColor: [1.0, 0.82, 0.6], dustBase: 0.15,
-  sky: 1.45, skyTint: [0.94, 1.0, 0.97], farKm: 30, farPaint: 0.25, skyLight: 1.15, shadeTint: [1.04, 1.0, 1.16],
+  tint: 0.15, dust: 0.07, dustColor: [1.0, 0.94, 0.84], dustBase: 0.15,
+  sky: 2.2, skyTint: [0.88, 1.0, 0.92], farKm: 20, farPaint: 0.55, skyLight: 1.15, shadeTint: [1.06, 1.0, 1.28],
   twilight: [1.6, 1.0, 1.5], golden: [1.12, 0.94, 1.06], hazeDawn: [0.8, 0.88, 1.18], hazeGolden: [1.05, 1.0, 0.86],
   shadeDawn: [0.72, 0.88, 1.38], shadeGolden: [0.95, 0.97, 1.1], night: [0.45, 0.55, 1.5],
 };
@@ -106,7 +106,8 @@ export function airAt(hour: number, sunAlt: number, a: AirLook) {
   const deep = smooth(-15, -9, sunAlt) * (1 - smooth(-6, -2, sunAlt));
   const paint = mul3([1 + (a.sky - 1) * up, 1 + (a.sky - 1) * up, 1 + (a.sky - 1) * up], lean(a.skyTint, g), lean(a.twilight, tw), lean(a.golden, gold),
     [1 + 1.5 * deep * (a.sky > 1 ? 1 : 0), 1 + 1.5 * deep * (a.sky > 1 ? 1 : 0), 1 + 1.5 * deep * (a.sky > 1 ? 1 : 0)]);
-  const lit = smooth(-6, 10, sunAlt), low = smooth(-6, 2, sunAlt) * (1 - smooth(10, 22, sunAlt)), morning = h < 12;
+  // (the low sun's leans on the shade and the haze only in its last hour: an afternoon's air stays clear)
+  const lit = smooth(-6, 10, sunAlt), low = smooth(-6, 2, sunAlt) * (1 - smooth(5, 13, sunAlt)), morning = h < 12;
   const shade = mul3(lean([a.skyLight * a.shadeTint[0], a.skyLight * a.shadeTint[1], a.skyLight * a.shadeTint[2]], lit), lean(morning ? a.shadeDawn : a.shadeGolden, low));
   const haze = lean(morning ? a.hazeDawn : a.hazeGolden, low);
   return {

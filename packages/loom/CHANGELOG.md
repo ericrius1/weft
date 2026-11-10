@@ -4,7 +4,7 @@
 
 The Seven Havens look as loom's default: the air painted, the eye a white card's, the grade a painter's by the hour.
 Everything below is on by default with gentle settings; `atmo.look = AIR_PLAIN` with `film.card`, `split`, `rich`,
-`glow`, `halation` and `dusk` at 0 gives back 0.1.15's picture.
+`glow`, `halation`, `dusk`, `keepGreens` and `punch` at 0 gives back 0.1.15's picture.
 
 - **The air as a painter takes it** (`Atmosphere.look: AirLook`, `AIR_DEFAULT`, `AIR_HAVENS`, `AIR_PLAIN`,
   `AIR_PRESETS`, `airAt`; atmosphere.wgsl `Air`): the Rayleigh scattering leaned toward sea green (`tint`), a dust layer
@@ -16,14 +16,18 @@ Everything below is on by default with gentle settings; `atmo.look = AIR_PLAIN` 
   golden hour (`hazeDawn`, `hazeGolden`), and the moon's sky navy (`night`). The Renderer's `update` sets the hour's air
   each frame (pass `sun` for the sun's own direction; else it's taken from the key light by day). The static tables are
   rebuilt when the dust or the lean moves.
-- **The eye as a white card's** (`film.card`, `dayCard`, `nightCard`, `cardNoon`, `cardNight`; post.wgsl `adapt`): a
-  level white card under the key light and the sky mapped to its place on the screen, blended (`card`, 0.3) with the
-  histogram adaptation, less of it by night — so a painted sky, a bright cloud or a dark wall filling the frame swings
-  the land's brightness less.
+- **The eye as a white card's** (`film.card`, `dayCard`, `nightCard`, `cardNoon`, `cardNight`, `cardRise`,
+  `cardRiseNight`; post.wgsl `adapt`): a level white card under the key light and the sky mapped to its place on the
+  screen, leading the exposure by day (`card`, 0.85; the histogram the rest, and most of it by night) — so a painted
+  sky, a bright cloud or a dark wall filling the frame doesn't swing the land's brightness. `cardRise` is how fast the
+  card's place rises with the light: Seven Havens' 0.14 keeps its noon from being a white sheet over red sandstone; the
+  default 0.7 keeps a green land about as bright through the day, half a stop over 0.1.15's in the afternoon.
 - **The painter's grade** (`film.split`, `rich`, `glow`, `glowFrom`, `halation`, `dusk`; post.wgsl `painterGrade`): the
   shadows toward lavender (indigo by night) and the highlights toward gold, most at golden hour; the reds and golds
   richer; the glow on what's brighter on the screen than a knee (gold in the sun, lamps, fire); film's red halation; the
   dusk's magenta-violet.
+- **Seven Havens' punch and the greens kept** (`film.punch`, 0.3: its AgX look, a firmer curve and richer colour;
+  `film.keepGreens`, 0.7: how much of the grass's green the grade keeps — 0.1.15 calmed the yellow-greens by 30%).
 - A shader of a game's own that reads `skySample` from the atmosphere's lighting pass sees the painted dome; the light
   on the land (`lighting.sh`, `ambientAt`, `shIrradiance`) is the air's own, leaned by `shade`.
 
