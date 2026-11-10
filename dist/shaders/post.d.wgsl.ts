@@ -96,6 +96,7 @@ export interface Post {
   look: Vec4;
   uw: Vec4;
   ex: Vec4;
+  ex2: Vec4;
   hv: Vec4;
   hv2: Vec4;
 }

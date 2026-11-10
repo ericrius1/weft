@@ -17,9 +17,13 @@ struct Post {
   uw: vec4f,       // under water: x the glow's spread, y the vignette, z exposure lift (stops), w how far under
   ex: vec4f,       // the white card: x its place on the screen by day, y by a moonlit night (pre-tone-map: 1 white), z the
                    // card's light at noon, w on a moonlit night (its radiance: the lighting block's units)
+  ex2: vec4f,      // the white card: x how fast its place rises with the light by day (Seven Havens' 0.14: slowly), y by
+                   // night, zw -
   hv: vec4f,       // the painter's grade (Seven Havens'): x the warm-cool split by the time of day, y the reds' and golds'
                    // richness, z the glow on what's bright, w the brightness on the screen it glows from
-  hv2: vec4f,      // x halation (film's red glow round highlights), y the dusk's magenta-violet, zw -
+  hv2: vec4f,      // x halation (film's red glow round highlights), y the dusk's magenta-violet, z how much of the
+                   // grass's green the grade keeps (0: calmed, 1: as it is), w the punch (Seven Havens' AgX look: a firmer
+                   // curve and richer colour)
 }
 @group(2) @binding(0) var<uniform> P: Post;
 @group(2) @binding(1) var src: texture_2d<f32>;
@@ -132,7 +136,7 @@ fn filmGrade(d0: vec3f, amt: f32) -> vec3f {
   var d = d0;
   let l = luminance(d);
   let h = hue01(d);
-  let yg = (1.0 - smoothstep(0.0, 0.09, abs(h - 0.215))) * (1.0 - smoothstep(0.55, 0.85, l)) * (1.0 - P.lift.w);
+  let yg = (1.0 - smoothstep(0.0, 0.09, abs(h - 0.215))) * (1.0 - smoothstep(0.55, 0.85, l)) * (1.0 - P.lift.w) * (1.0 - P.hv2.z);
   let bl = 1.0 - smoothstep(0.0, 0.07, abs(h - 0.64));
   let cy = 1.0 - smoothstep(0.0, 0.06, abs(h - 0.49));
   let sat0 = 1.0 - 0.3 * yg - 0.1 * bl - 0.16 * cy * (1.0 - P.uw.w);
@@ -211,6 +215,12 @@ fn h21(p: vec2f) -> f32 { var q = fract(vec3f(p.xyx) * 0.1031); q += dot(q, q.yz
   c = mix(c, vec3f(lum0) * vec3f(0.62, 0.78, 1.15), scot * 0.75);
   c *= vec3f(1.0 + P.warmth * 0.1, 1.0, 1.0 - P.warmth * 0.1);
   var d = select(filmGrade(agxFilm(c), P.look.w), vividTone(c), P.look.x < 0.5);
+  // the punch (Seven Havens' agxLook): the curve firmer, the colour richer about its luminance
+  if (P.hv2.w > 0.0) {
+    let o = pow(max(d, vec3f(0.0)), vec3f(mix(1.0, 1.25, P.hv2.w)));
+    let lo = luminance(o);
+    d = lo + mix(1.0, 1.35, P.hv2.w) * (o - lo);
+  }
   d = painterGrade(d);
   let l = luminance(d);
   d = mix(vec3f(l), d, P.saturation);
@@ -266,8 +276,8 @@ fn h21(p: vec2f) -> f32 { var q = fract(vec3f(p.xyx) * 0.1031); q += dot(q, q.yz
   // painted sky, a bright cloud or a dark wall filling the frame doesn't swing the land's brightness
   if (P.card > 0.0) {
     let E = max(cardLight(), 1e-6);
-    let day = P.ex.x * pow(E / P.ex.z, 0.14);
-    let dark = P.ex.y * pow(E / P.ex.w, 0.16);
+    let day = P.ex.x * pow(E / P.ex.z, P.ex2.x);
+    let dark = P.ex.y * pow(E / P.ex.w, P.ex2.y);
     let card = exp(mix(log(day), log(dark), P.lift.w)) / E;
     // (by night the scene's own brightness leads: a card held there lost the land and the cast in the dark)
     tgt = exp(mix(log(tgt), log(card), P.card * (1.0 - 0.7 * P.lift.w)));

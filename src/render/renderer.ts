@@ -196,12 +196,17 @@ export class Renderer {
     /** the eye's exposure as a white card's (0..1: how much; the rest the scene's own brightness, histogram-adapted): a
      *  level white card mapped to `dayCard` on the screen by day (pre-tone-map), `nightCard` on a moonlit night — what
      *  the card's light is at noon and by such a night (`cardNoon`, `cardNight`: the lighting block's radiance) — so a
-     *  painted sky or a dark wall filling the frame doesn't swing the land's brightness (Seven Havens' eye) */
-    card: 0.3, dayCard: 0.5, nightCard: 0.2, cardNoon: 6, cardNight: 0.24,
+     *  painted sky or a dark wall filling the frame doesn't swing the land's brightness (Seven Havens' eye). How fast the
+     *  card's place rises with the light (`cardRise`: Seven Havens' 0.14 keeps noon from being a white sheet; 0.7 keeps
+     *  a green land as bright through the day) */
+    card: 0.85, dayCard: 3.0, nightCard: 0.18, cardNoon: 3.7, cardNight: 0.24, cardRise: 0.7, cardRiseNight: 0.16,
     /** the painter's grade (Seven Havens'): the warm-cool split by the time of day (shadows lavender, highlights gold,
      *  most at golden hour), the reds' and golds' richness, the glow on what's bright (its strength, and the brightness
      *  on the screen it glows from), film's red halation, the dusk's magenta-violet. 0 leaves each out */
     split: 0.5, rich: 0.2, glow: 0.18, glowFrom: 0.9, halation: 0.05, dusk: 1,
+    /** how much of the grass's green the grade keeps (0: the yellow-greens calmed, 0.1.15's), and the punch (Seven
+     *  Havens' AgX look: a firmer curve, richer colour) */
+    keepGreens: 0.7, punch: 0.3,
     /** the grade's lift (added to the shadows) and gain (the highlights' multiplier), per channel */
     lift: [0, 0, 0] as V3, gain: [1, 1, 1] as V3 };
   /** the lens after the grade (off unless on): halation (strength, radius px at 1080, threshold, warmth), chromatic
@@ -426,7 +431,7 @@ export class Renderer {
       exposure: f.exposure * (1 + this.inCloud.lift * this.clouds.inside), bloom: f.bloom * (1 + 0.6 * o.night), bloomThreshold: 0, saturation: f.saturation, contrast: f.contrast,
       warmth: f.warmth, vignette: f.vignette * (1 - this.inCloud.vignette * this.clouds.inside), grain: f.grain, time: o.time, autoExposure: f.autoExposure, first: 0, card: f.card,
       lift: [f.lift[0], f.lift[1], f.lift[2], o.night], gain: [f.gain[0], f.gain[1], f.gain[2], 1], look: [f.vivid ? 0 : 1, f.bloomWide, 1 / norm, f.splitTone], uw: [o.under * 0.6, o.under * 0.5, o.under * 0.3, o.under],
-      ex: [f.dayCard, f.nightCard, f.cardNoon, f.cardNight], hv: [f.split, f.rich, f.glow, f.glowFrom], hv2: [f.halation, f.dusk, 0, 0],
+      ex: [f.dayCard, f.nightCard, f.cardNoon, f.cardNight], ex2: [f.cardRise, f.cardRiseNight, 0, 0], hv: [f.split, f.rich, f.glow, f.glowFrom], hv2: [f.halation, f.dusk, f.keepGreens, f.punch],
     };
     this.post.set(p);
     this.postFirst.set({ ...p, first: 1 });

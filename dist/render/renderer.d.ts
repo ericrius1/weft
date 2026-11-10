@@ -233,12 +233,16 @@ export declare class Renderer {
         /** the eye's exposure as a white card's (0..1: how much; the rest the scene's own brightness, histogram-adapted): a
          *  level white card mapped to `dayCard` on the screen by day (pre-tone-map), `nightCard` on a moonlit night — what
          *  the card's light is at noon and by such a night (`cardNoon`, `cardNight`: the lighting block's radiance) — so a
-         *  painted sky or a dark wall filling the frame doesn't swing the land's brightness (Seven Havens' eye) */
+         *  painted sky or a dark wall filling the frame doesn't swing the land's brightness (Seven Havens' eye). How fast the
+         *  card's place rises with the light (`cardRise`: Seven Havens' 0.14 keeps noon from being a white sheet; 0.7 keeps
+         *  a green land as bright through the day) */
         card: number;
         dayCard: number;
         nightCard: number;
         cardNoon: number;
         cardNight: number;
+        cardRise: number;
+        cardRiseNight: number;
         /** the painter's grade (Seven Havens'): the warm-cool split by the time of day (shadows lavender, highlights gold,
          *  most at golden hour), the reds' and golds' richness, the glow on what's bright (its strength, and the brightness
          *  on the screen it glows from), film's red halation, the dusk's magenta-violet. 0 leaves each out */
@@ -248,6 +252,10 @@ export declare class Renderer {
         glowFrom: number;
         halation: number;
         dusk: number;
+        /** how much of the grass's green the grade keeps (0: the yellow-greens calmed, 0.1.15's), and the punch (Seven
+         *  Havens' AgX look: a firmer curve, richer colour) */
+        keepGreens: number;
+        punch: number;
         /** the grade's lift (added to the shadows) and gain (the highlights' multiplier), per channel */
         lift: V3;
         gain: V3;
