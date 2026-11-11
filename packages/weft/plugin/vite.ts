@@ -26,6 +26,9 @@ export interface WeftOptions {
   typesFrom?: string;
   /** write .d.wgsl.ts declarations next to the app's shaders (default true; never inside node_modules) */
   types?: boolean;
+  /** the browser given each shader's comment-free code, only what its entry points reach (plugin/lean.ts), so a
+   *  change elsewhere in an included file leaves its pipelines in the browser's cache. Default true */
+  lean?: boolean;
 }
 
 export const PACKAGE = '@ericrius1/weft';
@@ -63,7 +66,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
   const mtime = (f: string) => { try { return statSync(f).mtimeMs; } catch { return -1; } };
   const typesFrom = opts.typesFrom ?? PACKAGE;
   const runtime = opts.runtime ?? `${PACKAGE}/runtime`;
-  const compile = (file: string) => compileWgsl(file, { root, libs });
+  const compile = (file: string) => compileWgsl(file, { root, libs, lean: opts.lean });
   const declare = (file: string, s: CompiledShader) => {
     if (opts.types === false || file.includes('/node_modules/')) return;
     writeDeclaration(file, s, typesFrom);
