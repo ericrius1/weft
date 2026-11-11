@@ -11,7 +11,7 @@ export { Input, PAD, type Device } from './input';
 export * from './math';
 export { Painter, Atlas, atlasOf, hex, withAlpha, scaleColor, type Color, type Sprite, type PainterOptions } from './painter';
 export { MipChain } from './mipgen';
-export { MeshBuilder, packColor, VERTEX_BYTES, type GpuMesh } from './mesh';
+export { MeshBuilder, packColor, triangulate, VERTEX_BYTES, type GpuMesh } from './mesh';
 export { blueNoise, blueNoiseTexture } from './bluenoise';
 export { Capture } from './capture';
 export { Fulldome, type FulldomeOptions } from './dome';

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`triangulate`** is exported from the package (the ear clipping MeshBuilder's polygons use): a footprint or a
+  river's outline triangulated for a roof or a surface (Dublin's district), no copy in the project.
 - **`AGENTS.md`**, shipped in the package (`node_modules/@ericrius1/weft/AGENTS.md`): a guide for coding agents in the
   projects. It covers the kit, loom's renderer and cast on one page: the model, setup, every call with its options, the WGSL
   side (group 0, reversed-Z, uv, includes, the shared helpers), the rules that cost hours (an uncompiled draw is
