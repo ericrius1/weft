@@ -1,0 +1,1 @@
+{"version":3,"file":"lean.d.ts","sourceRoot":"","sources":["../../plugin/lean.ts"],"names":[],"mappings":"AAqBA,gGAAgG;AAChG,wBAAgB,aAAa,CAAC,IAAI,EAAE,MAAM,GAAG,MAAM,CAyBlD;AAoJD,6EAA6E;AAC7E,wBAAgB,QAAQ,CAAC,IAAI,EAAE,MAAM,EAAE,IAAI,EAAE,MAAM,EAAE,GAAG;IAAE,IAAI,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,MAAM,EAAE,CAAA;CAAE,CAuCvF"}

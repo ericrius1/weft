@@ -15,6 +15,7 @@
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, relative, sep } from 'node:path';
 import { WgslReflect, WgslParser } from 'wgsl_reflect/wgsl_reflect.module.js';
+import { leanWgsl } from './lean.js';
 
 export interface FieldLayout {
   name: string; offset: number; size: number;
@@ -51,7 +52,12 @@ export interface CompiledShader {
   reflect: ShaderReflection;
 }
 
-export interface CompileOptions { root: string; libs: Record<string, string> }
+export interface CompileOptions {
+  root: string; libs: Record<string, string>;
+  /** the browser given only the comment-free code its entry points reach (lean.ts: a change elsewhere in an included
+   *  file then leaves its compiled pipelines in the browser's cache). Default true */
+  lean?: boolean;
+}
 
 export class WgslError extends Error {}
 
@@ -271,7 +277,9 @@ export function compileWgsl(file: string, opts: CompileOptions): CompiledShader 
   }
   const id = relative(opts.root, file).split(sep).join('/');
   const label = id.split('/').pop()!.replace(/\.wgsl$/, '');
-  return { id, label, code: pre.code, files: pre.files, runs: pre.runs, includes: pre.includes, reflect };
+  // (reflected whole, for the struct layouts and their tweak comments; the browser gets the lean code: lean.ts)
+  const lean = opts.lean === false ? { code: pre.code, runs: pre.runs } : leanWgsl(pre.code, pre.runs);
+  return { id, label, code: lean.code, files: pre.files, runs: lean.runs, includes: pre.includes, reflect };
 }
 
 // ---------------------------------------------------------------- generated declarations

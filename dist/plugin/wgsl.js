@@ -15,6 +15,7 @@
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, relative, sep } from 'node:path';
 import { WgslReflect, WgslParser } from 'wgsl_reflect/wgsl_reflect.module.js';
+import { leanWgsl } from './lean.js';
 export class WgslError extends Error {
 }
 const INCLUDE = /^\s*#include\s+"([^"]+)"\s*;?\s*(\/\/.*)?$/;
@@ -286,7 +287,9 @@ export function compileWgsl(file, opts) {
     }
     const id = relative(opts.root, file).split(sep).join('/');
     const label = id.split('/').pop().replace(/\.wgsl$/, '');
-    return { id, label, code: pre.code, files: pre.files, runs: pre.runs, includes: pre.includes, reflect };
+    // (reflected whole, for the struct layouts and their tweak comments; the browser gets the lean code: lean.ts)
+    const lean = opts.lean === false ? { code: pre.code, runs: pre.runs } : leanWgsl(pre.code, pre.runs);
+    return { id, label, code: lean.code, files: pre.files, runs: lean.runs, includes: pre.includes, reflect };
 }
 // ---------------------------------------------------------------- generated declarations
 function tsType(t, structs, f) {

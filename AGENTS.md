@@ -177,6 +177,15 @@ down −z, and positive yaw turns left.
   convention of `worldFromDepth` and `viewRay`.
 - **Variants are `override` constants**, set per draw or compute with `constants: { NAME: 1 }` (booleans as 0 or 1).
   Don't build WGSL source strings. Pipelines that differ only in their label share one compile.
+- **The browser gets lean code** (`plugin/lean.ts`): no comments, only what the module's entry points reach, and a
+  uniform-only struct cut after the last field it reads. Browsers cache compiled pipelines keyed on that code (Chrome
+  on the exact text), so a comment, an unused function or a new field in a shared include no longer recompiles every
+  shader that includes it. A code line that's kept is kept exactly, so a runtime `code.replace` of a whole line still
+  works. `weft({ lean: false })` sends the whole text.
+- **Chrome keeps ~6 MB of compiled pipelines per site.** Past that, every load evicts what the next one needs and
+  compiles it again (San Francisco's load writes ~21 MB: each warm desktop load recompiled ~100 pipelines). What fills
+  it: each pipeline's generated code, so every override variant and every shared function a shader reaches counts.
+  Keep a project's first frame, and ideally its whole load, under that.
 - **Bind by name**: `bind` keys are the WGSL variable names. A name the shader doesn't declare throws a `BindError`
   that lists the names it does have. Only the bindings an entry point actually uses go into its layout, so a binding
   you've commented out doesn't break anything, and a used binding that isn't provided fails loudly. The reflection

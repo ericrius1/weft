@@ -8,6 +8,9 @@ export interface WeftOptions {
     typesFrom?: string;
     /** write .d.wgsl.ts declarations next to the app's shaders (default true; never inside node_modules) */
     types?: boolean;
+    /** the browser given each shader's comment-free code, only what its entry points reach (plugin/lean.ts), so a
+     *  change elsewhere in an included file leaves its pipelines in the browser's cache. Default true */
+    lean?: boolean;
 }
 export declare const PACKAGE = "@ericrius1/weft";
 /** this package's own shader library (dist/plugin/vite.js → shaders/) */

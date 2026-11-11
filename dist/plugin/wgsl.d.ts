@@ -69,6 +69,9 @@ export interface CompiledShader {
 export interface CompileOptions {
     root: string;
     libs: Record<string, string>;
+    /** the browser given only the comment-free code its entry points reach (lean.ts: a change elsewhere in an included
+     *  file then leaves its compiled pipelines in the browser's cache). Default true */
+    lean?: boolean;
 }
 export declare class WgslError extends Error {
 }
