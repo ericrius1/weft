@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased (draft: world/hands-look 915f3b8..2db18aa on 0.6.1)
+## Unreleased (draft: world/hands-look 915f3b8..ca97fbe on 0.6.1)
+
+Scope (what moves for a caller on 0.6.1): a built hand WITH `HandGoal.prior` (the pianist: `Pianist.forHand`) — its
+fingers, its palm and its ARMS (up to 11 cm through World's duet); any `Pianist` (approach, rise and way over, `after`:
+castbench's play mode without forHand moves too); `grasp('bow')` and `BOW`/`BOWREST` (the fiddler's bow arm 8-9 cm through
+the song). A built hand without the prior (pointing, plain tips, palmFree tips, a floor without prior) is bit-identical to
+0.6.1 (ca97fbe: the pianist's per-finger rests, their weight and the thumb's eased rests had leaked to it; test
+keysrules.test.mjs).
+- **The pianist from above** (f59ffc9, 601bfbe): `Pianist.forHand` puts the fingertips on a white key where real ones land
+  (from overhead footage: index 49, middle 63, ring 53, little 35 mm in from the front edge), new `deepIn` among the black
+  keys and `blackAlong` on them; how far among the black keys a hand is now eased on the clock (0.25 s).
 
 - **`BOW` and `BOWREST` change value** (exported constants): the bow hold refitted from hand-marked frog photographs with
   the right hand's chirality — rests 34/66/5, 55/54/10, 60/52/20, 45/51/25 deg, spreads +3/-2/-12/-27. New export
