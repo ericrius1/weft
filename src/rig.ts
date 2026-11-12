@@ -605,13 +605,19 @@ interface Capsule { a: V3; b: V3; r: number }
 /** p out of a capsule; given where it was a step before (`from`), out that side (through the middle it would come out
  *  the far side: a jump across a leg in a step) */
 function capPush(p: V3, c: Capsule, from?: V3) {
-  const ab = sub(c.b, c.a);
-  const t = clamp(dot(sub(p, c.a), ab) / Math.max(dot(ab, ab), 1e-9), 0, 1);
-  const q = add(c.a, scale(ab, t));
-  let d = sub(p, q), l = len(d);
+  // (in plain numbers: a body's chains ask this of every capsule for every point five times a frame — as vectors it
+  // was six arrays a call, the cast's most garbage by far)
+  const a = c.a, b = c.b;
+  const abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
+  const t = clamp(((p[0] - a[0]) * abx + (p[1] - a[1]) * aby + (p[2] - a[2]) * abz) / Math.max(abx * abx + aby * aby + abz * abz, 1e-9), 0, 1);
+  const qx = a[0] + abx * t, qy = a[1] + aby * t, qz = a[2] + abz * t;
+  let dx = p[0] - qx, dy = p[1] - qy, dz = p[2] - qz, l = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (l >= c.r) return;
-  if (from) { const e = sub(from, q), el = len(e); if (dot(e, d) < 0 && el > 1e-6) { d = e; l = el; } }
-  if (l > 1e-6) { const k = c.r / l; p[0] = q[0] + d[0] * k; p[1] = q[1] + d[1] * k; p[2] = q[2] + d[2] * k; }
+  if (from) {
+    const ex = from[0] - qx, ey = from[1] - qy, ez = from[2] - qz, el = Math.sqrt(ex * ex + ey * ey + ez * ez);
+    if (ex * dx + ey * dy + ez * dz < 0 && el > 1e-6) { dx = ex; dy = ey; dz = ez; l = el; }
+  }
+  if (l > 1e-6) { const k = c.r / l; p[0] = qx + dx * k; p[1] = qy + dy * k; p[2] = qz + dz * k; }
 }
 class Chain {
   p: V3[]; pp: V3[]; rest: number[];
@@ -648,14 +654,14 @@ class Chain {
     for (let it = 0; it < 5; it++) {
       for (let i = 0; i < n - 1; i++) {
         const a = P[i], b = P[i + 1];
-        const d = sub(b, a);
-        const l = len(d) || 1e-6;
+        const d0 = b[0] - a[0], d1 = b[1] - a[1], d2 = b[2] - a[2];
+        const l = Math.sqrt(d0 * d0 + d1 * d1 + d2 * d2) || 1e-6;
         const k = (l - this.rest[i]) / l;
-        if (i === 0) { b[0] -= d[0] * k; b[1] -= d[1] * k; b[2] -= d[2] * k; }
-        else { const h = k * 0.5; a[0] += d[0] * h; a[1] += d[1] * h; a[2] += d[2] * h; b[0] -= d[0] * h; b[1] -= d[1] * h; b[2] -= d[2] * h; }
+        if (i === 0) { b[0] -= d0 * k; b[1] -= d1 * k; b[2] -= d2 * k; }
+        else { const h = k * 0.5; a[0] += d0 * h; a[1] += d1 * h; a[2] += d2 * h; b[0] -= d0 * h; b[1] -= d1 * h; b[2] -= d2 * h; }
       }
       for (let i = 1; i < n; i++) {
-        for (const c of caps) capPush(P[i], c, PP[i]);
+        for (let c = 0; c < caps.length; c++) capPush(P[i], caps[c], PP[i]);
         const g = ground(P[i][0], P[i][2]) + 0.01;
         if (P[i][1] < g) P[i][1] = g;
         if (P[i][1] < surf) P[i][1] += (surf - P[i][1]) * 0.35;

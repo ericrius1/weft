@@ -72,6 +72,18 @@ export interface Playable {
 }
 /** the grand piano as a Playable: the bench, the keys' tops, the sounding notes, the sustain pedal */
 export declare function pianoPlayable(m: PianoGeometry, piano: PianoSound): Playable;
+/** a scored note as a clocked pianist plays it: its hand (0 left) and finger (0 thumb .. 4 pinky), its key's place
+ *  along the keyboard, its stroke's landing (t0, the note's second), and when the finger lets it go (`up`: its hold,
+ *  cut short to lift before that finger's next stroke) */
+export interface Struck {
+    note: number;
+    t0: number;
+    t1: number;
+    hand: 0 | 1;
+    finger: number;
+    x: number;
+    up: number;
+}
 export declare class Pianist {
     inst: Playable | null;
     /** how far she's sat down (0..1), and whether she's on her way to the seat or getting up */
@@ -119,13 +131,24 @@ export declare class Pianist {
     noteOn: ((note: number, vel: number) => void) | null;
     noteOff: ((note: number) => void) | null;
     pedalSet: ((down: boolean) => void) | null;
+    /** on a clock (playScore's `clock`): the piece as planned — every note's stroke; any note that had to be simplified
+     *  (said, never dropped); which fingers have a key to play this frame (only these steer the palm) */
+    struck: Struck[];
+    simplified: string[];
+    active: boolean[][];
+    private clock;
+    private byFinger;
+    private path;
     sit(inst: Playable, from: V3, yaw: number): void;
     stand(): void;
     /** where to step on getting up: the first of the instrument's spots with room enough round it, else the most open
      *  of them, or back where she came from (through the seat) only if that's more open still by a way */
     private away;
-    /** let her play a piece by herself (the score's times from now) */
-    playScore(score: Score): void;
+    /** let her play a piece by herself: by default its times from now, on the frames' dt; with `clock` (the score's second
+     *  now: an audio transport's, a film's), planned whole and posed from the clock (sit() first: it needs the keys) */
+    playScore(score: Score, o?: {
+        clock?: () => number;
+    }): void;
     stopScore(): void;
     get playingScore(): boolean;
     /** the keyboard's middle, as a coordinate along it */
@@ -150,6 +173,15 @@ export declare class Pianist {
     private holdable;
     /** the hands' goals: each hand's place over the keys and each finger's tip */
     private plan;
+    private along;
+    /** the whole piece planned: hands, fingers, strokes, each hand's places */
+    private planScore;
+    /** a hand's centre at second s: eased from one place to the next, arriving TRAVEL_END before the note it's for */
+    private handAt;
+    /** a finger's stroke at second s: its note (null: resting) and its tip's height over the key's top (m) */
+    private stroke;
+    /** the hands' goals at the clock's second s */
+    private planAt;
 }
 /** (Boulder's name for it) */
 export { Pianist as Performer };

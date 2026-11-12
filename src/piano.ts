@@ -9,6 +9,15 @@
 // instrument; anything else exposing a Playable (a keyboard, a marimba — strings would add their own "press" points) is
 // played the same way.
 //
+// On a score's clock (playScore(score, { clock })): the whole piece is planned once instead — every note a hand and a
+// finger (a chord too wide for one hand shares its outer note with the other; a note neither can reach is still given
+// a finger and listed in `simplified`, never dropped), each hand's travel from the score's look-ahead so it's there
+// before the note, and every finger's height a stroke on the clock (strike.ts's anticipation, contact and release at a
+// finger's scale): over its key, a fall that quickens onto it landing on the note's second, through the key's travel,
+// up as it's let go — and a key struck again let up first, so a repeated note or chord is struck on its beat. The
+// pose is then a function of the clock's second, not of the frames before it: the caller schedules the sound ahead
+// on the audio clock (`struck` says which finger lands when) and a frame shows the finger on the key it hears.
+//
 // (@ericrius1/cast: Boulder's hero/perform.ts, its Performer named Pianist here — `Performer` is kept as an alias — and
 // the piano, sound and score it reads given as the shapes it needs of them, so any project's keyboard can be one.)
 import { type V3, add, sub, scale, dot, norm, clamp, lerp, damp, cdSpring } from './math.js';
@@ -81,6 +90,19 @@ export function pianoPlayable(m: PianoGeometry, piano: PianoSound): Playable {
 
 /** finger rest offsets along the keys from the hand's centre (thumb to pinky), for the right hand (the left mirrored) */
 const SPREAD = [-0.05, -0.024, 0, 0.0235, 0.046];
+/** on a clock: where a cast hand's fingertips rest from its palm's middle along the keys (thumb to pinky, the right
+ *  hand: measured on the rig — the thumb tucked under the index, the reach about 3 cm either side), a hover over a key,
+ *  its fall (s), how far ahead of the fall a finger goes over its key (s), its lift between strokes (s), how far ahead
+ *  of its note a hand is in place (s), the longest a hand moves for (s), the widest chord one hand takes (m), the
+ *  pad's thickness under the tip's joint (m), and how far ahead of its note's second a stroke lands (s: a rig's
+ *  fingertip follows its goal about a frame behind) — tuned against a seated cast body in a 60 fps harness */
+const SLOTS = [-0.028, -0.023, -0.007, 0.010, 0.029];
+const HOVER = 0.014, FALL = 0.1, REACH = 0.2, LIFT = 0.075, TRAVEL_END = 0.08, TRAVEL_MAX = 0.3, SPAN = 0.06, PAD = 0.004, LAND = 0.004;
+
+/** a scored note as a clocked pianist plays it: its hand (0 left) and finger (0 thumb .. 4 pinky), its key's place
+ *  along the keyboard, its stroke's landing (t0, the note's second), and when the finger lets it go (`up`: its hold,
+ *  cut short to lift before that finger's next stroke) */
+export interface Struck { note: number; t0: number; t1: number; hand: 0 | 1; finger: number; x: number; up: number }
 
 interface HandPlan { x: number; xv: number; notes: Map<number, number> }
 
@@ -131,6 +153,14 @@ export class Pianist {
   noteOn: ((note: number, vel: number) => void) | null = null;
   noteOff: ((note: number) => void) | null = null;
   pedalSet: ((down: boolean) => void) | null = null;
+  /** on a clock (playScore's `clock`): the piece as planned — every note's stroke; any note that had to be simplified
+   *  (said, never dropped); which fingers have a key to play this frame (only these steer the palm) */
+  struck: Struck[] = [];
+  simplified: string[] = [];
+  active: boolean[][] = [[false, false, false, false, false], [false, false, false, false, false]];
+  private clock: (() => number) | null = null;
+  private byFinger: Struck[][][] = [[[], [], [], [], []], [[], [], [], [], []]];
+  private path: { t: number; x: number }[][] = [[], []];
 
   sit(inst: Playable, from: V3, yaw: number) {
     this.inst = inst;
@@ -168,14 +198,23 @@ export class Pianist {
     return best;
   }
 
-  /** let her play a piece by herself (the score's times from now) */
-  playScore(score: Score) { this.score = score; this.scoreT = -0.6; this.scoreNext = 0; this.pedalNext = 0; }
+  /** let her play a piece by herself: by default its times from now, on the frames' dt; with `clock` (the score's second
+   *  now: an audio transport's, a film's), planned whole and posed from the clock (sit() first: it needs the keys) */
+  playScore(score: Score, o: { clock?: () => number } = {}) {
+    this.score = score; this.scoreT = -0.6; this.scoreNext = 0; this.pedalNext = 0;
+    this.clock = o.clock ?? null;
+    this.struck = [];
+    if (this.clock) this.planScore(score);
+  }
   stopScore() {
     if (!this.score) return;
     this.offs.length = 0;
     for (let n = 21; n <= 108; n++) this.noteOff?.(n);
     this.pedalSet?.(false);
     this.score = null;
+    // (and off the clock: the hands back on the frames' dt, not miming the rest of the piece unheard)
+    this.clock = null;
+    this.struck = [];
   }
   get playingScore() { return !!this.score; }
 
@@ -221,13 +260,14 @@ export class Pianist {
       if (this.w < 0.45) this.out = Math.min(1, this.out + dt / 0.6);
       if (this.w <= 0 && this.out >= 1) { this.state = 'idle'; this.inst = null; return null; }
     }
-    if (this.score && this.state === 'seated') this.stepScore(dt, audioNow);
-    return { pelvis: I.seat.pelvis, yaw: I.seat.yaw, feet: I.seat.feet, hands: this.plan(dt), look: I.look, lean: 0.2, w: this.w };
+    const clocked = this.clock && this.struck.length ? this.clock() : null;
+    if (this.score && this.state === 'seated') this.stepScore(dt, audioNow, clocked);
+    return { pelvis: I.seat.pelvis, yaw: I.seat.yaw, feet: I.seat.feet, hands: clocked !== null ? this.planAt(clocked) : this.plan(dt), look: I.look, lean: 0.2, w: this.w };
   }
 
-  private stepScore(dt: number, now: number) {
+  private stepScore(dt: number, now: number, clocked: number | null = null) {
     const S = this.score!;
-    this.scoreT += dt;
+    this.scoreT = clocked ?? this.scoreT + dt;
     while (this.scoreNext < S.notes.length && S.notes[this.scoreNext].t0 <= this.scoreT) {
       const n = S.notes[this.scoreNext++];
       this.noteOn?.(n.note, n.vel);
@@ -235,7 +275,8 @@ export class Pianist {
       this.offs.push({ t: n.t0 + Math.max(0.06, n.t1 - n.t0), note: n.note });
     }
     for (let i = this.offs.length - 1; i >= 0; i--) if (this.offs[i].t <= this.scoreT) { this.noteOff?.(this.offs[i].note); this.offs.splice(i, 1); }
-    while (this.pedalNext < S.pedal.length && S.pedal[this.pedalNext].t <= this.scoreT) this.pedalSet?.(S.pedal[this.pedalNext++].down);
+    // (the index moved outside the call: inside `pedalSet?.(…)` it was skipped with no callback, and this looped forever)
+    while (this.pedalNext < S.pedal.length && S.pedal[this.pedalNext].t <= this.scoreT) { const p = S.pedal[this.pedalNext++]; this.pedalSet?.(p.down); }
     if (this.scoreT > S.duration) this.stopScore();
     void now;
   }
@@ -247,13 +288,16 @@ export class Pianist {
       const e: V3 = [0, 0, 0];
       for (let f = 0; f < 5; f++) {
         const want = this.planned[h][f], got = actual[h][f];
-        if (!want || !got) continue;
+        if (!want || !got || (this.clock && !this.active[h][f])) continue;
         e[0] += want[0] - got[0]; e[1] += want[1] - got[1]; e[2] += want[2] - got[2];
         n++;
       }
       const F = this.fix[h];
-      const k = n ? 1 - Math.exp(-dt * 12) : 1 - Math.exp(-dt * 2);
-      for (let i = 0; i < 3; i++) F[i] = clamp(n ? F[i] + (e[i] / n) * k : F[i] * (1 - k), -0.035, 0.035);
+      // (on a clock slower and further: the hand's place is planned, and a quick correction against the rig's own lag
+      // swings — tools measured 3/s best)
+      const gain = this.clock ? 3 : 12, lim = this.clock ? 0.05 : 0.035;
+      const k = n ? 1 - Math.exp(-dt * gain) : 1 - Math.exp(-dt * 2);
+      for (let i = 0; i < 3; i++) F[i] = clamp(n ? F[i] + (e[i] / n) * k : F[i] * (1 - k), -lim, lim);
     }
   }
 
@@ -358,6 +402,139 @@ export class Pianist {
       const fwd = norm(add(scale(A.toward, -1), scale(A.up, -0.18)));
       // (the hand may tilt a little about its own way, as a pianist's does, to ease a forearm at its full turn)
       goals.push({ palm, fwd, down: scale(A.up, -1), tips, turn: this.turn });
+    }
+    return [goals[0], goals[1]];
+  }
+
+  // ---------------------------------------------------------------- on a score's clock
+
+  private along(n: number): number { return dot(this.inst!.notePoint(n)!, this.inst!.axes.along); }
+
+  /** the whole piece planned: hands, fingers, strokes, each hand's places */
+  private planScore(score: Score) {
+    const I = this.inst;
+    if (!I) throw new Error('Pianist: sit() before playScore() on a clock');
+    this.simplified = [];
+    const notes = score.notes.filter((n) => I.notePoint(n.note));
+    for (const n of score.notes) if (!I.notePoint(n.note)) this.simplified.push(`${n.t0.toFixed(2)} ${n.note}: off the keyboard`);
+    // (chords: notes struck within 30 ms of each other)
+    const events: ScoreNote[][] = [];
+    for (const n of [...notes].sort((a, b) => a.t0 - b.t0 || a.note - b.note)) {
+      const e = events[events.length - 1];
+      if (e && n.t0 - e[0].t0 < 0.03) e.push(n); else events.push([n]);
+    }
+    const c = this.centre(), split = c - 0.012;
+    // (each hand starts over its first notes: nothing to travel for the first chord)
+    const first = (left: boolean) => { const n = notes.find((x) => (this.along(x.note) < split) === left); return n ? this.along(n.note) - SLOTS[2] * (left ? -1 : 1) : left ? c - 0.2 : c + 0.14; };
+    const last = [first(true), first(false)];
+    this.path = [[{ t: -Infinity, x: last[0] }], [{ t: -Infinity, x: last[1] }]];
+    const struck: Struck[] = [];
+    type O = { n: ScoreNote; x: number };
+    const width = (g: O[]) => (g.length ? g[g.length - 1].x - g[0].x : 0);
+    for (const e of events) {
+      const xs: O[] = e.map((n) => ({ n, x: this.along(n.note) })).sort((a, b) => a.x - b.x);
+      // which hand: below middle C the left; a hand that can't span its share gives its outer note to the other if that
+      // one then can
+      const H: O[][] = [xs.filter((o) => o.x < split), xs.filter((o) => o.x >= split)];
+      for (let k = 0; k < 4; k++) {
+        if (width(H[0]) > SPAN && width([...H[1], H[0][H[0].length - 1]].sort((a, b) => a.x - b.x)) <= SPAN) H[1].unshift(H[0].pop()!);
+        else if (width(H[1]) > SPAN && width([H[1][0], ...H[0]].sort((a, b) => a.x - b.x)) <= SPAN) H[0].push(H[1].shift()!);
+      }
+      for (const h of [0, 1] as const) {
+        const G = H[h];
+        if (!G.length) continue;
+        if (width(G) > SPAN) this.simplified.push(`${G[0].n.t0.toFixed(2)} ${G.map((o) => o.n.note).join(',')}: wider than a hand, stretched for`);
+        const side = h === 0 ? -1 : 1, cur = last[h], lo = G[0].x, hi = G[G.length - 1].x;
+        // the hand stays while every note is in a finger's reach of where it rests; else it's centred on a chord, or put
+        // so the nearest of index, middle and ring is over a single note (a cast hand's thumb and pinky come down short
+        // of a key)
+        const slots = SLOTS.map((o) => cur + o * side);
+        let x = cur;
+        if (lo < Math.min(...slots) - 0.006 || hi > Math.max(...slots) + 0.006) {
+          if (G.length > 1) x = (lo + hi) / 2;
+          else { let best = Infinity; for (let f = 1; f < 4; f++) { const t = G[0].x - SLOTS[f] * side; if (Math.abs(t - cur) < best) { best = Math.abs(t - cur); x = t; } } }
+        }
+        const used = new Set<number>(), rest = SLOTS.map((o) => x + o * side), fs: number[] = [];
+        for (const o of G) {
+          let f = 1, bd = Infinity;
+          for (let k = G.length > 4 ? 0 : 1; k < (G.length > 3 ? 5 : 4); k++) {
+            if (used.has(k)) continue;
+            const d = Math.abs(rest[k] - o.x);
+            if (d < bd) { bd = d; f = k; }
+          }
+          used.add(f);
+          fs.push(f);
+        }
+        // (and where a moved hand goes, set by its fingers: each finger's resting place as near its note as can be —
+        // the slots aren't symmetric about the palm, so a chord's middle isn't the hand's)
+        if (x !== cur) x = G.reduce((m, o, i) => m + o.x - SLOTS[fs[i]] * side, 0) / G.length;
+        if (x !== cur) this.path[h].push({ t: G[0].n.t0, x });
+        last[h] = x;
+        G.forEach((o, i) => struck.push({ note: o.n.note, t0: o.n.t0, t1: o.n.t1, hand: h, finger: fs[i], x: o.x, up: o.n.t1 }));
+      }
+    }
+    // (each finger's strokes in order; a hold cut short so the finger's up before its next fall)
+    this.byFinger = [[[], [], [], [], []], [[], [], [], [], []]];
+    for (const st of struck.sort((a, b) => a.t0 - b.t0)) this.byFinger[st.hand][st.finger].push(st);
+    for (const H of this.byFinger) for (const F of H) for (let i = 0; i + 1 < F.length; i++) {
+      const a = F[i], b = F[i + 1];
+      a.up = Math.max(a.t0 + 0.03, Math.min(a.t1, b.t0 - FALL - LIFT * 0.6));
+    }
+    this.struck = struck;
+  }
+
+  /** a hand's centre at second s: eased from one place to the next, arriving TRAVEL_END before the note it's for */
+  private handAt(h: number, s: number): number {
+    const P = this.path[h];
+    let i = 0;
+    while (i + 1 < P.length && P[i + 1].t - TRAVEL_END <= s) i++;
+    const a = P[i], b = P[i + 1];
+    if (!b) return a.x;
+    const end = b.t - TRAVEL_END, start = Math.max(Number.isFinite(a.t) ? a.t + 0.02 : -Infinity, end - TRAVEL_MAX);
+    if (s <= start) return a.x;
+    const u = clamp((s - start) / Math.max(1e-3, end - start), 0, 1);
+    return lerp(a.x, b.x, u * u * (3 - 2 * u));
+  }
+
+  /** a finger's stroke at second s: its note (null: resting) and its tip's height over the key's top (m) */
+  private stroke(h: number, f: number, s: number): { st: Struck | null; dy: number } {
+    let st: Struck | null = null;
+    // (the next stroke takes the finger only once this one's let go: never before it's landed)
+    for (const x of this.byFinger[h][f]) { if (x.t0 - FALL - REACH > s || (st && s < st.up)) break; st = x; }
+    if (!st) return { st: null, dy: HOVER };
+    const D = this.inst!.pressDepth;
+    // (it lands LAND before the note's second: a rig's fingertip follows its goal about a frame behind)
+    const t0 = st.t0 - LAND;
+    if (s < t0) { const u = clamp((t0 - s) / FALL, 0, 1); return { st, dy: HOVER * (1 - (1 - u) ** 3) }; }
+    if (s < st.up) return { st, dy: -D * Math.min(1, (s - t0) / 0.012) };
+    const u = clamp((s - st.up) / LIFT, 0, 1);
+    return { st: s - st.up > 0.6 ? null : st, dy: -D + (D + HOVER) * Math.sin((Math.PI / 2) * u) };
+  }
+
+  /** the hands' goals at the clock's second s */
+  private planAt(s: number): [HandGoal, HandGoal] {
+    const I = this.inst!, A = I.axes, mid = I.notePoint(60) ?? I.look;
+    const goals: HandGoal[] = [];
+    for (let h = 0; h < 2; h++) {
+      const side = h === 0 ? -1 : 1, x = this.handAt(h, s);
+      const tips: (V3 | null)[] = [null, null, null, null, null];
+      // (the palm as high over the keyboard as the highest key its fingers are on: a black key's top stands over a
+      // white's, and a finger can only lift so far over its palm)
+      let high = 0;
+      for (let f = 0; f < 5; f++) {
+        const { st, dy } = this.stroke(h, f, s);
+        this.active[h][f] = !!st;
+        if (st) high = Math.max(high, dot(sub(I.notePoint(st.note)!, mid), A.up));
+        // (a finger with nothing to play rests over its place at a hover: left to the rig's curl it sinks below the
+        // keys' tops and comes up through them)
+        const p = st ? I.notePoint(st.note)! : add(add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along))), scale(A.toward, -0.03));
+        tips[f] = add(p, scale(A.up, PAD + dy));
+      }
+      const base = add(add(mid, scale(A.along, x - dot(mid, A.along))), scale(A.toward, this.reach[0]));
+      const palm = add(add(base, scale(A.up, this.reach[1] + high)), this.fix[h]);
+      this.planned[h] = tips;
+      this.palms[h] = palm;
+      goals.push({ palm, fwd: norm(add(scale(A.toward, -1), scale(A.up, -0.18))), down: scale(A.up, -1), tips, turn: this.turn });
     }
     return [goals[0], goals[1]];
   }
