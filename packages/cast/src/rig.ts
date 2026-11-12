@@ -2643,15 +2643,24 @@ export class HeroRig {
         // (on a key standing over the surface — a black key — the thumb reaches in flatter, as a pianist's does)
         const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
         // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
-        const idle = keys && tipWOf(goal, 0) < 0.5;
+        // (a built hand's with the prior: from an idle thumb's rests to a playing one's as its weight comes in — swapped at
+        // half weight, the whole hand's posture moved with it through the prior in one frame, the index's middle joint 24 deg)
+        const tw0 = tipWOf(goal, 0), idle = keys && tw0 < 0.5, eased = keys && built && !!goal.prior;
         const NH = HeroRig.neckHand;
         // (raised: by its key's top when the goal says it, else by the target's height; eased across, never a swap in a frame)
         const kt = goal.keyTop?.[0], raised = smoothstep(0.003, 0.009, kt !== undefined && kt !== null && Number.isFinite(kt) ? kt : up);
-        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : K.thumbTip.map((v, j) => lerp(v, K.thumbHigh[j], raised))) : neck ? NH.thumb : [0.25, 0.1, 0.35, 0.2];
-        const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
-          : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
+        const play = K.thumbTip.map((v, j) => lerp(v, K.thumbHigh[j], raised)), idleR = built ? K.thumbIdleBuilt : K.thumbIdle;
+        const pk = smoothstep(0, 1, clamp((tw0 - 0.04) / 0.96, 0, 1));
+        const rt = keys ? (eased ? idleR.map((v, j) => lerp(v, play[j], pk)) : idle ? idleR : play) : neck ? NH.thumb : [0.25, 0.1, 0.35, 0.2];
+        const ease0 = built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
+        // (at the keys eased in from the thumb at ease by the goal's weight, as the fingers are: taken in one frame as the
+        // hands came up to the keys, the count-in's first frame at them turned its saddle 24 deg)
+        const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle).map((v, j) => lerp(ease0[j], v, goalW)) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+          : ease0;
         // (a target let go: its rests the hand's own again, as far as it's let go)
-        for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : neck ? NH.wThumb : 0.6, rf); }
+        // (a built hand's at the keys with the prior: its rests in as the goal's weight comes in, as the fingers' are)
+        const rk = keys && built && goal.prior ? rf * goalW : rf;
+        for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rk); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : neck ? NH.wThumb : 0.6, rk); }
         continue;
       }
       const g = f - 1;
@@ -2674,14 +2683,20 @@ export class HeroRig {
       // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
       // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
       // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
-      if (keys) ang = ang.map((a, j) => lerp(a, atKeys ? tipAng[j] : (built ? K.idleBuilt : K.idle)[g][j], goalW));
       // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
       // toward the little finger — where the older hands' rests were nearly straight)
-      else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
+      // (at the keys eased in from that by the goal's weight: from the curl as it was without the relaxed curve, the
+      // count-in's first frame at the keys straightened the little finger's middle joint 51 to 14 deg)
+      const easy = built ? ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip)) : ang;
+      if (keys) ang = easy.map((a, j) => lerp(a, atKeys ? tipAng[j] : (built ? K.idleBuilt : K.idle)[g][j], goalW));
+      else ang = easy;
       // (on a neck a finger the caller holds lightly — hovering over its string, nothing to stop — is lifted from the
       // knuckle and loosely bent, close over the strings, not curled away: guitarists' and violinists' idle fingers)
       if (neck && tip) tipAng = tipWOf(goal, f) < 0.5 ? HeroRig.neckHand.hover[g] : tipAng;
-      if (rf > 0) { ab = lerp(ab, FAN[g], rf); ang = ang.map((a, j) => lerp(a, tipAng[j], rf)); }
+      // (at the keys with the prior: a finger's rests drawn in with the goal's weight — taken whole in the first frame the
+      // hands had a goal, as she sat, the count-in's fingers straightened 30-38 deg in one frame)
+      const rg = atKeys ? rf * goalW : rf;
+      if (rg > 0) { ab = lerp(ab, FAN[g], rg); ang = ang.map((a, j) => lerp(a, tipAng[j], rg)); }
       // (coming down square on its tip, as a guitarist's or a violinist's stopping finger does: the middle joint well
       // bent, the end joint with it, drawn there firmly; the tip still lands where it's asked)
       const sq = rf > 0 ? goal.square?.[f] ?? 0 : 0;
