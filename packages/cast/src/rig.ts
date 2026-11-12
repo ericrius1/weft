@@ -880,7 +880,7 @@ export class HeroRig {
      *  goal weight (tipW) at which it's wholly idle, how much the prior lets its bends go, and the knuckle and middle joint
      *  of a hand with no finger playing (rad), how firmly its knuckle, middle and end joints are held there, and how far
      *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
-    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [-0.25, 0.6], at: 0.1, letGo: 1, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
+    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [0.05, 0.6], at: 0.1, letGo: 0.5, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
