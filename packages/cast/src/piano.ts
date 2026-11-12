@@ -164,11 +164,11 @@ export class Pianist {
     const k = len / 0.178;
     this.prior = 1; this.idleRelease = true; this.reach = [0.25 * len, 0.25 * len]; this.pitch = 0.12; this.idleHover = 0.004; this.hover = 0.008;
     // (Checkpoint V: where real fingertips land on a white key, measured from overhead footage through each frame's
-    // keyboard — World tools/hands/abovekeys.py: index 40, middle 49-52, ring 44-46, little 21-22 mm in from the white
+    // keyboard — World tools/hands/abovekeys.py, 59 frames of 4 players: thumb 10, index 49, middle 63, ring 53, little 35 mm in from the white
     // keys' front edge, just short of the black keys' fronts; the thumb near the front, on its side. Ours had them
     // 80 / 95 / 90 / 55 mm in, the long fingers wedged between the black keys: from above, a claw. Among the black keys
     // (deepIn) the white keys are played further in, as before; on the black keys themselves, as before (blackAlong).)
-    this.fingerIn = [-0.007, 0.01, 0.017, 0.013, -0.007].map((v) => v * k); this.deepIn = [0.025, 0.045, 0.06, 0.055, 0.045].map((v) => v * k);
+    this.fingerIn = [-0.007, 0.014, 0.028, 0.018, 0].map((v) => v * k); this.deepIn = [0.025, 0.045, 0.06, 0.055, 0.045].map((v) => v * k);
     this.blackAlong = [0, 0.02, 0.03, 0.03, 0].map((v) => v * k); this.blackIn = 0.03 * k; this.blackExtra = [0, 0, 0, 0.012 * k, 0]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
   /** how far over the white keys' tops a finger with nothing to play is held clear (m: the hand's solve's floor). A built
    *  hand's (forHand) 18 mm: its idle fingers lie long as levers now, and at 6 mm their tips sank into the black keys'
