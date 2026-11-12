@@ -2657,7 +2657,7 @@ export class HeroRig {
         const ease0 = built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (at the keys eased in from the thumb at ease by the goal's weight, as the fingers are: taken in one frame as the
         // hands came up to the keys, the count-in's first frame at them turned its saddle 24 deg)
-        const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle).map((v, j) => lerp(ease0[j], v, goalW)) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+        const r0 = keys ? (built && goal.prior ? K.thumbIdleBuilt.map((v, j) => lerp(ease0[j], v, goalW)) : built ? K.thumbIdleBuilt : K.thumbIdle) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : ease0;
         // (a target let go: its rests the hand's own again, as far as it's let go)
         // (a built hand's at the keys with the prior: its rests in as the goal's weight comes in, as the fingers' are)
@@ -2690,7 +2690,7 @@ export class HeroRig {
       // (at the keys eased in from that by the goal's weight: from the curl as it was without the relaxed curve, the
       // count-in's first frame at the keys straightened the little finger's middle joint 51 to 14 deg)
       const easy = built ? ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip)) : ang;
-      if (keys) ang = easy.map((a, j) => lerp(a, atKeys ? tipAng[j] : (built ? K.idleBuilt : K.idle)[g][j], goalW));
+      if (keys) ang = (atKeys ? easy : ang).map((a, j) => lerp(a, atKeys ? tipAng[j] : (built ? K.idleBuilt : K.idle)[g][j], goalW));
       else ang = easy;
       // (on a neck a finger the caller holds lightly — hovering over its string, nothing to stop — is lifted from the
       // knuckle and loosely bent, close over the strings, not curled away: guitarists' and violinists' idle fingers)
@@ -2761,11 +2761,15 @@ export class HeroRig {
       const hk = M ? Q.floor[0] * M.base[kb] + Q.floor[1] * M.base[kb + 1] + Q.floor[2] * M.base[kb + 2] - Q.floor[3] : 1;
       // (and eased in time: read off the hand as last solved, it fed back on itself — the clearance on lifted the knuckles,
       // off let them down — and the count-in's arch swung 9 to -5 deg and back every frame)
-      const fade = clamp(hk / 0.03, 0, 1);
-      // (off at once, on eased: asked of knuckles still under the keys the fingers flail)
-      this.clearV[hi] = this.first || fade < this.clearV[hi] ? fade : damp(this.clearV[hi], fade, 6, dt);
-      const fv = this.clearV[hi];
-      Q.clear = F.clear * fv * fv * (3 - 2 * fv);
+      // (only at the keys with the prior — the Pianist's: a guitarist's knuckles sit within 3 cm of the board, and faded
+      // there the fretting hand's clearance went, its worst stop 2.7 -> 4.3 mm off its string)
+      if (goal.prior && !goal.neck) {
+        const fade = clamp(hk / 0.03, 0, 1);
+        // (off at once, on eased: asked of knuckles still under the keys the fingers flail)
+        this.clearV[hi] = this.first || fade < this.clearV[hi] ? fade : damp(this.clearV[hi], fade, 6, dt);
+        const fv = this.clearV[hi];
+        Q.clear = F.clear * fv * fv * (3 - 2 * fv);
+      } else Q.clear = F.clear;
     }
     // (a neck held: its line, ways and measures into hand space)
     const NG = goal.neck;
