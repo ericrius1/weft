@@ -27,6 +27,9 @@ export interface HeroHeader {
   /** the hands as built (a modelled hand grafted on and weighted to its own bones: fitHands leaves it alone): where
    *  it came from, wrist-to-middle-fingertip length (m), breadth against the source's */
   hand?: { source: string; len: number; breadth: number };
+  /** a modelled face (lips, a jaw that opens on teeth and a tongue, brows, lids over real eyes: built, not drawn): its
+   *  bones move as far as a real face's (rig.ts MODELLED), times `gain` */
+  faceRig?: { gain?: number };
 }
 export interface HeroAsset {
   header: HeroHeader;

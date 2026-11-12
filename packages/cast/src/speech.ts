@@ -328,6 +328,64 @@ export function lineOf(text: string, o: LineOpts = {}): Timeline {
   return { text, phones, words, dur: t + 0.08, question: /\?\s*$/.test(text), exclaim: /!\s*$/.test(text) };
 }
 
+/** a recorded line (a voice pack's: each word's start and end, s, in the order the text says them; its loudness): the
+ *  phonemes of each word fitted into the time it was actually said — the consonants at their own lengths at the word's
+ *  edges (squeezed if the word was quick), the vowels holding the rest, stressed ones longer — and silences where the
+ *  speaker paused. The mouth (mouthAt) then follows the voice, not a guess at its pace. `words`: one [t0, t1] per
+ *  whitespace-separated word of `text` (punctuation is no word; a number is one word, said as its words) */
+export function lineFromWords(text: string, words: [number, number][], env?: { rate: number; v: Uint8Array }): Timeline {
+  const phones: TimedPhone[] = [];
+  const tw: TimedWord[] = [];
+  const re = /\S+/g;
+  let m: RegExpExecArray | null;
+  const toks: { word: string; i0: number; i1: number; end: TimedPhone['end'] }[] = [];
+  while ((m = re.exec(text))) {
+    const raw = m[0];
+    const core = raw.replace(/^[^A-Za-z0-9’‘']+|[^A-Za-z0-9’‘']+$/g, '');
+    if (!core) continue;
+    const tail = raw.slice(raw.lastIndexOf(core) + core.length);
+    const end: TimedPhone['end'] = /\?/.test(tail) ? '?' : /!/.test(tail) ? '!' : /[.…]/.test(tail) ? '.' : /[,;:—–-]/.test(tail) ? ',' : '';
+    toks.push({ word: core, i0: m.index, i1: m.index + raw.length, end });
+  }
+  const n = Math.min(toks.length, words.length);
+  let phraseStart = 0, last = 0;
+  const closePhrase = (end: TimedPhone['end']) => {
+    if (phones.length <= phraseStart) return;
+    const T0 = phones[phraseStart].t0, T1 = phones[phones.length - 1].t1;
+    for (let i = phraseStart; i < phones.length; i++) { phones[i].phrase = (phones[i].t0 - T0) / Math.max(T1 - T0, 1e-3); phones[i].end = end; }
+    phraseStart = phones.length;
+  };
+  for (let k = 0; k < n; k++) {
+    const tk = toks[k];
+    let [t0, t1] = words[k];
+    t0 = Math.max(t0, last);
+    t1 = Math.max(t1, t0 + 0.04);
+    // (a pause before the word: the mouth closes in it)
+    if (t0 - last > 0.12 && phones.length) phones.push({ p: '_', t0: last, t1: t0, stress: 0, word: -1, phrase: 0, end: '' });
+    const parts = /^\d+$/.test(tk.word) ? numberWords(Math.min(+tk.word, 999999)).split(' ') : tk.word.split('-').filter(Boolean);
+    const wp = parts.flatMap((w) => wordPhones(w));
+    if (!wp.length) { last = t1; continue; }
+    let cons = 0, vow = 0;
+    for (const { p, stress } of wp) { if (VOWELS.has(p)) vow += DUR[p] * (stress === 2 ? 1.3 : 1); else cons += DUR[p]; }
+    const span = t1 - t0;
+    // the consonants at their own lengths, unless the word was too quick for them: then no more than 60 % of it
+    const cs = vow > 0 ? Math.min(1, (span * 0.6) / Math.max(cons, 1e-3)) : span / Math.max(cons, 1e-3);
+    const vs = vow > 0 ? (span - cons * cs) / vow : 0;
+    let t = t0;
+    const wi = tw.length;
+    for (const { p, stress } of wp) {
+      const d = VOWELS.has(p) ? DUR[p] * (stress === 2 ? 1.3 : 1) * vs : DUR[p] * cs;
+      phones.push({ p, t0: t, t1: t + d, stress, word: wi, phrase: 0, end: '' });
+      t += d;
+    }
+    tw.push({ text: text.slice(tk.i0, tk.i1), t0, t1, i0: tk.i0, i1: tk.i1 });
+    last = t1;
+    if (tk.end) closePhrase(tk.end);
+  }
+  closePhrase('.');
+  return { text, phones, words: tw, dur: last + 0.15, question: /\?\s*$/.test(text), exclaim: /!\s*$/.test(text), env };
+}
+
 // ---------------------------------------------------------------- visemes and the mouth
 /** the mouth's shape (each 0..1): the jaw open, the lips spread (ee) or rounded (oo), pressed (m b p), the upper teeth
  *  showing, the tongue's tip up (l th n), the lower lip tucked under the teeth (f v) */
