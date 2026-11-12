@@ -17,12 +17,29 @@ struct Frame {
   jitter: vec2f, fovY: f32, aspect: f32,
   mouse: vec4f,
   user: vec4f,          // per-view values the app sets (View.user): e.g. a reflection view's clip plane
+  // camera-relative (Camera.viewRel): the same projection with the eye at the origin, for positions given relative to
+  // the eye. camPos + camLo is the eye in full: camLo is what a float32 loses of it
+  viewProjRel: mat4x4f,
+  invViewProjRel: mat4x4f,
+  prevViewProjRel: mat4x4f,   // last frame's, about this frame's eye
+  camLo: vec3f, _relPad: f32,
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(2) var samp_linear: sampler;
 @group(0) @binding(3) var samp_repeat: sampler;
 @group(0) @binding(4) var samp_nearest: sampler;
 @group(0) @binding(5) var samp_shadow: sampler_comparison;
+
+// a world position relative to the eye: the difference of two nearby floats is exact (or rounded once, at the size of
+// the difference, not of the coordinates), and the eye's low bits that a float32 camPos lost are taken off after
+fn rel(p: vec3f) -> vec3f { return (p - frame.camPos) - frame.camLo; }
+// clip position of a world position, through the camera-relative matrix (as viewProj * p, without a large translation
+// rounded into the product)
+fn clipAt(p: vec3f) -> vec4f { return frame.viewProjRel * vec4f(rel(p), 1.0); }
+// clip position of a position already relative to the eye (an origin − camera from the CPU in doubles, plus local)
+fn clipRel(r: vec3f) -> vec4f { return frame.viewProjRel * vec4f(r, 1.0); }
+// last frame's clip position of a world position (motion vectors)
+fn prevClipAt(p: vec3f) -> vec4f { return frame.prevViewProjRel * vec4f(rel(p), 1.0); }
 
 // reversed-Z, infinite far plane: view distance along the view axis from a depth-buffer value
 fn linearDepth(d: f32) -> f32 { return frame.near / max(d, 1e-7); }
