@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.4.0
+
+- **Grasps** (`@ericrius1/cast/grasp`, also in the index): `grasp(model, kind, size)` solves how a built hand holds a
+  thing, in the hand's own space. The palm is placed on the thing by the kind of hold, then each finger and the thumb
+  close onto its surface by contact: pads on its skin, nothing into it or into the palm, the thumb opposing, every
+  joint in range. The kinds (`GRASPS`) are `wrap` (a glass), `power` (a hammer's handle), `stick` (a drumstick on its
+  fulcrum), `bow`, `pinch` (a pick), `tripod` (a pen), `stem`, `flat` and `rim` (a plate, a tray), `clasp` and `cloth`.
+  `size` is `{ r, len, thick }` in m. The result (`Grasp`) has the hand's numbers and how well it holds (each finger's
+  worst pad miss, `into`, `palmInto`, the thumb's `opp`). `graspGoal(model, g, side, hl, { at, axis, from | near, w })`
+  places it in the world as a `HandGoal`, and `heldWorld` gives the held shape there (to draw or test). `heldSd` and
+  `STICK` (the drumstick grip's numbers) are for tools. Solve a grasp once per thing and size, and place it every frame.
+- **New `HandGoal` options**: `pose` (a built hand's fingers posed as given: `HAND_N` numbers from `grasp`, blended
+  in by the goal's weight; it is what `graspGoal` sets), `around` (`{ at, axis, r, len?, pad? }`, world: a cylinder,
+  or a ball with `axis` [0,0,0]; with `grip`, a built hand's fingers close joint by joint from open until each meets
+  the surface, the thumb's saddle swinging round first, nothing passing through) and `prior` (0..1: real pianists'
+  hands shaping a built hand at the keys, see below). `around` is not closed when `pose` is set.
+- **A built hand's thumb** (`header.hand`, or a hand with the `ring0`/`pinky0` metacarpals: `HandModel.built`): its
+  saddle turns the pad round to the fingers (about 100° at full opposition, where it was about 36°: Kapandji's test 9
+  of 10). The column flexes to 62° and the MCP to 75°. `body/anatomy`'s `JOINTS.cmc` and `JOINTS.thumbMcp` now hold
+  the new ranges: flexion 55°, abduction 40° / adduction 25°, MCP 65°. A hand that isn't built keeps the old saddle
+  and the old ranges, whatever `JOINTS` says.
+- **Real pianists' hands as a prior** (`body/handprior.ts`: `KEYS_PRIOR`, a Gaussian over the hand's 21 numbers, from
+  our built hand fitted to 431 tracked overhead hands of 13 pianists). With `HandGoal.prior` on a built hand at the
+  keys, the fingertips with targets land on them and the rest of the hand takes the posture real hands have with
+  those fingers down, not each finger's own rest. `Pianist.forHand(len)` now sets `prior: 1` and the other values for
+  a built hand: fingers landing further in, the long ones between the black keys and the thumb about 2.5 cm in, all
+  scaled by the hand's length; `reach` 0.25 L; `pitch` 0.12; `idleLift` (idle thumbs and little fingers ride highest);
+  `idleClear` 18 mm (new: the floor's clearance for a finger with nothing to play, 6 mm otherwise); and `idleRelease`
+  (new: a let-go finger eases to an idle finger's weight from the top of its lift). A built hand's idle finger at the
+  keys is held off its key as a lever, lifted at the knuckle rather than curled into a hook (`HeroRig.keysHand.lever`,
+  `tipBuilt`, `idleBuilt`, `thumbIdleBuilt`, `restThumb`). For tools: `priorLetGo`, `HAND_W` (the couplings' weights).
+- **The hand's solve gives the same bits in every JavaScript engine**: `math` adds `dsin`, `dcos`, `dexp`, `datan`,
+  `datan2`, `drotateAxis` and `ddamp` (fdlibm's kernels, + - * / only) and `q30` (a number held to a 2^-30 grid). The
+  hand's paths use them, and the curl, grip and goal weight that enter the solve are held to the grid. Checked here:
+  the duet's pianist (World's Katara) for 900 frames in Node 22 and Chrome 157, the hands' numbers identical every
+  frame (0.3.0 differed on 869 of the 900). The rest of the body still uses `Math` and can differ in the last
+  bit (at most 1e-16 m) on some frames, without carrying over.
+- **A modelled face** (`header.faceRig`: lips, a jaw opening on teeth, brows and lids built, not drawn): its bones
+  move as far as a real face's. The mouth's corners and lips follow the speech's shapes (spread, round, press, tuck,
+  teeth, open) as well as the smile, frown and smirk, the brows move 1.6 times as far, and the jaw opens to `jaw` (rad,
+  default 0.24). The fields are `gain`, `shapes` (each shape's own gain), `attend` (0..1: the saccades and the phrase's
+  glances scaled down by up to 0.8; `Face.attend`) and `lidOpen` (0..1: the lids more open at rest).
+- **Lip timing from a recording** (`speech.ts`: `lineFromWords(text, words, env?)`): each word's phonemes are fitted
+  into the time it was actually said (`words`: one `[t0, t1]` per whitespace-separated word). Consonants keep their
+  own lengths at the word's edges, squeezed if the word was quick, and the vowels hold the rest, stressed ones longer.
+  Pauses close the mouth. The result is a `Timeline` for `rig.face.speech = { tl, t, w }`.
+- **What changes in behaviour**: (1) Everything above, on built hands (`header.hand`), in every pose with fingers:
+  the thumb's saddle, the keys' rests, the Pianist's placement. (2) **At the keys, on every body**: a hand goal with
+  fingertip targets that is neither holding (`grip`) nor `loose` takes a pianist's thumb (`keysHand.thumbIdle` and
+  `thumbTip` now `[-0.44, -0.35, 0.95, 0.8]`, the old values kept as `thumbHigh` for a thumb on a black key, and an
+  idle thumb rests as one). The Pianist also lets a finger's last key go 0.2 s after release, not 0.6 s. An old-format
+  body playing the duet's score therefore moves differently from its first strokes: the arm up to 17 cm apart from
+  0.3.0 by 9 s, the fingers 8 cm (World's Augie, Drake's Katara and Iroh). With those two changes undone, the
+  difference drops to 5e-7 m, so nothing else contributes. Drake's flute is `loose` and is not affected. (3)
+  Elsewhere, fingers with targets move by float rounding only (at most 4.8e-7 m) from the grid and the
+  engine-independent maths. (4) `HandAsk` has three new required fields (`priorMu`, `priorP`, `wp`): `handAsk()`
+  fills them, but a hand-built literal no longer type-checks.
+- **Identical**: every bone outside the fingers in all 85 rows of Drake's acts (tools/release-ab against 0.3.0), and
+  the fingertips' misses to 0.1 mm. On old-format bodies (World's Augie hi and lo, Drake's Katara and Iroh),
+  standing, walking, sitting at the bench and a two-handed grip are bit for bit as 0.3.0's, in Node 22 and in Chrome
+  157. No export was removed or changed in type: the additions are new modules and functions, optional fields and new
+  members.
+- **Size**: a bundle with `HeroRig` grows from 108.2 to 121.2 KB minified (44.7 to 50.5 KB gzipped). The posture
+  prior is 4.0 KB of that and comes with the rig, but is not in bundles that don't import the rig: `speech` alone is
+  unchanged, `face` grows by 67 bytes, `piano` by 353. `grasp` and `graspGoal` add 12.7 KB to a bundle without the rig.
+- **Cost**: CPU per body per frame with 12 of Drake's bodies (tools/release-ab cost.mjs, 9 alternating rounds, Node
+  22): walking 98 → 93 µs, running 91 → 97, standing 95 → 94, riding calm 145 → 146, the flute carried 159 → 159,
+  playing 184 → 195. The playing figure came out 4-8% higher in every run (the hand's own sine and cosine), inside
+  each round-to-round spread. The others are noise.
+- **To opt in with a body file**: `header.hand` (as in 0.3.0) gives the new thumb and the built-hand rests. Call
+  `new Pianist().forHand(header.hand.len)` for the prior and the pianist's placement. Grasps (`pose`) and `around`
+  need a built hand. `header.faceRig` needs the face bones the rig moves (`jaw`, `lipU`, `lipUL/R`, `lipD`,
+  `lipDL/R`, `mouthL/R`, `cheekL/R`, `browInL/R`, `browOutL/R`). Without any of these a file loads and poses as it
+  did, apart from the keys' thumb and the Pianist's release above.
+
 ## 0.3.0
 
 - **The hand as a hand** (`@ericrius1/cast/fingers`, also in the index): `HandModel.of(asset, 'L' | 'R')` reads a
