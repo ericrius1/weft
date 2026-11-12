@@ -150,7 +150,7 @@ export class Pianist {
    *  reach in front of where the fingertips press and a little over the keys, as real players' hands sit (fits of our
    *  hand to tracked footage of pianists, World's tools/hands/fit.mjs: from above the fingers lie long, the knuckles
    *  well back from the black keys) — for a built hand (HeroHeader.hand); bodies without one keep the default */
-  forHand(len: number) { this.reach = [0.44 * len, 0.22 * len]; this.pitch = 0.36; return this; }
+  forHand(len: number) { this.reach = [0.4 * len, 0.3 * len]; this.pitch = 0.36; return this; }
   /** the hand's way from the wrist to the knuckles, up from level (as a slope: -0.18, a little down, the default; a
    *  built hand's rises, the knuckles over the wrist as a pianist's arched hand is) */
   pitch = -0.18;
