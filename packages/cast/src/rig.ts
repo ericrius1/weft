@@ -833,9 +833,13 @@ export class HeroRig {
    *  idle fingers' hover match real pianists' (World tools/hands/planstats.mjs against tracked footage) */
   static keysHand = {
     idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
-    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.7, 0.5, 0.3]],
+    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
     fan: [0.08, 0.03, 0, -0.08],
-    thumbIdle: [0.35, 0.2, 0.4, 0.3], thumbTip: [0.25, 0.25, 0.45, 0.35],
+    // (the thumb as our hand's fits to overhead footage hold it: its saddle a little extended and turned away)
+    thumbIdle: [-0.28, -0.31, 0.23, 0.1], thumbTip: [-0.28, -0.31, 0.23, 0.1],
+    /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
+     *  per mm, so these shape the hand, not where the tips land) */
+    wTip: 3, wThumb: 6,
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2510,7 +2514,7 @@ export class HeroRig {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
         const r = tip ? (keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2]) : keys ? K.thumbIdle : holds ? [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip]
           : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
-        for (let j = 0; j < 4; j++) { Q.rest[o + j] = r[j]; Q.wr[o + j] = tip ? 0.6 : wr; }
+        for (let j = 0; j < 4; j++) { Q.rest[o + j] = r[j]; Q.wr[o + j] = tip ? (keys ? K.wThumb : 0.6) : wr; }
         continue;
       }
       const g = f - 1;
@@ -2524,7 +2528,7 @@ export class HeroRig {
       else if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
-      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = wr; }
+      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = tip && keys ? Math.max(wr, K.wTip) : wr; }
       // (laid flat along what it presses: its middle and end joints straight)
       const lay = goal.lay?.[f] ?? 0;
       if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
