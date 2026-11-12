@@ -1,7 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.2.8
 
+- **Camera-relative matrices**, for drawing far from the world's origin: `Camera.viewRel` (the view's rotation alone),
+  `viewProjRel`, `invViewProjRel`, `prevViewProjRel` (last frame's, taken about this frame's eye) and `camLo` (what
+  float32 loses of the eye's position: `position − fround(position)`). The `Frame` uniform carries them after its old
+  fields (`viewProjRel, invViewProjRel, prevViewProjRel, camLo`): nothing that was there moves, and a shader that
+  doesn't read them is given the same code as before. `weft/frame` gains `fromEye(p)` (`(p − camPos) − camLo`),
+  `clipAt(p)` (a world position's clip position through the relative matrix: as `viewProj * p`, without the eye's
+  large translation rounded into the product), `clipRel(r)` (a position already relative to the eye) and
+  `prevClipAt(p)`.
 - **`AGENTS.md`'s cast section** covers cast 0.6.0: a reference pose for a built hand (`HandGoal.ref`), `neck.restAt`,
   `stopRest`/`stopW`, the bow grasp drawn in.
 - **`AGENTS.md`'s cast section** covers cast 0.5.0: a neck held in the hand (`HandGoal.neck`) for a fretting or
