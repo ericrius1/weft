@@ -44,9 +44,10 @@ const ARCH_B = [0, 0, 0, 0.12, 0.26], ARCH_G = [0, 0, 0, 0.1, 0.22];
  *  finger's creases (Kapandji's test: 8 of 10, the last two within 3-6 mm; World tools/hands/kapandji.mjs). It was
  *  0.55 and 0.35, ~36° at full opposition: the pint's thumb lay along the glass, the pick's and the stem's ended on
  *  the fingers' side. */
-const PRON_F = 2.0, PRON_A = 0.8, PRON_NEG = 0.2;
-/** the saddle's turn for its flexion cf and abduction ca (rad) */
-export const thumbPron = (cf: number, ca: number) => (cf > 0 ? PRON_F : PRON_F * PRON_NEG) * cf + (ca > 0 ? PRON_A : PRON_A * PRON_NEG) * ca;
+const PRON = [2.0, 0.8, 0.2];
+/** a hand that isn't a built one (no header.hand, no ring and little metacarpals: the older bodies, Drake's) keeps the
+ *  saddle it had — its thumb's bones aren't where a built hand's are, and its projects' poses were made with it */
+const PRON_OLD = [0.55, 0.35, 1], CMC_OLD = { flex: [-25, 45, -10, 25], abd: [-20, 32, -8, 18] }, TMCP_OLD = [-10, 56, 0, 35];
 /** the end joint's share of the middle's bend (its tendon) */
 export const DIP_K = 0.7;
 
@@ -164,6 +165,12 @@ export class HandModel {
       J(JOINTS.mcp.flex, o + 1); J(JOINTS.pip.flex, o + 2); J(JOINTS.dip.flex, o + 3);
     }
     J(JOINTS.cmc.flex, 23); J(JOINTS.cmc.abd, 24); J(JOINTS.thumbMcp.flex, 25); J(JOINTS.thumbIp.flex, 26);
+    this.built = !!(a.header as { hand?: unknown } | undefined)?.hand || this.mc[3] >= 0;
+    if (!this.built) {
+      const d = Math.PI / 180, S = (i: number, r: number[]) => set(i, r[0] * d, r[1] * d, r[2] * d, r[3] * d);
+      S(23, CMC_OLD.flex); S(24, CMC_OLD.abd); S(25, TMCP_OLD);
+    }
+    this.pron = this.built ? PRON : PRON_OLD;
   }
 
   /** a body's hand ('L' her left), or null if its fingers aren't each three bones */
@@ -174,6 +181,12 @@ export class HandModel {
     if (ids.some((r) => r.some((i) => i === undefined))) return null;
     return new HandModel(a, T, hb, ids);
   }
+
+  /** a built hand (its file's own, header.hand; or one with the ring and little metacarpals) */
+  readonly built: boolean;
+  private readonly pron: number[];
+  /** the saddle's turn (pronation, rad) for its flexion cf and abduction ca */
+  thumbPron(cf: number, ca: number) { const p = this.pron; return (cf > 0 ? p[0] : p[0] * p[2]) * cf + (ca > 0 ? p[1] : p[1] * p[2]) * ca; }
 
   private mq = new Float64Array(9); private mk2 = new Float64Array(3);
   /** finger f's metacarpal posed by the arch in x (hand space, before the palm's move): its head, tail and up (o, 9) */
@@ -215,7 +228,7 @@ export class HandModel {
       turnAll(v, U ? u : null, q, 0, 0, -1, cf);
       const l0 = len3(v[0], v[1], v[2]);
       m[0] = v[0] / l0; m[1] = v[1] / l0; m[2] = v[2] / l0;
-      turnAll(v, U ? u : null, q, m[0], m[1], m[2], thumbPron(cf, ca));
+      turnAll(v, U ? u : null, q, m[0], m[1], m[2], this.thumbPron(cf, ca));
       // the MCP and the IP hinge toward the pad
       let kx = v[1] * q[2] - v[2] * q[1], ky = v[2] * q[0] - v[0] * q[2], kz = v[0] * q[1] - v[1] * q[0];
       const kl = len3(kx, ky, kz) || 1; kx /= kl; ky /= kl; kz /= kl;
