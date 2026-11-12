@@ -2676,6 +2676,7 @@ export class HeroRig {
     const hx = norm(this.skinDir(head, [1, 0, 0])), hu = norm(this.skinDir(head, [0, 1, 0])), hf = norm(this.skinDir(head, [0, 0, 1]));
     const mid = this.skinPoint(head, [0, E.y, E.z]);
     const to = norm(lerp3(hf, norm(sub(look, mid)), 0.9));
+    this.face.attend = this.asset.header.faceRig?.attend ?? 0;
     const S = this.face.update(dt, fromLegacy(want, this.fxBase), [dot(to, hx), dot(to, hu), dot(to, hf)]);
     toLegacy(S, this.fx);
     this.gaze = S.gaze;
@@ -2691,7 +2692,8 @@ export class HeroRig {
     const blink = this.blink;
     const gp = Math.asin(clamp(g[1], -1, 1));
     const heavy = Math.max(0, S.lidUp);
-    const thU0 = -gp * 0.6 + F.squint * 0.12 - F.wide * 0.22 + heavy * 0.35, thD0 = -gp * 0.25 - F.smile * 0.1 - F.squint * 0.22 + F.wide * 0.08;
+    const lo = this.asset.header.faceRig?.lidOpen ?? 0;
+    const thU0 = -gp * 0.6 + F.squint * 0.12 - F.wide * 0.22 + heavy * 0.35 - lo * 0.2, thD0 = -gp * 0.25 - F.smile * 0.1 - F.squint * 0.22 + F.wide * 0.08 + lo * 0.07;
     const thU = clamp(thU0 + (0.6 - thU0) * blink, -0.2, 0.85);
     const thD = clamp(thD0 + (-0.23 - thD0) * blink, -0.45, 0.3);
     const rx = (v: V3, th: number): V3 => [v[0], v[1] * Math.cos(th) - v[2] * Math.sin(th), v[1] * Math.sin(th) + v[2] * Math.cos(th)];
@@ -2731,7 +2733,7 @@ export class HeroRig {
         want.smile = Math.min(1.2, want.smile + sm);
         for (const key in Mk) {
           const vv = Mk[key as keyof typeof Mk]!;
-          const w = want[key as keyof typeof want];
+          const w = want[key as keyof typeof want] * (modelled!.shapes?.[key] ?? 1);
           o[0] += (side || 1) * vv[0] * w * s * g; o[1] += vv[1] * w * s * g; o[2] += vv[2] * w * s * g;
         }
       } else if (kind === 'browIn' || kind === 'browOut') {
