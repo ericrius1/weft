@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`AGENTS.md`'s cast section** covers the hand as a hand (cast 0.3.0's `fingers`): each `HandGoal` option for
+  fingertips (`palmFree`, `tipW`, `square`, `lay`, `floor`), how an instrument gives a fretting or stopping hand its
+  goal, `Pianist.forHand`, and a body file's own hand (`header.hand`, the optional `ring0`/`pinky0` bones).
 - **`AGENTS.md`'s cast section** says how to play a score with cast's pianist, on the frames or on an audio clock
   (cast 0.2.0's `playScore(score, { clock })`).
 - **`triangulate`** is exported from the package (the ear clipping MeshBuilder's polygons use): a footprint or a
