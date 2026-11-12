@@ -146,6 +146,14 @@ export class Pianist {
   private out = 0;
   /** where the palm sits from the press line: toward her, and up (m) */
   reach: [number, number] = [0.01, 0.038];
+  /** the palm's place for a hand of this length (wrist to the middle fingertip, m): the knuckles a curved finger's
+   *  reach in front of where the fingertips press and a little over the keys, as real players' hands sit (fits of our
+   *  hand to tracked footage of pianists, World's tools/hands/fit.mjs: from above the fingers lie long, the knuckles
+   *  well back from the black keys) — for a built hand (HeroHeader.hand); bodies without one keep the default */
+  forHand(len: number) { this.reach = [0.44 * len, 0.22 * len]; this.pitch = 0.36; return this; }
+  /** the hand's way from the wrist to the knuckles, up from level (as a slope: -0.18, a little down, the default; a
+   *  built hand's rises, the knuckles over the wrist as a pianist's arched hand is) */
+  pitch = -0.18;
   /** the widest a hand holds at once, thumb to pinky along the keys (m: about a seventh; past it the older notes ring on
    *  under the pedal: the fingers' stretch, not the hand's size, is the limit — scored) */
   span = 0.135;
@@ -408,7 +416,7 @@ export class Pianist {
       const palm = add(add(base, scale(A.up, this.reach[1])), this.fix[h]);
       this.planned[h] = tips;
       this.palms[h] = palm;
-      const fwd = norm(add(scale(A.toward, -1), scale(A.up, -0.18)));
+      const fwd = norm(add(scale(A.toward, -1), scale(A.up, this.pitch)));
       // (the hand may tilt a little about its own way, as a pianist's does, to ease a forearm at its full turn)
       goals.push({ palm, fwd, down: scale(A.up, -1), tips, turn: this.turn });
     }
@@ -565,7 +573,7 @@ export class Pianist {
       this.planned[h] = tips;
       this.palms[h] = palm;
       // (the hand's own solve places the palm with its fingers, a resting finger keeping clear of the keys' tops)
-      goals.push({ palm, fwd: norm(add(scale(A.toward, -1), scale(A.up, -0.18))), down: scale(A.up, -1), tips, turn: 0, palmFree: 1, tipW,
+      goals.push({ palm, fwd: norm(add(scale(A.toward, -1), scale(A.up, this.pitch))), down: scale(A.up, -1), tips, turn: 0, palmFree: 1, tipW,
         floor: { at: mid, n: A.up, clear: 0.006 } });
     }
     return [goals[0], goals[1]];

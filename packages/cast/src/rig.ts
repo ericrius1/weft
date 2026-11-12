@@ -2442,6 +2442,11 @@ export class HeroRig {
         p = n;
       }
     }
+    // (a built hand's ring and little metacarpals: held as at the bind, on the hand)
+    for (const n of ['ring0', 'pinky0']) {
+      const mi = this.bi[n + t];
+      if (mi !== undefined) { const MB = Bn[mi]; this.setBone(mi, this.skinPoint(hb, MB.head), this.skinPoint(hb, MB.tail), this.skinDir(hb, MB.up)); }
+    }
     const tid = [1, 2, 3].map((k) => this.bi['thumb' + k + t]);
     if (tid.some((x) => x === undefined)) return;
     const tq = [Bn[tid[0]].head, Bn[tid[0]].tail, Bn[tid[1]].tail, Bn[tid[2]].tail];
@@ -2501,10 +2506,11 @@ export class HeroRig {
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      if (tip) { ab = FAN[g]; ang = [0.5, 0.7, 0.45]; }
-      // (resting over the keys: curved as real pianists' resting fingers are — MediaPipe on photographs of hands at rest on
-      // the keys, the median of 7: MCP ~30-48°, PIP ~32-40°, DIP ~25-32°; docs/hands.md in World)
-      else if (keys) ang = ang.map((a, j) => lerp(a, [0.6, 0.62, 0.45][j], goalW));
+      if (tip) { ab = FAN[g]; ang = [0.75, 0.5, 0.25]; }
+      // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
+      // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
+      // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
+      else if (keys) ang = ang.map((a, j) => lerp(a, [0.55, 0.45, 0.25][j], goalW));
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = wr; }
@@ -2584,8 +2590,16 @@ export class HeroRig {
         M.bindOf(P, j * 3, hp); M.bindOf(P, j * 3 + 3, tp); M.bindOf(U, j * 3, up, true);
         this.setBone(M.bones[f][j], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
       }
+      // (the ring and little metacarpals, where the body has them, turned with the palm's arch)
+      if (M.mc[f] >= 0) {
+        const q = this.mcq;
+        M.mcPose(S.x, f, q);
+        M.bindOf(q, 0, hp); M.bindOf(q, 3, tp); M.bindOf(q, 6, up, true);
+        this.setBone(M.mc[f], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
+      }
     }
   }
+  private mcq = new Float64Array(9);
 
   /** a finger's spread and joint angles (bind-space, about the hand's own axes) that put its tip on a world point: the
    *  spread turns it toward the point; the curl (end joints coupled to the middle one, 2/3) is solved for the reach by

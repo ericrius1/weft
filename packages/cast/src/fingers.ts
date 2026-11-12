@@ -92,6 +92,11 @@ export class HandModel {
   readonly okHi = new Float64Array(HAND_N);
   /** the bind's finger lengths (m: thumb from its saddle, the others from the knuckle) */
   readonly lens = new Float64Array(5);
+  /** the ring and little fingers' metacarpal bones when the body has them (`ring0`, `pinky0`: a built hand, header.hand):
+   *  their ids (-1 none; index by finger, 3 and 4) and their bind head, tail and up in hand space (9 each) — they turn
+   *  with the arch, about their own heads */
+  readonly mc = [-1, -1, -1, -1, -1];
+  readonly mcB = new Float64Array(45);
 
   private constructor(a: HeroAsset, T: 'L' | 'R', hb: number, ids: number[][]) {
     const side = T === 'L' ? 1 : -1;
@@ -118,7 +123,15 @@ export class HandModel {
       // (a metacarpal: from near the wrist to the knuckle; the arch turns ring and little about their bases)
       const b = [this.base[f * 3], this.base[f * 3 + 1], this.base[f * 3 + 2]];
       for (let c = 0; c < 3; c++) this.piv[f * 3 + c] = b[c] * 0.18;
-      const m = norm([b[0] * 0.82, b[1] * 0.82, b[2] * 0.82]);
+      const mi = f >= 3 ? a.index[FN[f] + '0' + T] : undefined;
+      if (mi !== undefined) {
+        // (a metacarpal bone: the arch turns about its own base, the 4th or 5th carpometacarpal joint)
+        const MB = a.bones[mi];
+        this.mc[f] = mi;
+        toC(MB.head, this.mcB, f * 9); toC(MB.tail, this.mcB, f * 9 + 3); toC(norm(MB.up), this.mcB, f * 9 + 6, true);
+        for (let c = 0; c < 3; c++) this.piv[f * 3 + c] = this.mcB[f * 9 + c];
+      }
+      const m = mi !== undefined ? norm([b[0] - this.piv[f * 3], b[1] - this.piv[f * 3 + 1], b[2] - this.piv[f * 3 + 2]]) : norm([b[0] * 0.82, b[1] * 0.82, b[2] * 0.82]);
       const k = norm(cross(m, [0, 0, 1]));
       this.mAx.set(m, f * 3); this.kAx.set(k, f * 3);
     }
@@ -151,6 +164,21 @@ export class HandModel {
     const ids = FN.map((f) => [1, 2, 3].map((j) => a.index[f + j + T]));
     if (ids.some((r) => r.some((i) => i === undefined))) return null;
     return new HandModel(a, T, hb, ids);
+  }
+
+  private mq = new Float64Array(9); private mk2 = new Float64Array(3);
+  /** finger f's metacarpal posed by the arch in x (hand space, before the palm's move): its head, tail and up (o, 9) */
+  mcPose(x: ArrayLike<number>, f: number, o: Float64Array) {
+    o.set(this.mcB.subarray(f * 9, f * 9 + 9));
+    const ar = x[HP_ARCH];
+    if (!ARCH_B[f] || ar === 0) return;
+    const m0 = this.mAx[f * 3], m1 = this.mAx[f * 3 + 1], m2 = this.mAx[f * 3 + 2];
+    const p0 = this.piv[f * 3], p1 = this.piv[f * 3 + 1], p2 = this.piv[f * 3 + 2];
+    const g = ARCH_G[f] * ar, be = ARCH_B[f] * ar, k = this.mk2;
+    const cg = Math.cos(g), sg = Math.sin(g), cb = Math.cos(be), sb = Math.sin(be);
+    rodr(k, 0, this.kAx[f * 3], this.kAx[f * 3 + 1], this.kAx[f * 3 + 2], -m0, -m1, -m2, cg, sg);
+    for (const j of [0, 3]) { o[j] -= p0; o[j + 1] -= p1; o[j + 2] -= p2; rodr2(o, j, -m0, -m1, -m2, cg, sg, k, cb, sb); o[j] += p0; o[j + 1] += p1; o[j + 2] += p2; }
+    rodr2(o, 6, -m0, -m1, -m2, cg, sg, k, cb, sb);
   }
 
   /** a hand-space point in the bind's (o, at i) */
