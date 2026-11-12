@@ -621,6 +621,19 @@ const FACE_POSE: Record<string, Partial<Record<keyof FaceExpr, V3>>> = {
   browOut: { brows: [0.0003, 0.0034, 0.0003], tender: [0, -0.001, 0], browDown: [0, -0.001, 0], smile: [0, 0.0004, 0] },
 };
 const JAW_OPEN = 0.16;
+/** a modelled face (header.faceRig: lips, a jaw, teeth and brows built, not drawn) moves its bones as far as a real
+ *  face's: per control, the offset (m, at 1.66 m tall; x out to the bone's own side) of each kind of face bone. The
+ *  mouth's corners and lips from the speech's shapes (spread for ee, round for oo, press for m b p, tuck for f v) as
+ *  well as the smile and the frown; the lower lip rides the jaw */
+const MODELLED: Record<string, Partial<Record<'smile' | 'frown' | 'spread' | 'round' | 'press' | 'tuck' | 'teeth' | 'open' | 'smirk', V3>>> = {
+  mouth: { smile: [0.0045, 0.0055, -0.002], frown: [0.0005, -0.0045, 0], spread: [0.005, 0.0004, -0.0018], round: [-0.0075, 0.0004, 0.0035], press: [-0.0005, 0, 0], open: [-0.0015, 0, 0] },
+  lipU: { smile: [0, 0.0012, -0.0004], round: [0, 0.0005, 0.0042], press: [0, -0.0012, 0.0004], teeth: [0, 0.0022, 0.0006], tuck: [0, 0.0012, 0.0008] },
+  lipUS: { smile: [0.0022, 0.0026, -0.0012], spread: [0.0028, 0.0006, -0.001], round: [-0.0042, 0.0004, 0.0032], press: [0, -0.001, 0.0003], teeth: [0, 0.0026, 0.0004], tuck: [0, 0.001, 0.0006] },
+  lipD: { smile: [0, 0.0004, -0.0004], frown: [0, 0.0012, 0.0015], round: [0, -0.0004, 0.004], press: [0, 0.0028, 0.0008], tuck: [0, 0.0045, -0.0035], teeth: [0, -0.0012, 0] },
+  lipDS: { smile: [0.0018, 0.0012, -0.001], frown: [0.0004, -0.001, 0], spread: [0.0026, -0.0004, -0.0008], round: [-0.0038, 0, 0.0032], press: [0, 0.0024, 0.0006], tuck: [0, 0.0036, -0.003], teeth: [0, -0.0014, 0] },
+  cheek: { smile: [0.0012, 0.0045, 0.0018], round: [-0.0012, -0.0004, -0.0006], open: [-0.0008, -0.0035, -0.0004] },
+};
+const JAW_OPEN_MODELLED = 0.24;
 
 // ---------------------------------------------------------------- verlet chains (braid, hair loops, panels)
 interface Capsule { a: V3; b: V3; r: number }
@@ -2836,6 +2849,7 @@ export class HeroRig {
     const hx = norm(this.skinDir(head, [1, 0, 0])), hu = norm(this.skinDir(head, [0, 1, 0])), hf = norm(this.skinDir(head, [0, 0, 1]));
     const mid = this.skinPoint(head, [0, E.y, E.z]);
     const to = norm(lerp3(hf, norm(sub(look, mid)), 0.9));
+    this.face.attend = this.asset.header.faceRig?.attend ?? 0;
     const S = this.face.update(dt, fromLegacy(want, this.fxBase), [dot(to, hx), dot(to, hu), dot(to, hf)]);
     toLegacy(S, this.fx);
     this.gaze = S.gaze;
@@ -2851,7 +2865,8 @@ export class HeroRig {
     const blink = this.blink;
     const gp = Math.asin(clamp(g[1], -1, 1));
     const heavy = Math.max(0, S.lidUp);
-    const thU0 = -gp * 0.6 + F.squint * 0.12 - F.wide * 0.22 + heavy * 0.35, thD0 = -gp * 0.25 - F.smile * 0.1 - F.squint * 0.22 + F.wide * 0.08;
+    const lo = this.asset.header.faceRig?.lidOpen ?? 0;
+    const thU0 = -gp * 0.6 + F.squint * 0.12 - F.wide * 0.22 + heavy * 0.35 - lo * 0.2, thD0 = -gp * 0.25 - F.smile * 0.1 - F.squint * 0.22 + F.wide * 0.08 + lo * 0.07;
     const thU = clamp(thU0 + (0.6 - thU0) * blink, -0.2, 0.85);
     const thD = clamp(thD0 + (-0.23 - thD0) * blink, -0.45, 0.3);
     const rx = (v: V3, th: number): V3 => [v[0], v[1] * Math.cos(th) - v[2] * Math.sin(th), v[1] * Math.sin(th) + v[2] * Math.cos(th)];
@@ -2869,7 +2884,8 @@ export class HeroRig {
     if (ji === undefined) return;
     const s = this.s;
     const hinge = this.B[ji].head;
-    const ang = JAW_OPEN * F.jaw;
+    const modelled = this.asset.header.faceRig ?? null;
+    const ang = (modelled ? modelled.jaw ?? JAW_OPEN_MODELLED : JAW_OPEN) * F.jaw;
     const turn = (p: V3, a: number): V3 => { const dy = p[1] - hinge[1], dz = p[2] - hinge[2], c = Math.cos(a), sn = Math.sin(a); return [p[0], hinge[1] + dy * c - dz * sn, hinge[2] + dy * sn + dz * c]; };
     const turnD = (dd: V3, a: number): V3 => [dd[0], dd[1] * Math.cos(a) - dd[2] * Math.sin(a), dd[1] * Math.sin(a) + dd[2] * Math.cos(a)];
     for (const name of FACE_RIG) {
@@ -2881,10 +2897,23 @@ export class HeroRig {
       const kind = name.startsWith('lipU') ? (side ? 'lipUS' : 'lipU') : name.startsWith('lipD') ? (side ? 'lipDS' : 'lipD') : name.replace(/[LR]$/, '');
       const P = FACE_POSE[kind];
       const o: V3 = [0, 0, 0];
-      if (kind === 'browIn' || kind === 'browOut') {
+      const Mk = modelled ? MODELLED[kind] : undefined;
+      if (Mk) {
+        const g = modelled!.gain ?? 1;
+        const want = { smile: S.smile, frown: S.frown, spread: S.spread, round: S.round, press: S.press, tuck: S.tuck, teeth: S.teeth, open: S.open, smirk: 0 };
+        // (a smirk: one corner up)
+        const sm = side ? Math.max(0, S.smirk * side) : 0;
+        want.smile = Math.min(1.2, want.smile + sm);
+        for (const key in Mk) {
+          const vv = Mk[key as keyof typeof Mk]!;
+          const w = want[key as keyof typeof want] * (modelled!.shapes?.[key] ?? 1);
+          o[0] += (side || 1) * vv[0] * w * s * g; o[1] += vv[1] * w * s * g; o[2] += vv[2] * w * s * g;
+        }
+      } else if (kind === 'browIn' || kind === 'browOut') {
         // (each brow's end by its own side: up, down, drawn in)
         const v = kind === 'browIn' ? (side > 0 ? S.browInL : S.browInR) : side > 0 ? S.browOutL : S.browOutR;
-        o[0] = side * -0.0015 * S.knit * (kind === 'browIn' ? 1 : 0.3) * s; o[1] = (0.0035 * v - 0.0012 * S.knit) * s; o[2] = 0.0004 * Math.abs(v) * s;
+        const bg = modelled ? 1.6 * (modelled.gain ?? 1) : 1;
+        o[0] = side * -0.0015 * S.knit * (kind === 'browIn' ? 1 : 0.3) * s * bg; o[1] = (0.0035 * v - 0.0012 * S.knit) * s * bg; o[2] = 0.0004 * Math.abs(v) * s * bg;
       } else for (const key in P) {
         const vv = P[key as keyof FaceExpr]!;
         const w = F[key as keyof FaceExpr];
