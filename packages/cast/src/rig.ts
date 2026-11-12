@@ -36,7 +36,7 @@ import { MAX_BONES } from './asset.js';
 import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose, BodyModel, BodyState } from './body/solve.js';
-import { HandModel, HandSolve, handAsk, solveHand, hpOf, HP_ARCH, type HandAsk } from './fingers.js';
+import { HandModel, HandSolve, handAsk, solveHand, hpOf, HP_ARCH, HAND_N, type HandAsk } from './fingers.js';
 
 type Fr = { o: V3; x: V3; y: V3; z: V3 };
 const frW = (f: Fr, l: V3): V3 => [f.o[0] + f.x[0] * l[0] + f.y[0] * l[1] + f.z[0] * l[2], f.o[1] + f.x[1] * l[0] + f.y[1] * l[1] + f.z[1] * l[2], f.o[2] + f.x[2] * l[0] + f.y[2] * l[1] + f.z[2] * l[2]];
@@ -68,6 +68,12 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   /** the fingers closed round something held (0..1; a cup, a bowl): set, the hand holds rather than resting on keys —
    *  the fingers without a tip's target curl by `curl` and this, the thumb too */
   grip?: number;
+  /** what's held, as a shape (world): a cylinder about `axis` through `at` of radius `r` (a cup, a glass, a tool's
+   *  handle, a bow's stick; `len` long, centred on `at`, else endless), or a ball (`axis` [0,0,0]). With `grip` set,
+   *  each finger and the thumb close from open toward the grip's curl and stop where their skin meets its surface
+   *  (`pad`: the finger's half-thickness at the pad, m, default 8.5 mm for a 4.8 cm-knuckled hand, scaled to the
+   *  hand's) — nothing passes through what it holds, and the thumb opposes the fingers round it */
+  around?: { at: V3; axis: V3; r: number; len?: number; pad?: number };
   /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
   elbow?: V3;
   /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
@@ -2662,6 +2668,7 @@ export class HeroRig {
     for (let i = 0; i < 6; i++) x[i] = 0;
     for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
     x[HP_ARCH] = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1));
+    if (holds && goal?.around && goalW > 0.001) this.closeAround(hi, c, goal, goalW, dt);
     S.ready = true;
     const P = this.fkP, U = this.fkU, K = this.fkK, Zf = this.fkZ, hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {
@@ -2678,6 +2685,79 @@ export class HeroRig {
       }
     }
   }
+  /** a held thing's shape into hand space (Q.floor's way): [at (3), axis (3, unit or 0), r, half-length (or -1), pad] */
+  private arnd = new Float64Array(9); private xOpen = new Float64Array(HAND_N); private xOpen2 = new Float64Array(HAND_N); private fkP2 = new Float64Array(12);
+  /** the fingers (built hand, holding) closed from open toward their grip's rests until each meets the held shape:
+   *  per finger the share of the way from open to the grip (0..1) where its skin first touches the surface, found
+   *  by stepping then halving; a finger that never touches closes all the way (the shape's smaller than the grip) */
+  private closeAround(hi: number, c: number, goal: HandGoal, goalW: number, dt: number) {
+    const M = this.handM[hi]!, S = this.handS[hi], Q = this.handQ[hi], x = S.x, A = goal.around!, m = this.bones, k = M.hb * 16;
+    const wb = M.wrist, X = M.X, Y = M.Y, Z = M.Z, o = this.arnd;
+    const toC = (w: ArrayLike<number>, dir: boolean, j: number) => {
+      const e0 = w[0] - (dir ? 0 : m[k + 12]), e1 = w[1] - (dir ? 0 : m[k + 13]), e2 = w[2] - (dir ? 0 : m[k + 14]);
+      const b0 = m[k] * e0 + m[k + 1] * e1 + m[k + 2] * e2 - (dir ? 0 : wb[0]), b1 = m[k + 4] * e0 + m[k + 5] * e1 + m[k + 6] * e2 - (dir ? 0 : wb[1]), b2 = m[k + 8] * e0 + m[k + 9] * e1 + m[k + 10] * e2 - (dir ? 0 : wb[2]);
+      o[j] = b0 * X[0] + b1 * X[1] + b2 * X[2]; o[j + 1] = b0 * Y[0] + b1 * Y[1] + b2 * Y[2]; o[j + 2] = b0 * Z[0] + b1 * Z[1] + b2 * Z[2];
+    };
+    toC(A.at, false, 0); toC(A.axis, true, 3);
+    const al = Math.hypot(o[3], o[4], o[5]);
+    if (al > 1e-9) { o[3] /= al; o[4] /= al; o[5] /= al; } else { o[3] = 0; o[4] = 0; o[5] = 0; }
+    const sc = M.width / 0.048;
+    o[6] = A.r; o[7] = A.len !== undefined ? A.len / 2 : -1; o[8] = (A.pad ?? 0.0085) * sc;
+    // (the open hand: flat, no grip)
+    const xg = this.xOpen;
+    xg.set(x);
+    this.askHand(hi, -0.1, 0, true, { ...goal, grip: 0 }, goalW, 0, () => { /* no targets */ });
+    const open = this.xOpen2;
+    for (let i = 6; i < HAND_N; i++) open[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
+    // (flat: every finger's joints straight, the thumb's MCP and IP too, its saddle out of the palm)
+    for (let f = 1; f <= 4; f++) for (let j = 1; j <= 3; j++) open[hpOf(f) + j] = Math.max(M.lo[hpOf(f) + j], 0);
+    open[23] = Math.max(M.lo[23], -0.3); open[24] = Math.min(M.hi[24], 0.3); open[25] = 0; open[26] = 0;
+    // (put back the grip's rests and weights for anything that reads them after)
+    this.askHand(hi, c, goal.grip ?? 0, true, goal, goalW, 0, () => { /* no targets */ });
+    void dt;
+    const P = this.fkP2, U = null, K = this.fkK, Zf = this.fkZ;
+    const pad = (f: number) => o[8] * (f === 0 ? 1.15 : f === 4 ? 0.85 : 1);
+    // (how far point j of finger f, as x stands, is from the shape's skin, the finger's pad included: < 0 inside;
+    // a point past the shape's ends is clear of it)
+    const gap = (f: number, j: number) => {
+      M.fk(x, f, P, U, K, Zf);
+      const p0 = P[j * 3] - o[0], p1 = P[j * 3 + 1] - o[1], p2 = P[j * 3 + 2] - o[2];
+      const ax = p0 * o[3] + p1 * o[4] + p2 * o[5];
+      if (o[7] >= 0 && Math.abs(ax) > o[7] + pad(f)) return 1;
+      return Math.sqrt(Math.max(0, p0 * p0 + p1 * p1 + p2 * p2 - ax * ax)) - (o[6] + pad(f));
+    };
+    // (a finger wraps round a thing as a hand does: its knuckle closes until the end of its first bone lies on the
+    // surface, then its middle joint until the second's does, then its end joint — each bone a chord round the shape,
+    // its pad on the skin. A joint whose bone ends clear of the shape closes all the way to the grip's rest; one that
+    // starts inside stays open. The thumb's saddle swings it round until its tip meets the thing, then it wraps)
+    for (let f = 0; f < 5; f++) {
+      const J = f === 0 ? [[23, 24], [25], [26]] : [[hpOf(f) + 1], [hpOf(f) + 2], [hpOf(f) + 3]];
+      if (f > 0) x[hpOf(f)] = xg[hpOf(f)];
+      for (const g of J) for (const i of g) x[i] = open[i];
+      const from = this.from;
+      for (let st = 0; st < 3; st++) {
+        const ids = J[st], pt = f === 0 && st === 0 ? 3 : st + 1;
+        // (the chord's middle on the skin: its end a little out, by the sagitta of a bone this long round this radius)
+        const L = st === 0 && f === 0 ? 0 : Math.hypot(...[0, 1, 2].map((c) => M.seg[f * 9 + st * 3 + c])), R = o[6] + pad(f);
+        const sag = L > 0 && L < 2 * R ? R - Math.sqrt(R * R - L * L / 4) : 0;
+        for (const i of ids) from[i] = x[i];
+        // (any point of the finger past this joint: the bone's end on the surface less its sagitta, the ones past it
+        // as they are — the joint stops at whatever of the finger meets the thing first)
+        const at = (t: number) => { for (const i of ids) x[i] = from[i] + (xg[i] - from[i]) * t; let g = gap(f, pt) - sag; for (let q = pt + 1; q <= 3; q++) g = Math.min(g, gap(f, q)); return g; };
+        if (at(0) <= 0) { at(0); continue; }
+        // (stepped along its closing: the first step that reaches the surface, then halved down to it; an arc that
+        // never reaches it stops where it comes nearest, if that's near — a finger reaching round past the thing, not
+        // curled into the air beside it)
+        let n0 = -1, bt = 1, bg = Infinity;
+        for (let n = 1; n <= 16; n++) { const g = at(n / 16); if (g <= 0) { n0 = n; break; } if (g < bg) { bg = g; bt = n / 16; } }
+        if (n0 < 0) { at(bg < 0.03 * sc ? bt : 1); continue; }
+        let lo = (n0 - 1) / 16, hi2 = n0 / 16;
+        for (let it = 0; it < 10; it++) { const mid = (lo + hi2) / 2; if (at(mid) > 0) lo = mid; else hi2 = mid; }
+        at(lo);
+      }
+    }
+  }
+  private pen = new Float64Array(3); private from = new Float64Array(HAND_N);
   private fkP = new Float64Array(12); private fkU = new Float64Array(9); private fkK = new Float64Array(3); private fkZ = new Float64Array(3);
 
   /** a finger's spread and joint angles (bind-space, about the hand's own axes) that put its tip on a world point: the
