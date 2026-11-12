@@ -360,12 +360,17 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
     case 'stick': {
       // a drumstick: from the heel of the hand out between the thumb and the index; the fulcrum the thumb's pad against
       // the side of the index's middle bone; the others loosely round
+      // (the stick crosses the palm at ~45° to the fingers — a drummer's matched grip: its butt out past the heel of the
+      // hand, its fulcrum at the index's middle joint by the thumb's pad, so the curled fingers wrap round it rather than
+      // lie along it)
       const r = size.r ?? 0.007;
-      const a = norm([1, 0.62, 0.32]);
-      const heel: V3 = [0.022 * sc, -0.02 * sc, zs + r];
+      const a = norm([1, 1.05, 0.12]);
+      const heel: V3 = [0.012 * sc, -0.032 * sc, zs + r];
       const held: Held = { c: add(heel, scale(a, 0.07 * sc)), a, r, h: (len ?? 0.4) / 2 };
-      const f = fingers([0.75, 1.0, 0.5], [5, 6], [0.05, 0, -0.03, -0.07], { gap: 0.0015 });
-      f[0] = { rest: [0.6, 1.1, 0.6], on: [5], spread: 0.05, restW: 0.1 };
+      const f = fingers([0.95, 1.15, 0.6], [4, 5], [0.05, 0, -0.04, -0.09], { gap: 0.0015 });
+      f[0] = { rest: [0.75, 1.25, 0.6], on: [1, 5], spread: 0.08, restW: 0.1 };
+      // (the back fingers round it loosely, by their middle bones: they steady the stick, the fulcrum holds it)
+      f[2] = { ...f[2], on: [5], gap: 0.003 }; f[3] = { ...f[3], rest: [1.05, 1.2, 0.6], on: [5], gap: 0.004 };
       const th: FSpec = { rest: [0.25, 0.2, 0.3, 0.25], restW: 0.06, on: [6], at: 6, tgtW: 0.6 };
       return { held, arch: 0.3, f: [th, ...f], oppose: [1, 5] };
     }
@@ -373,22 +378,25 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       // a bow at the frog: the stick across the fingers under the middle and ring fingers' end joints, the index leaning
       // on it by its middle bone, the little finger's tip standing on top, the thumb bent, its tip under the stick
       const r = size.r ?? 0.0055;
-      const mid: FSpec = { rest: [0.5, 0.95, 0.5], restW: 0.3, spread: 0, on: [2] };
+      // (the stick in the crook of the curled fingers, on the pads of their middle bones, the tips coming round its far
+      // side: the hand close over the stick, not hanging from it by its fingertips)
+      const mid: FSpec = { rest: [0.3, 1.25, 0.75], restW: 0.3, spread: 0, on: [5] };
       const q = restPts(M, 2, mid, 0.15), bf = boneFrame(q, 1);
-      const c = add(pt(q, 2), scale(bf.pad, PAD[2][1] * sc + r));
-      const a = norm(rej([0.25, 1, 0], bf.pad));
+      const c = add(pt(q, 5), scale(bf.pad, PAD[2][1] * sc + r));
+      // (slanted across the fingers toward the tip, as a violinist's hand leans on the stick by the index)
+      const a = norm(rej([0.55, 1, 0], bf.pad));
       const held: Held = { c, a, r, h: (len ?? 0.7) / 2 };
       const top = scale(bf.pad, -1);
       const lq = restPts(M, 4, { rest: [0.35, 0.9, 0.55] }, 0.15);
       const lt = add(axisPt(held, pt(lq, 3)), scale(top, r + PAD[4][2] * sc));
       const f: FSpec[] = [
-        { rest: [0.3, 0.55, 0.35], restW: 0.2, spread: 0.12, on: [5] },
+        { rest: [0.35, 0.95, 0.5], restW: 0.2, spread: 0.12, on: [5] },
         mid,
-        { rest: [0.5, 0.95, 0.5], restW: 0.3, spread: -0.04, on: [2] },
+        { rest: [0.3, 1.25, 0.75], restW: 0.3, spread: -0.04, on: [5] },
         { rest: [0.35, 0.9, 0.55], restW: 0.2, spread: -0.06, on: [3], tgt: lt, tgtW: 0.5 },
       ];
       const th: FSpec = { rest: [0.4, 0.15, 0.55, 0.75], restW: 0.12, on: [3], tgtW: 0.6 };
-      return { held, arch: 0.15, f: [th, ...f], oppose: [2, 2] };
+      return { held, arch: 0.15, f: [th, ...f], oppose: [2, 5] };
     }
     case 'pinch': {
       // a pick between the thumb's pad and the side of the index's end bone (the thumb's side of it)
