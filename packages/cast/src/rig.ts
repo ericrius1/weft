@@ -849,8 +849,9 @@ export class HeroRig {
     fan: [0.08, 0.03, 0, -0.08],
     // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
     // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
-    // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97)
-    thumbIdle: [-0.44, -0.35, 0.7, 0.4], thumbTip: [-0.44, -0.35, 0.7, 0.4], thumbHigh: [-0.28, -0.31, 0.23, 0.1],
+    // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97;
+    // MCP 0.95 / IP 0.8 with the hand's pitch 0.12 (piano.ts forHand): playing 0.87, the wrist 30 mm over the lowest tip)
+    thumbIdle: [-0.44, -0.35, 0.95, 0.8], thumbTip: [-0.44, -0.35, 0.95, 0.8], thumbHigh: [-0.28, -0.31, 0.23, 0.1],
     /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
      *  per mm, so these shape the hand, not where the tips land) */
     wTip: 3, wThumb: 6,
