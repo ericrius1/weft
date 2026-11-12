@@ -878,8 +878,9 @@ export class HeroRig {
     /** a built hand's idle finger held as a lever (see askHand): how much less bent than its playing neighbours its
      *  knuckle and middle joint are (rad), the end joint's share of the middle's, the bands they're kept in (rad), and the
      *  goal weight (tipW) at which it's wholly idle, how much the prior lets its bends go, and the knuckle and middle joint
-     *  of a hand with no finger playing (rad), and how firmly its knuckle, middle and end joints are held there */
-    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [-0.25, 0.6], at: 0.1, letGo: 1, rest: [0.2, 0.25], w: [1, 4, 4] },
+     *  of a hand with no finger playing (rad), how firmly its knuckle, middle and end joints are held there, and how far
+     *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
+    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [-0.25, 0.6], at: 0.1, letGo: 1, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2656,6 +2657,17 @@ export class HeroRig {
   /** each finger's lever (0 playing .. 1 idle at the keys) this frame, and the prior's precision with the idle fingers let go */
   private lever = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]];
   private priorBuf = [new Float64Array(KEYS_PRIOR.P.length), new Float64Array(KEYS_PRIOR.P.length)];
+  /** a lever finger found curled far past its rest (its middle joint more than lever.hook rad over it: a hook the
+   *  keys' floor holds it in — straightening it would sink its tip, so the solve stays) starts again from its rest: the
+   *  lever is the other valley, and the one a pianist's finger is in */
+  private unhook(hi: number) {
+    const L = HeroRig.keysHand.lever, Q = this.handQ[hi], x = this.handS[hi].x;
+    for (let f = 1; f <= 4; f++) {
+      if (this.lever[hi][f] < 0.5) continue;
+      const o = hpOf(f);
+      if (x[o + 2] - Q.rest[o + 2] > L.hook) for (let j = 1; j <= 3; j++) x[o + j] = Q.rest[o + j];
+    }
+  }
   /** an idle finger's lever rest at the keys (joint j: 0 knuckle, 1 middle, 2 end): its playing neighbours' bends as last
    *  solved (the fingers the goal holds at full weight; none, the keys' playing rests), the knuckle extended and the
    *  middle joint eased by keysHand.lever, the end joint with the middle (its tendon) */
@@ -2689,6 +2701,7 @@ export class HeroRig {
     void dt;
     Q.free = clamp(goal.palmFree ?? 0, 0, 1) * goalW;
     S.x.set(this.palmX[i], 0);
+    this.unhook(i);
     solveHand(M, S, Q, HeroRig.handIters[0]);
     this.palmX[i].set(S.x.subarray(0, 6));
     this.palmMiss[i].set(S.miss);
@@ -2720,7 +2733,7 @@ export class HeroRig {
     const E = this.palmAt[hi], wb2 = this.skinPoint(M.hb, M.wrist), hx = this.skinDir(M.hb, X), pz = this.skinDir(M.hb, Z);
     const there = E[9] === 1 && Math.hypot(wb2[0] - E[0], wb2[1] - E[1], wb2[2] - E[2]) < 1e-4 && hx[0] * E[3] + hx[1] * E[4] + hx[2] * E[5] > 0.9999995 && pz[0] * E[6] + pz[1] * E[7] + pz[2] * E[8] > 0.9999995;
     E[9] = 0;
-    if (!there) solveHand(M, S, Q, HeroRig.handIters[1]);
+    if (!there) { this.unhook(hi); solveHand(M, S, Q, HeroRig.handIters[1]); }
     const P = new Float64Array(12), U = new Float64Array(9), K = new Float64Array(3), Zf = new Float64Array(3);
     const hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {
