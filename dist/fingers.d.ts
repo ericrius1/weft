@@ -100,7 +100,9 @@ export interface HandAsk {
      *  over the neck's middle (0-2), the neck's way (3-5), out of the fingerboard (6-8), across it (9-11), the board's half
      *  width (12), the neck's depth under it (13), the air the palm's skin keeps from the wood (14), the clearance of the
      *  knuckles' and joints' centres (15: a finger's half thickness, so the skin just touches), its weight (16; 0: none),
-     *  how firmly the index's knuckle is drawn onto the wood (17: the neck in the web between thumb and index).
+     *  how firmly the index's knuckle is drawn onto the wood (17: the neck in the web between thumb and index), and where
+     *  along the index's base bone that rest acts (18: 0 its knuckle, 1 its middle joint; a violinist's neck lies against
+     *  the side of the bone's base, the knuckle below the board, the bone rising beside the neck: optional, 0).
      *  The palm's skin, the knuckles and the fingers' and thumb's joints are kept off the wood (optional: absent, none) */
     neck?: Float64Array;
 }

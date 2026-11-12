@@ -21,6 +21,12 @@ export interface GraspSize {
  *  per finger (thumb first) the worst miss of the pads that should touch (m; 0 none asked), the deepest any skin goes
  *  into the shape (m, < 0 clear), the thumb's opposition (cos of the angle about the shape between the thumb's pad and
  *  the fingers' — -1 straight across), iterations spent */
+/** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb). Drawn in toward the
+ *  middle finger (Checkpoint M: real bowing hands' index-little fan ~25 deg, ours was 46 and read as a claw from above;
+ *  0.5.0 had [0.12, 0, -0.04, -0.06]) */
+export declare const BOW: {
+    spread: number[];
+};
 export interface Grasp {
     kind: GraspKind;
     x: Float64Array;

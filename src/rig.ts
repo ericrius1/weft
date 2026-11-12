@@ -75,6 +75,10 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  (`pad`: the finger's half-thickness at the pad, m, default 8.5 mm for a 4.8 cm-knuckled hand, scaled to the
    *  hand's) — nothing passes through what it holds, and the thumb opposes the fingers round it */
   around?: { at: V3; axis: V3; r: number; len?: number; pad?: number };
+  /** a reference pose for a built hand (fingers.ts's numbers, HAND_N; the palm's six ignored) and how firmly each number
+   *  is drawn to it (default 6, against a fingertip's 1 per mm): the hand posed from real players' — the caller places
+   *  the palm (exact) — and the solve only closes the fingertips onto their targets. A pose target: the palm is the look */
+  ref?: { x: ArrayLike<number>; w?: number };
   /** a built hand's fingers posed as given (fingers.ts's numbers, HAND_N; the palm's six ignored): a grasp solved
    *  against what's held (grasp.ts graspGoal), blended in with the goal's weight. Set, `around` is not closed */
   pose?: ArrayLike<number>;
@@ -107,6 +111,11 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  wrist's and the arm's ease — a few cm, a few tens of degrees — as a pianist's hand moves and turns to a chord):
    *  the hand's solve (fingers.ts) places the palm and the fingers together. Ignored when held `exact` */
   palmFree?: number;
+  /** a stopping finger's own rests where it comes down square (HandGoal.square; per finger, knuckle/middle/end, rad;
+   *  default HeroRig.SQUARE for every finger) and how firmly they're held (default 1.5): a violinist's fingers fold
+   *  most at the knuckle toward the little finger and stay open at the middle joint (real players' photographs) */
+  stopRest?: (number[] | null)[];
+  stopW?: number;
   /** how much each fingertip's target counts (thumb first; default 1 each) */
   tipW?: number[];
   /** how square each finger comes down on its target (thumb first, 0..1: 1 its middle joint well bent and its end
@@ -133,7 +142,10 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   neck?: { at: V3; axis: V3; up: V3; half: number; depth: number; air?: number; w?: number;
     /** how firmly the index's base is drawn onto the neck (0..1, default 0): a player's neck lies in the web between the
      *  thumb and the index, the index's base against the board's edge */
-    rest?: number } }
+    rest?: number;
+    /** where along the index's base bone that rest acts (0 its knuckle, default; 1 its middle joint): a violinist's
+     *  neck lies against the side of the bone's base, the knuckle under the board's level */
+    restAt?: number } }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -914,6 +926,8 @@ export class HeroRig {
    *  K) and how firmly it's drawn there; each finger's rests while it hovers (knuckle, middle, end); the palm's air to
    *  the wood (m) and the knuckles' and joints' clearance from it (m at a 48 mm knuckle span: the finger's half
    *  thickness, so the skin just touches — the index's base rests against a neck's edge) */
+  /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
+  static SQUARE = [0.75, 1.35, 0.75];
   static neckHand = {
     thumb: [0.35, 0.25, 0.3, 0.2], wThumb: 1.5,
     hover: [[0.45, 0.8, 0.4], [0.45, 0.8, 0.4], [0.5, 0.8, 0.4], [0.5, 0.8, 0.4]],
@@ -2656,10 +2670,10 @@ export class HeroRig {
       // (coming down square on its tip, as a guitarist's or a violinist's stopping finger does: the middle joint well
       // bent, the end joint with it, drawn there firmly; the tip still lands where it's asked)
       const sq = rf > 0 ? goal.square?.[f] ?? 0 : 0;
-      if (sq > 0) ang = ang.map((a, j) => lerp(a, [0.75, 1.35, 0.75][j], sq));
+      if (sq > 0) ang = ang.map((a, j) => lerp(a, (goal.stopRest?.[f] ?? HeroRig.SQUARE)[j], sq));
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
-      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, 1.5, sq) : wr; }
+      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, goal.stopW ?? 1.5, sq) : wr; }
       // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
       // — the cheap way up — rather than curling)
       // (a finger with no target at all — a held pose's: one the Pianist hovers keeps its playing neighbours' weights)
@@ -2688,6 +2702,13 @@ export class HeroRig {
       for (let j = 0; j < 4; j++) Q.wr[o + j] *= j > 0 ? lerp(kk, 1, lv) : kk;
       if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
     }
+    // (a reference pose — a hand posed from photographs of real players doing this, the palm placed by the caller: every
+    // number drawn firmly to it, the solve only closing the last millimetres from fingertip to target)
+    const RF = goal.ref;
+    if (RF && built) {
+      const w = (RF.w ?? 6) * goalW;
+      for (let i = 6; i < HAND_N; i++) { Q.rest[i] = lerp(Q.rest[i], RF.x[i], goalW); Q.wr[i] = Math.max(Q.wr[i] * (1 - goalW), w); }
+    }
     Q.clear = 0;
     const F = goal.floor;
     if (F && F.clear > 0) {
@@ -2701,7 +2722,7 @@ export class HeroRig {
     // (a neck held: its line, ways and measures into hand space)
     const NG = goal.neck;
     if (NG) {
-      const NQ = (Q.neck ??= new Float64Array(18)), a = this.fl, b = this.fl2;
+      const NQ = (Q.neck ??= new Float64Array(19)), a = this.fl, b = this.fl2;
       toC(NG.at, a, 0); NQ.set(a, 0);
       toC(add(NG.at, NG.axis), b, 0);
       let l = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) || 1;
@@ -2715,7 +2736,7 @@ export class HeroRig {
       NQ[6] = u0 / l; NQ[7] = u1 / l; NQ[8] = u2 / l;
       NQ[9] = NQ[7] * NQ[5] - NQ[8] * NQ[4]; NQ[10] = NQ[8] * NQ[3] - NQ[6] * NQ[5]; NQ[11] = NQ[6] * NQ[4] - NQ[7] * NQ[3];
       const M = this.handM[hi], k = M ? M.width / 0.048 : 1;
-      NQ[12] = NG.half; NQ[13] = NG.depth; NQ[14] = NG.air ?? HeroRig.neckHand.air; NQ[15] = HeroRig.neckHand.joint * k; NQ[16] = (NG.w ?? 1) * goalW; NQ[17] = NG.rest ?? 0;
+      NQ[12] = NG.half; NQ[13] = NG.depth; NQ[14] = NG.air ?? HeroRig.neckHand.air; NQ[15] = HeroRig.neckHand.joint * k; NQ[16] = (NG.w ?? 1) * goalW; NQ[17] = NG.rest ?? 0; NQ[18] = NG.restAt ?? 0;
     } else if (Q.neck) Q.neck[16] = 0;
   }
   private fl = new Float64Array(3); private fl2 = new Float64Array(3);

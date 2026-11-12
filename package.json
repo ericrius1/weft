@@ -1,6 +1,6 @@
 {
   "name": "@ericrius1/cast",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "The cast's procedural character runtime, shared by every project: the hero rig (gait, flight, swimming, seats and holds, the arm fit with elbow continuity, finger IK, verlet hair and cloth, the face), garments, strands, a stroke planner for anything swung, keyed tracks, the whole-body solver, and the articulation of a body playing an instrument. CPU only, no renderer.",
   "type": "module",
   "license": "MIT",
@@ -43,5 +43,5 @@
     "MIGRATION.md",
     "LICENSE"
   ],
-  "gitHead": "527046f6eb8b8e3e5c438b09e4393473ab04c96c"
+  "gitHead": "7af779e33d936d27d2be1454e4645192fe750802"
 }

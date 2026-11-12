@@ -29,6 +29,10 @@ export interface GraspSize { r?: number; len?: number; thick?: number }
  *  per finger (thumb first) the worst miss of the pads that should touch (m; 0 none asked), the deepest any skin goes
  *  into the shape (m, < 0 clear), the thumb's opposition (cos of the angle about the shape between the thumb's pad and
  *  the fingers' — -1 straight across), iterations spent */
+/** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb). Drawn in toward the
+ *  middle finger (Checkpoint M: real bowing hands' index-little fan ~25 deg, ours was 46 and read as a claw from above;
+ *  0.5.0 had [0.12, 0, -0.04, -0.06]) */
+export const BOW = { spread: [-0.04, 0, 0.08, 0.14] };
 export interface Grasp {
   kind: GraspKind; x: Float64Array; held: Held;
   touch: number[][]; miss: number[]; into: number; palmInto: number; opp: number; iters: number;
@@ -399,10 +403,10 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       const lq = restPts(M, 4, { rest: [0.35, 0.9, 0.55] }, 0.15);
       const lt = add(axisPt(held, pt(lq, 3)), scale(top, r + PAD[4][2] * sc));
       const f: FSpec[] = [
-        { rest: [0.35, 0.95, 0.5], restW: 0.2, spread: 0.12, on: [5] },
-        mid,
-        { rest: [0.3, 1.25, 0.75], restW: 0.3, spread: -0.04, on: [5] },
-        { rest: [0.35, 0.9, 0.55], restW: 0.2, spread: -0.06, on: [3], tgt: lt, tgtW: 0.5 },
+        { rest: [0.35, 0.95, 0.5], restW: 0.2, spread: BOW.spread[0], on: [5] },
+        { ...mid, spread: BOW.spread[1] },
+        { rest: [0.3, 1.25, 0.75], restW: 0.3, spread: BOW.spread[2], on: [5] },
+        { rest: [0.35, 0.9, 0.55], restW: 0.2, spread: BOW.spread[3], on: [3], tgt: lt, tgtW: 0.5 },
       ];
       const th: FSpec = { rest: [0.4, 0.15, 0.55, 0.75], restW: 0.12, on: [3], tgtW: 0.6 };
       return { held, arch: 0.15, f: [th, ...f], oppose: [2, 5] };

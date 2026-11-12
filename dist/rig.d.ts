@@ -36,6 +36,13 @@ export interface HandGoal {
         len?: number;
         pad?: number;
     };
+    /** a reference pose for a built hand (fingers.ts's numbers, HAND_N; the palm's six ignored) and how firmly each number
+     *  is drawn to it (default 6, against a fingertip's 1 per mm): the hand posed from real players' — the caller places
+     *  the palm (exact) — and the solve only closes the fingertips onto their targets. A pose target: the palm is the look */
+    ref?: {
+        x: ArrayLike<number>;
+        w?: number;
+    };
     /** a built hand's fingers posed as given (fingers.ts's numbers, HAND_N; the palm's six ignored): a grasp solved
      *  against what's held (grasp.ts graspGoal), blended in with the goal's weight. Set, `around` is not closed */
     pose?: ArrayLike<number>;
@@ -68,6 +75,11 @@ export interface HandGoal {
      *  wrist's and the arm's ease — a few cm, a few tens of degrees — as a pianist's hand moves and turns to a chord):
      *  the hand's solve (fingers.ts) places the palm and the fingers together. Ignored when held `exact` */
     palmFree?: number;
+    /** a stopping finger's own rests where it comes down square (HandGoal.square; per finger, knuckle/middle/end, rad;
+     *  default HeroRig.SQUARE for every finger) and how firmly they're held (default 1.5): a violinist's fingers fold
+     *  most at the knuckle toward the little finger and stay open at the middle joint (real players' photographs) */
+    stopRest?: (number[] | null)[];
+    stopW?: number;
     /** how much each fingertip's target counts (thumb first; default 1 each) */
     tipW?: number[];
     /** how square each finger comes down on its target (thumb first, 0..1: 1 its middle joint well bent and its end
@@ -106,6 +118,9 @@ export interface HandGoal {
         /** how firmly the index's base is drawn onto the neck (0..1, default 0): a player's neck lies in the web between the
          *  thumb and the index, the index's base against the board's edge */
         rest?: number;
+        /** where along the index's base bone that rest acts (0 its knuckle, default; 1 its middle joint): a violinist's
+         *  neck lies against the side of the bone's base, the knuckle under the board's level */
+        restAt?: number;
     };
 }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
@@ -450,6 +465,8 @@ export declare class HeroRig {
      *  K) and how firmly it's drawn there; each finger's rests while it hovers (knuckle, middle, end); the palm's air to
      *  the wood (m) and the knuckles' and joints' clearance from it (m at a 48 mm knuckle span: the finger's half
      *  thickness, so the skin just touches — the index's base rests against a neck's edge) */
+    /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
+    static SQUARE: number[];
     static neckHand: {
         thumb: number[];
         wThumb: number;

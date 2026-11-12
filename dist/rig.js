@@ -895,6 +895,8 @@ export class HeroRig {
      *  K) and how firmly it's drawn there; each finger's rests while it hovers (knuckle, middle, end); the palm's air to
      *  the wood (m) and the knuckles' and joints' clearance from it (m at a 48 mm knuckle span: the finger's half
      *  thickness, so the skin just touches — the index's base rests against a neck's edge) */
+    /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
+    static SQUARE = [0.75, 1.35, 0.75];
     static neckHand = {
         thumb: [0.35, 0.25, 0.3, 0.2], wThumb: 1.5,
         hover: [[0.45, 0.8, 0.4], [0.45, 0.8, 0.4], [0.5, 0.8, 0.4], [0.5, 0.8, 0.4]],
@@ -2986,13 +2988,13 @@ export class HeroRig {
             // bent, the end joint with it, drawn there firmly; the tip still lands where it's asked)
             const sq = rf > 0 ? goal.square?.[f] ?? 0 : 0;
             if (sq > 0)
-                ang = ang.map((a, j) => lerp(a, [0.75, 1.35, 0.75][j], sq));
+                ang = ang.map((a, j) => lerp(a, (goal.stopRest?.[f] ?? HeroRig.SQUARE)[j], sq));
             // (a spread held is an effort: drawn back harder than a bend)
             Q.rest[o] = ab;
             Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
             for (let j = 0; j < 3; j++) {
                 Q.rest[o + 1 + j] = ang[j];
-                Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, 1.5, sq) : wr;
+                Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, goal.stopW ?? 1.5, sq) : wr;
             }
             // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
             // — the cheap way up — rather than curling)
@@ -3035,6 +3037,16 @@ export class HeroRig {
                 if (f === 4)
                     Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
             }
+        // (a reference pose — a hand posed from photographs of real players doing this, the palm placed by the caller: every
+        // number drawn firmly to it, the solve only closing the last millimetres from fingertip to target)
+        const RF = goal.ref;
+        if (RF && built) {
+            const w = (RF.w ?? 6) * goalW;
+            for (let i = 6; i < HAND_N; i++) {
+                Q.rest[i] = lerp(Q.rest[i], RF.x[i], goalW);
+                Q.wr[i] = Math.max(Q.wr[i] * (1 - goalW), w);
+            }
+        }
         Q.clear = 0;
         const F = goal.floor;
         if (F && F.clear > 0) {
@@ -3052,7 +3064,7 @@ export class HeroRig {
         // (a neck held: its line, ways and measures into hand space)
         const NG = goal.neck;
         if (NG) {
-            const NQ = (Q.neck ??= new Float64Array(18)), a = this.fl, b = this.fl2;
+            const NQ = (Q.neck ??= new Float64Array(19)), a = this.fl, b = this.fl2;
             toC(NG.at, a, 0);
             NQ.set(a, 0);
             toC(add(NG.at, NG.axis), b, 0);
@@ -3080,6 +3092,7 @@ export class HeroRig {
             NQ[15] = HeroRig.neckHand.joint * k;
             NQ[16] = (NG.w ?? 1) * goalW;
             NQ[17] = NG.rest ?? 0;
+            NQ[18] = NG.restAt ?? 0;
         }
         else if (Q.neck)
             Q.neck[16] = 0;
