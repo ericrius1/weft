@@ -2737,7 +2737,7 @@ export class HeroRig {
       NQ[6] = u0 / l; NQ[7] = u1 / l; NQ[8] = u2 / l;
       NQ[9] = NQ[7] * NQ[5] - NQ[8] * NQ[4]; NQ[10] = NQ[8] * NQ[3] - NQ[6] * NQ[5]; NQ[11] = NQ[6] * NQ[4] - NQ[7] * NQ[3];
       const M = this.handM[hi], k = M ? M.width / 0.048 : 1;
-      NQ[12] = NG.half; NQ[13] = NG.depth; NQ[14] = NG.air ?? HeroRig.neckHand.air; NQ[15] = HeroRig.neckHand.joint * k; NQ[16] = (NG.w ?? 1) * goalW; NQ[17] = NG.rest ?? 0; NQ[18] = NG.restAt ?? 0;
+      NQ[12] = NG.half; NQ[13] = NG.depth; NQ[14] = NG.air ?? HeroRig.neckHand.air; NQ[15] = HeroRig.neckHand.joint * k; NQ[16] = (NG.w ?? 1) * goalW; NQ[17] = NG.rest ?? 0; NQ[18] = clamp(Number.isFinite(NG.restAt) ? NG.restAt! : 0, 0, 1);
     } else if (Q.neck) Q.neck[16] = 0;
   }
   private fl = new Float64Array(3); private fl2 = new Float64Array(3);
