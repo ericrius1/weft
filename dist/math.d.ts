@@ -17,6 +17,23 @@ export declare const wrapAngle: (a: number) => number;
 export declare const angDiff: (a: number, b: number) => number;
 /** v turned by a about the unit axis k (Rodrigues) */
 export declare function rotateAxis(v: V3, k: V3, a: number): V3;
+/** sine, the same bits everywhere (|x| up to ~1e6) */
+export declare function dsin(x: number): number;
+/** cosine, the same bits everywhere */
+export declare function dcos(x: number): number;
+/** e^x, the same bits everywhere (-700..700) */
+export declare function dexp(x: number): number;
+/** arctangent, the same bits everywhere */
+export declare function datan(x: number): number;
+/** atan2(y, x), the same bits everywhere */
+export declare function datan2(y: number, x: number): number;
+/** rotateAxis with dsin/dcos: the same bits everywhere */
+export declare function drotateAxis(v: V3, k: V3, a: number): V3;
+/** a number held to a grid of 2^-30 (~1e-9): what an engine's own maths left in its last bits (a curl damped by
+ *  Math.exp) gone before a solve that would carry and grow them (exact: a power of two, a round) */
+export declare const q30: (x: number) => number;
+/** damp with dexp: the same bits everywhere */
+export declare const ddamp: (cur: number, target: number, k: number, dt: number) => number;
 /** toward a target at rate k (1/s), frame-rate independent */
 export declare const damp: (cur: number, target: number, k: number, dt: number) => number;
 export declare const damp3: (cur: V3, target: V3, k: number, dt: number) => V3;

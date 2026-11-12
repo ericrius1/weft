@@ -24,6 +24,21 @@ export interface HandGoal {
     /** the fingers closed round something held (0..1; a cup, a bowl): set, the hand holds rather than resting on keys —
      *  the fingers without a tip's target curl by `curl` and this, the thumb too */
     grip?: number;
+    /** what's held, as a shape (world): a cylinder about `axis` through `at` of radius `r` (a cup, a glass, a tool's
+     *  handle, a bow's stick; `len` long, centred on `at`, else endless), or a ball (`axis` [0,0,0]). With `grip` set,
+     *  each finger and the thumb close from open toward the grip's curl and stop where their skin meets its surface
+     *  (`pad`: the finger's half-thickness at the pad, m, default 8.5 mm for a 4.8 cm-knuckled hand, scaled to the
+     *  hand's) — nothing passes through what it holds, and the thumb opposes the fingers round it */
+    around?: {
+        at: V3;
+        axis: V3;
+        r: number;
+        len?: number;
+        pad?: number;
+    };
+    /** a built hand's fingers posed as given (fingers.ts's numbers, HAND_N; the palm's six ignored): a grasp solved
+     *  against what's held (grasp.ts graspGoal), blended in with the goal's weight. Set, `around` is not closed */
+    pose?: ArrayLike<number>;
     /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
     elbow?: V3;
     /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
@@ -67,6 +82,11 @@ export interface HandGoal {
         n: V3;
         clear: number;
     };
+    /** how much real pianists' hands shape a built hand at the keys (0..1; body/handprior.ts): the fingertips with targets
+     *  land on them, and the rest of the hand — the idle fingers, the thumb, the arch, how the playing fingers bend to
+     *  their keys — takes the posture real hands have with those fingers down, rather than each finger's own rest
+     *  (the Pianist sets it for a built hand: piano.ts forHand) */
+    prior?: number;
 }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
@@ -371,12 +391,39 @@ export declare class HeroRig {
         idle: number[][];
         tip: number[][];
         fan: number[];
+        tipBuilt: number[][];
+        idleBuilt: number[][];
+        thumbIdleBuilt: number[];
         thumbIdle: number[];
         thumbTip: number[];
+        thumbHigh: number[];
         /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
          *  per mm, so these shape the hand, not where the tips land) */
         wTip: number;
         wThumb: number;
+        /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
+         *  the idle thumb: times restThumb — real idle thumbs are bent) and the playing ones keep under it */
+        wPrior: number;
+        restIdle: number;
+        restPlay: number;
+        restThumb: number;
+        /** a built hand's idle finger held as a lever (see askHand): how much less bent than its playing neighbours its
+         *  knuckle and middle joint are (rad), the end joint's share of the middle's, the bands they're kept in (rad), and the
+         *  goal weight (tipW) at which it's wholly idle, how much the prior lets its bends go, and the knuckle and middle joint
+         *  of a hand with no finger playing (rad), how firmly its knuckle, middle and end joints are held there, and how far
+         *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
+        lever: {
+            mcp: number;
+            pip: number;
+            dip: number;
+            band: number[];
+            mcpBand: number[];
+            at: number;
+            letGo: number;
+            rest: number[];
+            w: number[];
+            hook: number;
+        };
     };
     private handM;
     private handS;
@@ -570,6 +617,17 @@ export declare class HeroRig {
     private askHand;
     private fl;
     private fl2;
+    /** each finger's lever (0 playing .. 1 idle at the keys) this frame, and the prior's precision with the idle fingers let go */
+    private lever;
+    private priorBuf;
+    /** a lever finger found curled far past its rest (its middle joint more than lever.hook rad over it: a hook the
+     *  keys' floor holds it in — straightening it would sink its tip, so the solve stays) starts again from its rest: the
+     *  lever is the other valley, and the one a pianist's finger is in */
+    private unhook;
+    /** an idle finger's lever rest at the keys (joint j: 0 knuckle, 1 middle, 2 end): its playing neighbours' bends as last
+     *  solved (the fingers the goal holds at full weight; none, the keys' playing rests), the knuckle extended and the
+     *  middle joint eased by keysHand.lever, the end joint with the middle (its tendon) */
+    private leverRest;
     /** the palm and fingers solved together for a goal whose palm is free (HandGoal.palmFree): the goal handed back with
      *  the palm moved and turned as solved, for the arm to take (the fingers are solved again on the hand as the arm put
      *  it: chordFingers) */
@@ -581,6 +639,17 @@ export declare class HeroRig {
     /** a built hand's fingers with nothing to reach: every number at its rest (askHand's: the curl's cascade, a grip's
      *  wrap, the keys'), within its limits, no solve; the arch with the grip (a fist's palm cups) */
     private restFingers;
+    /** a held thing's shape into hand space (Q.floor's way): [at (3), axis (3, unit or 0), r, half-length (or -1), pad] */
+    private arnd;
+    private xOpen;
+    private xOpen2;
+    private fkP2;
+    /** the fingers (built hand, holding) closed from open toward their grip's rests until each meets the held shape:
+     *  per finger the share of the way from open to the grip (0..1) where its skin first touches the surface, found
+     *  by stepping then halving; a finger that never touches closes all the way (the shape's smaller than the grip) */
+    private closeAround;
+    private pen;
+    private from;
     private fkP;
     private fkU;
     private fkK;

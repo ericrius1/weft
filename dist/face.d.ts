@@ -309,6 +309,9 @@ export declare class Face {
     chew: number;
     /** how wide the mouth opens talking */
     talkOpen: number;
+    /** 0..1: how steadily the eyes hold what they look at — a modelled face speaking to someone a metre away (the
+     *  saccades and the phrase's glances scaled down by up to 0.8) */
+    attend: number;
     /** this face's own look at rest, added under any mood (a lopsided half-smile, say) */
     rest: Partial<FaceParams> | null;
     private moodE;

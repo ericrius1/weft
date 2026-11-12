@@ -27,6 +27,12 @@ export interface HeroHeader {
   /** the hands as built (a modelled hand grafted on and weighted to its own bones: fitHands leaves it alone): where
    *  it came from, wrist-to-middle-fingertip length (m), breadth against the source's */
   hand?: { source: string; len: number; breadth: number };
+  /** a modelled face (lips, a jaw that opens on teeth and a tongue, brows, lids over real eyes: built, not drawn): its
+   *  bones move as far as a real face's (rig.ts MODELLED), times `gain` */
+  faceRig?: { gain?: number; /** the jaw's opening at full (rad; 0.24 if unset) */ jaw?: number;
+    /** each speech shape's own gain over `gain` (round, press, spread, tuck, open: 1 if unset) */ shapes?: Record<string, number>;
+    /** 0..1: how steadily the eyes hold what they look at (the saccades and the phrase's glances scaled down) */ attend?: number;
+    /** the lids held this much more open at rest (0..1) */ lidOpen?: number };
 }
 export interface HeroAsset {
   header: HeroHeader;

@@ -50,6 +50,11 @@ export declare class HandModel {
     private constructor();
     /** a body's hand ('L' her left), or null if its fingers aren't each three bones */
     static of(a: HeroAsset, T: 'L' | 'R'): HandModel | null;
+    /** a built hand (its file's own, header.hand; or one with the ring and little metacarpals) */
+    readonly built: boolean;
+    private readonly pron;
+    /** the saddle's turn (pronation, rad) for its flexion cf and abduction ca */
+    thumbPron(cf: number, ca: number): number;
     private mq;
     private mk2;
     /** finger f's metacarpal posed by the arch in x (hand space, before the palm's move): its head, tail and up (o, 9) */
@@ -83,8 +88,20 @@ export interface HandAsk {
      *  far clear of it a fingertip without a target keeps (m; 0: no surface) */
     floor: Float64Array;
     clear: number;
+    /** a prior on the hand's own numbers (HAND_N from the arch on: 21) — real hands' mean and precision (body/handprior.ts:
+     *  pianists' at the keys) — and how much it counts (0: none). With fingertips held on their targets, the rest of the
+     *  hand takes the posture real hands have with those fingers there (the Gaussian's conditional mean) */
+    priorMu: Float64Array | null;
+    priorP: Float64Array | null;
+    wp: number;
 }
 export declare const handAsk: () => HandAsk;
+/** the prior's precision (PRN x PRN, row-major, in place in `o`) with finger f's knuckle, middle and end joints let go
+ *  by k (0..1): o <- (1 - k) o + k S, S the Schur complement that marginalises those three numbers out (the Gaussian
+ *  over the rest as if they weren't seen; their rows and columns 0). A finger the prior shouldn't shape (an idle one at
+ *  the keys, held by its own rests instead) leaves the others' posture as real hands have it. + - * / only (the hands'
+ *  determinism across engines) */
+export declare function priorLetGo(o: Float64Array, f: number, k: number): void;
 /** a hand's solve carried frame to frame: its numbers, the damping, each fingertip's miss after (m) */
 export declare class HandSolve {
     x: Float64Array<ArrayBuffer>;
@@ -113,6 +130,15 @@ export declare class HandSolve {
     readonly b: Float64Array<ArrayBuffer>;
     readonly act: Int32Array<ArrayBuffer>;
 }
+/** the couplings' weights (read each solve; for tools that take one out to see what it does): the comfortable band,
+ *  the end joint's tendon, the webs, the enslaving bands, the fingertips' gaps */
+export declare const HAND_W: {
+    band: number;
+    dip: number;
+    web: number;
+    apart: number;
+    gap: number;
+};
 /** how many solves have run and their iterations (all; and those with the palm free): for tools */
 export declare const SOLVES: {
     n: number;

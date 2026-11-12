@@ -97,6 +97,9 @@ export class Face {
     chew = 0;
     /** how wide the mouth opens talking */
     talkOpen;
+    /** 0..1: how steadily the eyes hold what they look at — a modelled face speaking to someone a metre away (the
+     *  saccades and the phrase's glances scaled down by up to 0.8) */
+    attend = 0;
     /** this face's own look at rest, added under any mood (a lopsided half-smile, say) */
     rest = null;
     moodE = {};
@@ -284,8 +287,9 @@ export class Face {
             if (pi !== this.lastPhrase && pi >= 0) {
                 this.lastPhrase = pi;
                 if (this.rnd() < 0.6) {
+                    const q = 1 - 0.8 * this.attend;
                     this.saccT = 0.5 + this.rnd() * 0.5;
-                    this.sacc = [(this.rnd() - 0.5) * 0.4, (this.rnd() - 0.3) * 0.18];
+                    this.sacc = [(this.rnd() - 0.5) * 0.4 * q, (this.rnd() - 0.3) * 0.18 * q];
                 }
                 if (pi > 0 && this.rnd() < 0.5)
                     this.blink();
@@ -321,7 +325,8 @@ export class Face {
         this.saccT -= dt;
         if (this.saccT <= 0) {
             this.saccT = 0.4 + this.rnd() * 2.0;
-            this.sacc = [(this.rnd() - 0.5) * 0.16, (this.rnd() - 0.5) * 0.08];
+            const q = 1 - 0.8 * this.attend;
+            this.sacc = [(this.rnd() - 0.5) * 0.16 * q, (this.rnd() - 0.5) * 0.08 * q];
         }
         const a = aim ?? [0, 0, 1];
         const yaw = Math.min(0.5, Math.max(-0.5, Math.atan2(a[0], Math.max(a[2], 0.05)) + this.sacc[0] + lookY));

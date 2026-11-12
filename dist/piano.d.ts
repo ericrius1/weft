@@ -120,9 +120,23 @@ export declare class Pianist {
      *  hand to tracked footage of pianists, World's tools/hands/fit.mjs: from above the fingers lie long, the knuckles
      *  well back from the black keys) — for a built hand (HeroHeader.hand); bodies without one keep the default */
     forHand(len: number): this;
+    /** how far over the white keys' tops a finger with nothing to play is held clear (m: the hand's solve's floor). A built
+     *  hand's (forHand) 18 mm: its idle fingers lie long as levers now, and at 6 mm their tips sank into the black keys'
+     *  fronts, so from above they read as stubs; side clips of pianists: idle tips 23 mm over the hand's lowest (median),
+     *  World tools/hands/idlejoints.mjs, Checkpoint J */
+    idleClear: number;
     /** how high a finger with nothing to play rides over the white keys' tops (m; real players' idle fingers stay low,
      *  within about a centimetre of the keys, and move with their neighbours) */
     idleHover: number;
+    /** a finger let go eases to an idle finger's weight as it comes up (a built hand's: forHand); else it's held to its
+     *  idle place at a playing finger's weight until its next stroke (the older bodies' behaviour) */
+    idleRelease: boolean;
+    /** how much real pianists' hands shape the hand's posture (HandGoal.prior: a built hand's, 1; else 0) */
+    prior: number;
+    /** each idle finger's place over its neighbours' (m, thumb first, added to idleHover): real players' idle thumbs and
+     *  little fingers ride highest, the ring lowest (side views of pianists: idle tips over the hand's lowest, medians
+     *  thumb 38, index 27, middle 20, ring 13, little 27 mm) */
+    idleLift: number[];
     /** how high a finger waits over its next key before it falls (m) */
     hover: number;
     /** how much further in (toward the fallboard) each finger plays a white key than the press line (m, thumb first):

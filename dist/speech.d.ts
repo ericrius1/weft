@@ -45,6 +45,15 @@ export interface LineOpts {
 }
 /** a line of text said: its phonemes on a clock, its words and where they are in the text */
 export declare function lineOf(text: string, o?: LineOpts): Timeline;
+/** a recorded line (a voice pack's: each word's start and end, s, in the order the text says them; its loudness): the
+ *  phonemes of each word fitted into the time it was actually said — the consonants at their own lengths at the word's
+ *  edges (squeezed if the word was quick), the vowels holding the rest, stressed ones longer — and silences where the
+ *  speaker paused. The mouth (mouthAt) then follows the voice, not a guess at its pace. `words`: one [t0, t1] per
+ *  whitespace-separated word of `text` (punctuation is no word; a number is one word, said as its words) */
+export declare function lineFromWords(text: string, words: [number, number][], env?: {
+    rate: number;
+    v: Uint8Array;
+}): Timeline;
 /** the mouth's shape (each 0..1): the jaw open, the lips spread (ee) or rounded (oo), pressed (m b p), the upper teeth
  *  showing, the tongue's tip up (l th n), the lower lip tucked under the teeth (f v) */
 export interface Mouth {

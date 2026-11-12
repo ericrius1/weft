@@ -30,13 +30,14 @@
 // mid-motion: carry) and Drake's (dancing on the spot: groove; a dragon's knees and a quick dismount's feet; the
 // walking clock hurried by a foot left far behind; the breath; holds anchored to a bone; forearm twist limits; chains
 // whose constraints can't fling them: MAX_KICK). See MIGRATION.md for what each project's copy differs by.)
-import { type V3, add, sub, scale, norm, cross, dot, len, clamp, lerp, lerp3, smoothstep, rotateAxis, damp, angDiff, ease, minJerk, rej, cdSpring, Spring3, bump } from './math.js';
+import { type V3, add, sub, scale, norm, cross, dot, len, clamp, lerp, lerp3, smoothstep, rotateAxis, damp, drotateAxis, ddamp, q30, angDiff, ease, minJerk, rej, cdSpring, Spring3, bump } from './math.js';
 import type { HeroAsset } from './asset.js';
 import { MAX_BONES } from './asset.js';
 import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose, BodyModel, BodyState } from './body/solve.js';
-import { HandModel, HandSolve, handAsk, solveHand, hpOf, HP_ARCH, type HandAsk } from './fingers.js';
+import { HandModel, HandSolve, handAsk, solveHand, hpOf, priorLetGo, HP_ARCH, HAND_N, type HandAsk } from './fingers.js';
+import { KEYS_PRIOR } from './body/handprior.js';
 
 type Fr = { o: V3; x: V3; y: V3; z: V3 };
 const frW = (f: Fr, l: V3): V3 => [f.o[0] + f.x[0] * l[0] + f.y[0] * l[1] + f.z[0] * l[2], f.o[1] + f.x[1] * l[0] + f.y[1] * l[1] + f.z[1] * l[2], f.o[2] + f.x[2] * l[0] + f.y[2] * l[1] + f.z[2] * l[2]];
@@ -68,6 +69,15 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   /** the fingers closed round something held (0..1; a cup, a bowl): set, the hand holds rather than resting on keys —
    *  the fingers without a tip's target curl by `curl` and this, the thumb too */
   grip?: number;
+  /** what's held, as a shape (world): a cylinder about `axis` through `at` of radius `r` (a cup, a glass, a tool's
+   *  handle, a bow's stick; `len` long, centred on `at`, else endless), or a ball (`axis` [0,0,0]). With `grip` set,
+   *  each finger and the thumb close from open toward the grip's curl and stop where their skin meets its surface
+   *  (`pad`: the finger's half-thickness at the pad, m, default 8.5 mm for a 4.8 cm-knuckled hand, scaled to the
+   *  hand's) — nothing passes through what it holds, and the thumb opposes the fingers round it */
+  around?: { at: V3; axis: V3; r: number; len?: number; pad?: number };
+  /** a built hand's fingers posed as given (fingers.ts's numbers, HAND_N; the palm's six ignored): a grasp solved
+   *  against what's held (grasp.ts graspGoal), blended in with the goal's weight. Set, `around` is not closed */
+  pose?: ArrayLike<number>;
   /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
   elbow?: V3;
   /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
@@ -106,7 +116,12 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   lay?: number[];
   /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
    *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
-  floor?: { at: V3; n: V3; clear: number } }
+  floor?: { at: V3; n: V3; clear: number };
+  /** how much real pianists' hands shape a built hand at the keys (0..1; body/handprior.ts): the fingertips with targets
+   *  land on them, and the rest of the hand — the idle fingers, the thumb, the arch, how the playing fingers bend to
+   *  their keys — takes the posture real hands have with those fingers down, rather than each finger's own rest
+   *  (the Pianist sets it for a built hand: piano.ts forHand) */
+  prior?: number }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -615,6 +630,19 @@ const FACE_POSE: Record<string, Partial<Record<keyof FaceExpr, V3>>> = {
   browOut: { brows: [0.0003, 0.0034, 0.0003], tender: [0, -0.001, 0], browDown: [0, -0.001, 0], smile: [0, 0.0004, 0] },
 };
 const JAW_OPEN = 0.16;
+/** a modelled face (header.faceRig: lips, a jaw, teeth and brows built, not drawn) moves its bones as far as a real
+ *  face's: per control, the offset (m, at 1.66 m tall; x out to the bone's own side) of each kind of face bone. The
+ *  mouth's corners and lips from the speech's shapes (spread for ee, round for oo, press for m b p, tuck for f v) as
+ *  well as the smile and the frown; the lower lip rides the jaw */
+const MODELLED: Record<string, Partial<Record<'smile' | 'frown' | 'spread' | 'round' | 'press' | 'tuck' | 'teeth' | 'open' | 'smirk', V3>>> = {
+  mouth: { smile: [0.0045, 0.0055, -0.002], frown: [0.0005, -0.0045, 0], spread: [0.005, 0.0004, -0.0018], round: [-0.0075, 0.0004, 0.0035], press: [-0.0005, 0, 0], open: [-0.0015, 0, 0] },
+  lipU: { smile: [0, 0.0012, -0.0004], round: [0, 0.0005, 0.0042], press: [0, -0.0012, 0.0004], teeth: [0, 0.0022, 0.0006], tuck: [0, 0.0012, 0.0008] },
+  lipUS: { smile: [0.0022, 0.0026, -0.0012], spread: [0.0028, 0.0006, -0.001], round: [-0.0042, 0.0004, 0.0032], press: [0, -0.001, 0.0003], teeth: [0, 0.0026, 0.0004], tuck: [0, 0.001, 0.0006] },
+  lipD: { smile: [0, 0.0004, -0.0004], frown: [0, 0.0012, 0.0015], round: [0, -0.0004, 0.004], press: [0, 0.0028, 0.0008], tuck: [0, 0.0045, -0.0035], teeth: [0, -0.0012, 0] },
+  lipDS: { smile: [0.0018, 0.0012, -0.001], frown: [0.0004, -0.001, 0], spread: [0.0026, -0.0004, -0.0008], round: [-0.0038, 0, 0.0032], press: [0, 0.0024, 0.0006], tuck: [0, 0.0036, -0.003], teeth: [0, -0.0014, 0] },
+  cheek: { smile: [0.0012, 0.0045, 0.0018], round: [-0.0012, -0.0004, -0.0006], open: [-0.0008, -0.0035, -0.0004] },
+};
+const JAW_OPEN_MODELLED = 0.24;
 
 // ---------------------------------------------------------------- verlet chains (braid, hair loops, panels)
 interface Capsule { a: V3; b: V3; r: number }
@@ -838,11 +866,34 @@ export class HeroRig {
     idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
     tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
     fan: [0.08, 0.03, 0, -0.08],
-    // (the thumb as our hand's fits to overhead footage hold it: its saddle a little extended and turned away)
-    thumbIdle: [-0.28, -0.31, 0.23, 0.1], thumbTip: [-0.28, -0.31, 0.23, 0.1],
+    // (a built hand's: bent most at the middle joint, little at the knuckle — a pianist's curve. The rests above (the knuckle
+    // bent most) came from fits from above, which can't split a finger's bend between its knuckle and its middle joint;
+    // under them the hand stood up on its knuckles (6 cm over the keys, its fingers dropping from them) and from above read
+    // as a mound fringed with short fingers. Side views of pianists: knuckles ~49 mm over the lowest tip; these give 48
+    // (World tools/hands/wholehand.mjs, Checkpoint I))
+    tipBuilt: [[0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.2, 0.55, 0.25]],
+    idleBuilt: [[0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.15, 0.45, 0.2]],
+    // (and its idle thumb out from the index, less bent: from above the real idle thumb lies out to the side of the hand;
+    // its points' miss from above 5.7 -> 4.3 % of the hand's length, the fan to the index 9 -> 13° (real 19), its plan
+    // extension 0.80 -> 0.89 (real 0.79))
+    thumbIdleBuilt: [-0.44, 0.1, 0.6, 0.4],
+    // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
+    // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
+    // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97;
+    // MCP 0.95 / IP 0.8 with the hand's pitch 0.12 (piano.ts forHand): playing 0.87, the wrist 30 mm over the lowest tip)
+    thumbIdle: [-0.44, -0.35, 0.95, 0.8], thumbTip: [-0.44, -0.35, 0.95, 0.8], thumbHigh: [-0.28, -0.31, 0.23, 0.1],
     /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
      *  per mm, so these shape the hand, not where the tips land) */
     wTip: 3, wThumb: 6,
+    /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
+     *  the idle thumb: times restThumb — real idle thumbs are bent) and the playing ones keep under it */
+    wPrior: 1, restIdle: 0.25, restPlay: 1, restThumb: 4,
+    /** a built hand's idle finger held as a lever (see askHand): how much less bent than its playing neighbours its
+     *  knuckle and middle joint are (rad), the end joint's share of the middle's, the bands they're kept in (rad), and the
+     *  goal weight (tipW) at which it's wholly idle, how much the prior lets its bends go, and the knuckle and middle joint
+     *  of a hand with no finger playing (rad), how firmly its knuckle, middle and end joints are held there, and how far
+     *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
+    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [0.05, 0.6], at: 0.1, letGo: 0.5, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2421,11 +2472,13 @@ export class HeroRig {
     }
     if (this.bi['index1' + t] === undefined) return;
     // (fingertips with targets: the hand solved as a hand — fingers.ts)
-    if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, c, grip, holds, goal, goalW, dt); return; }
+    // (the hand's solve carries its numbers frame to frame: what comes in is held to a grid first, so no engine's own
+    // last bits get in — the same pose in every browser and in Node; math.ts dsin)
+    if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
     // (a built hand — its file's own hand, header.hand — with no fingertip to place: its fingers at their rests through
     // the hand model, each finger bending about its own knuckle's axis; the older path below turns every finger about
     // the hand's one axis, which a modelled hand's curved, fanned fingers don't survive)
-    if (this.asset.header.hand && this.handM[hi]) { this.restFingers(hi, c, grip, holds, goal, goalW, dt); return; }
+    if ((this.asset.header.hand || (goal?.pose && goalW > 0.001)) && this.handM[hi]) { this.restFingers(hi, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
     // per-joint fingers: a relaxed hand cascades (the index curls least, the pinky most), the end joints fairly
     // straight; at an instrument each finger with a target reaches it — its curl solved so the tip lands there (the
     // middle and end joints coupled as a hand's are), its spread turned toward it
@@ -2511,7 +2564,7 @@ export class HeroRig {
     const FAN = keys ? K.fan : [0.06, 0.02, -0.03, -0.08];
     for (let f = 0; f < 5; f++) {
       const tip = goal.tips[f] ?? null;
-      tw[f] = damp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
+      tw[f] = ddamp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
       let k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0, rf = tip ? 1 : 0;
       if (tip) {
         toC(tip, Q.tgt, f * 3);
@@ -2531,8 +2584,12 @@ export class HeroRig {
       Q.resting[f] = tip ? 0 : 1;
       if (f === 0) {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
-        const rt = keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2];
-        const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+        // (on a key standing over the surface — a black key — the thumb reaches in flatter, as a pianist's does)
+        const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
+        // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
+        const idle = keys && (goal.tipW?.[0] ?? 1) < 0.5;
+        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
+        const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)
         for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : 0.6, rf); }
@@ -2542,11 +2599,23 @@ export class HeroRig {
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      const tipAng = keys ? K.tip[g] : [0.4, 0.6, 0.42];
+      let tipAng = keys ? (built ? K.tipBuilt : K.tip)[g] : [0.4, 0.6, 0.42];
+      // (a built hand's finger the Pianist holds lightly — nothing to play — is held off its key as a pianist's is: lifted
+      // at the knuckle, not curled. Its middle and end joints as its playing neighbours have them (a little straighter),
+      // its knuckle extended from theirs, so the whole finger rises like a lever and its tip hovers ahead over its key,
+      // still pointing forward; eased in as its weight lets go (Checkpoint J: side clips of pianists, World
+      // tools/hands/idlejoints.mjs — idle fingers' knuckles ~13° and middle joints ~5-10° less bent than the playing
+      // ones'; with the playing fingers' rests the idle ones curled into hooks, their middle joints 44° seen from the side
+      // against the clips' 18)
+      // (only at a piano's keys with real pianists' prior asked: HandGoal.prior, the Pianist's for a built hand; a finger with
+      // no target at all there — a held pose's — is wholly idle)
+      const atKeys = keys && built && !!goal.prior;
+      const lv = this.lever[hi][f] = atKeys ? (tip ? clamp((1 - (goal.tipW?.[f] ?? 1)) / (1 - K.lever.at), 0, 1) : 1) : 0;
+      if (lv > 0) tipAng = tipAng.map((a, j) => lerp(a, this.leverRest(hi, goal, j), lv));
       // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
       // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
       // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
-      if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
+      if (keys) ang = ang.map((a, j) => lerp(a, atKeys ? tipAng[j] : (built ? K.idleBuilt : K.idle)[g][j], goalW));
       // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
       // toward the little finger — where the older hands' rests were nearly straight)
       else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
@@ -2558,12 +2627,34 @@ export class HeroRig {
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, 1.5, sq) : wr; }
+      // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
+      // — the cheap way up — rather than curling)
+      // (a finger with no target at all — a held pose's: one the Pianist hovers keeps its playing neighbours' weights)
+      if (lv > 0 && !tip) for (let j = 0; j < 3; j++) Q.wr[o + 1 + j] = K.lever.w[j];
       // (laid flat along what it presses: its middle and end joints straight)
       const lay = goal.lay?.[f] ?? 0;
       Q.lay[f] = lay;
       if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
     }
     Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;
+    // (real pianists' hands: a prior on the whole hand's numbers; the fingers' own rests loosened under it)
+    const pr = keys && built && goal.prior ? clamp(goal.prior, 0, 1) * goalW : 0;
+    Q.wp = pr * K.wPrior; Q.priorMu = KEYS_PRIOR.mu; Q.priorP = KEYS_PRIOR.P;
+    // (an idle finger held as a lever: the prior lets its bends go — real hands' postures were fitted from above, where a
+    // finger's bend can't be split between its joints — and its lever rests hold it; the other fingers keep the prior)
+    if (pr > 0 && this.lever[hi].some((v) => v > 0)) {
+      const PP = this.priorBuf[hi];
+      PP.set(KEYS_PRIOR.P);
+      for (let f = 1; f <= 4; f++) priorLetGo(PP, f, this.lever[hi][f] * K.lever.letGo);
+      Q.priorP = PP;
+    }
+    if (pr > 0) for (let f = 0; f < 5; f++) {
+      const idle = Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5), o = hpOf(f), kk = lerp(1, idle ? K.restIdle * (f === 0 ? K.restThumb : 1) : K.restPlay, pr);
+      // (a lever's bends keep their own weights: the prior has let them go)
+      const lv = f > 0 && !goal.tips[f] ? this.lever[hi][f] : 0;
+      for (let j = 0; j < 4; j++) Q.wr[o + j] *= j > 0 ? lerp(kk, 1, lv) : kk;
+      if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
+    }
     Q.clear = 0;
     const F = goal.floor;
     if (F && F.clear > 0) {
@@ -2576,11 +2667,39 @@ export class HeroRig {
     }
   }
   private fl = new Float64Array(3); private fl2 = new Float64Array(3);
+  /** each finger's lever (0 playing .. 1 idle at the keys) this frame, and the prior's precision with the idle fingers let go */
+  private lever = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]];
+  private priorBuf = [new Float64Array(KEYS_PRIOR.P.length), new Float64Array(KEYS_PRIOR.P.length)];
+  /** a lever finger found curled far past its rest (its middle joint more than lever.hook rad over it: a hook the
+   *  keys' floor holds it in — straightening it would sink its tip, so the solve stays) starts again from its rest: the
+   *  lever is the other valley, and the one a pianist's finger is in */
+  private unhook(hi: number) {
+    const L = HeroRig.keysHand.lever, Q = this.handQ[hi], x = this.handS[hi].x;
+    for (let f = 1; f <= 4; f++) {
+      if (this.lever[hi][f] < 0.5) continue;
+      const o = hpOf(f);
+      if (x[o + 2] - Q.rest[o + 2] > L.hook) for (let j = 1; j <= 3; j++) x[o + j] = Q.rest[o + j];
+    }
+  }
+  /** an idle finger's lever rest at the keys (joint j: 0 knuckle, 1 middle, 2 end): its playing neighbours' bends as last
+   *  solved (the fingers the goal holds at full weight; none, the keys' playing rests), the knuckle extended and the
+   *  middle joint eased by keysHand.lever, the end joint with the middle (its tendon) */
+  private leverRest(hi: number, goal: HandGoal, j: number): number {
+    const K = HeroRig.keysHand, L = K.lever, x = this.handS[hi].x;
+    let n = 0, m = 0, p = 0;
+    for (let f = 1; f <= 4; f++) if (goal.tips[f] && (goal.tipW?.[f] ?? 1) >= 0.5 && this.handS[hi].ready) { const o = hpOf(f); m += x[o + 1]; p += x[o + 2]; n++; }
+    // (no finger playing — the hand resting over the keys — the lever's own rest, L.rest)
+    if (!n) return j === 0 ? L.rest[0] : j === 1 ? L.rest[1] : L.rest[1] * L.dip;
+    const mcp = m / n, pip = p / n;
+    const pp = clamp(pip - L.pip, L.band[0], L.band[1]);
+    return j === 0 ? clamp(mcp - L.mcp, L.mcpBand[0], L.mcpBand[1]) : j === 1 ? pp : pp * L.dip;
+  }
 
   /** the palm and fingers solved together for a goal whose palm is free (HandGoal.palmFree): the goal handed back with
    *  the palm moved and turned as solved, for the arm to take (the fingers are solved again on the hand as the arm put
    *  it: chordFingers) */
   private chordPalm(i: number, side: number, T: string, goal: HandGoal, goalW: number, dt: number): HandGoal {
+    goalW = q30(goalW);
     const M = this.handM[i]!, S = this.handS[i], Q = this.handQ[i];
     // (the goal's own frame: its roll is the solve's to choose now, not the arm's turn — the hand is handed back held
     // exactly as solved)
@@ -2595,12 +2714,13 @@ export class HeroRig {
     void dt;
     Q.free = clamp(goal.palmFree ?? 0, 0, 1) * goalW;
     S.x.set(this.palmX[i], 0);
+    this.unhook(i);
     solveHand(M, S, Q, HeroRig.handIters[0]);
     this.palmX[i].set(S.x.subarray(0, 6));
     this.palmMiss[i].set(S.miss);
     const x = S.x, a = Math.hypot(x[3], x[4], x[5]);
     const W = (c0: number, c1: number, c2: number): V3 => [h[0] * c0 + t[0] * c1 + p[0] * c2, h[1] * c0 + t[1] * c1 + p[1] * c2, h[2] * c0 + t[2] * c1 + p[2] * c2];
-    const turn = (v: V3): V3 => (a < 1e-9 ? v : rotateAxis(v, [x[3] / a, x[4] / a, x[5] / a], a));
+    const turn = (v: V3): V3 => (a < 1e-9 ? v : drotateAxis(v, [x[3] / a, x[4] / a, x[5] / a], a));
     const h2 = W(...turn([1, 0, 0])), p2 = W(...turn([0, 0, 1]));
     const w2 = add(wrist, W(x[0], x[1], x[2]));
     // (where the hand is to be, so the fingers' second solve can be skipped when the arm put it there)
@@ -2626,7 +2746,7 @@ export class HeroRig {
     const E = this.palmAt[hi], wb2 = this.skinPoint(M.hb, M.wrist), hx = this.skinDir(M.hb, X), pz = this.skinDir(M.hb, Z);
     const there = E[9] === 1 && Math.hypot(wb2[0] - E[0], wb2[1] - E[1], wb2[2] - E[2]) < 1e-4 && hx[0] * E[3] + hx[1] * E[4] + hx[2] * E[5] > 0.9999995 && pz[0] * E[6] + pz[1] * E[7] + pz[2] * E[8] > 0.9999995;
     E[9] = 0;
-    if (!there) solveHand(M, S, Q, HeroRig.handIters[1]);
+    if (!there) { this.unhook(hi); solveHand(M, S, Q, HeroRig.handIters[1]); }
     const P = new Float64Array(12), U = new Float64Array(9), K = new Float64Array(3), Zf = new Float64Array(3);
     const hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {
@@ -2654,6 +2774,8 @@ export class HeroRig {
     for (let i = 0; i < 6; i++) x[i] = 0;
     for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
     x[HP_ARCH] = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1));
+    if (goal?.pose && goalW > 0.001) { const g = goal.pose; for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], x[i] + (g[i] - x[i]) * goalW)); }
+    else if (holds && goal?.around && goalW > 0.001) this.closeAround(hi, c, goal, goalW, dt);
     S.ready = true;
     const P = this.fkP, U = this.fkU, K = this.fkK, Zf = this.fkZ, hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {
@@ -2670,6 +2792,79 @@ export class HeroRig {
       }
     }
   }
+  /** a held thing's shape into hand space (Q.floor's way): [at (3), axis (3, unit or 0), r, half-length (or -1), pad] */
+  private arnd = new Float64Array(9); private xOpen = new Float64Array(HAND_N); private xOpen2 = new Float64Array(HAND_N); private fkP2 = new Float64Array(12);
+  /** the fingers (built hand, holding) closed from open toward their grip's rests until each meets the held shape:
+   *  per finger the share of the way from open to the grip (0..1) where its skin first touches the surface, found
+   *  by stepping then halving; a finger that never touches closes all the way (the shape's smaller than the grip) */
+  private closeAround(hi: number, c: number, goal: HandGoal, goalW: number, dt: number) {
+    const M = this.handM[hi]!, S = this.handS[hi], Q = this.handQ[hi], x = S.x, A = goal.around!, m = this.bones, k = M.hb * 16;
+    const wb = M.wrist, X = M.X, Y = M.Y, Z = M.Z, o = this.arnd;
+    const toC = (w: ArrayLike<number>, dir: boolean, j: number) => {
+      const e0 = w[0] - (dir ? 0 : m[k + 12]), e1 = w[1] - (dir ? 0 : m[k + 13]), e2 = w[2] - (dir ? 0 : m[k + 14]);
+      const b0 = m[k] * e0 + m[k + 1] * e1 + m[k + 2] * e2 - (dir ? 0 : wb[0]), b1 = m[k + 4] * e0 + m[k + 5] * e1 + m[k + 6] * e2 - (dir ? 0 : wb[1]), b2 = m[k + 8] * e0 + m[k + 9] * e1 + m[k + 10] * e2 - (dir ? 0 : wb[2]);
+      o[j] = b0 * X[0] + b1 * X[1] + b2 * X[2]; o[j + 1] = b0 * Y[0] + b1 * Y[1] + b2 * Y[2]; o[j + 2] = b0 * Z[0] + b1 * Z[1] + b2 * Z[2];
+    };
+    toC(A.at, false, 0); toC(A.axis, true, 3);
+    const al = Math.hypot(o[3], o[4], o[5]);
+    if (al > 1e-9) { o[3] /= al; o[4] /= al; o[5] /= al; } else { o[3] = 0; o[4] = 0; o[5] = 0; }
+    const sc = M.width / 0.048;
+    o[6] = A.r; o[7] = A.len !== undefined ? A.len / 2 : -1; o[8] = (A.pad ?? 0.0085) * sc;
+    // (the open hand: flat, no grip)
+    const xg = this.xOpen;
+    xg.set(x);
+    this.askHand(hi, -0.1, 0, true, { ...goal, grip: 0 }, goalW, 0, () => { /* no targets */ });
+    const open = this.xOpen2;
+    for (let i = 6; i < HAND_N; i++) open[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
+    // (flat: every finger's joints straight, the thumb's MCP and IP too, its saddle out of the palm)
+    for (let f = 1; f <= 4; f++) for (let j = 1; j <= 3; j++) open[hpOf(f) + j] = Math.max(M.lo[hpOf(f) + j], 0);
+    open[23] = Math.max(M.lo[23], -0.3); open[24] = Math.min(M.hi[24], 0.3); open[25] = 0; open[26] = 0;
+    // (put back the grip's rests and weights for anything that reads them after)
+    this.askHand(hi, c, goal.grip ?? 0, true, goal, goalW, 0, () => { /* no targets */ });
+    void dt;
+    const P = this.fkP2, U = null, K = this.fkK, Zf = this.fkZ;
+    const pad = (f: number) => o[8] * (f === 0 ? 1.15 : f === 4 ? 0.85 : 1);
+    // (how far point j of finger f, as x stands, is from the shape's skin, the finger's pad included: < 0 inside;
+    // a point past the shape's ends is clear of it)
+    const gap = (f: number, j: number) => {
+      M.fk(x, f, P, U, K, Zf);
+      const p0 = P[j * 3] - o[0], p1 = P[j * 3 + 1] - o[1], p2 = P[j * 3 + 2] - o[2];
+      const ax = p0 * o[3] + p1 * o[4] + p2 * o[5];
+      if (o[7] >= 0 && Math.abs(ax) > o[7] + pad(f)) return 1;
+      return Math.sqrt(Math.max(0, p0 * p0 + p1 * p1 + p2 * p2 - ax * ax)) - (o[6] + pad(f));
+    };
+    // (a finger wraps round a thing as a hand does: its knuckle closes until the end of its first bone lies on the
+    // surface, then its middle joint until the second's does, then its end joint — each bone a chord round the shape,
+    // its pad on the skin. A joint whose bone ends clear of the shape closes all the way to the grip's rest; one that
+    // starts inside stays open. The thumb's saddle swings it round until its tip meets the thing, then it wraps)
+    for (let f = 0; f < 5; f++) {
+      const J = f === 0 ? [[23, 24], [25], [26]] : [[hpOf(f) + 1], [hpOf(f) + 2], [hpOf(f) + 3]];
+      if (f > 0) x[hpOf(f)] = xg[hpOf(f)];
+      for (const g of J) for (const i of g) x[i] = open[i];
+      const from = this.from;
+      for (let st = 0; st < 3; st++) {
+        const ids = J[st], pt = f === 0 && st === 0 ? 3 : st + 1;
+        // (the chord's middle on the skin: its end a little out, by the sagitta of a bone this long round this radius)
+        const L = st === 0 && f === 0 ? 0 : Math.hypot(...[0, 1, 2].map((c) => M.seg[f * 9 + st * 3 + c])), R = o[6] + pad(f);
+        const sag = L > 0 && L < 2 * R ? R - Math.sqrt(R * R - L * L / 4) : 0;
+        for (const i of ids) from[i] = x[i];
+        // (any point of the finger past this joint: the bone's end on the surface less its sagitta, the ones past it
+        // as they are — the joint stops at whatever of the finger meets the thing first)
+        const at = (t: number) => { for (const i of ids) x[i] = from[i] + (xg[i] - from[i]) * t; let g = gap(f, pt) - sag; for (let q = pt + 1; q <= 3; q++) g = Math.min(g, gap(f, q)); return g; };
+        if (at(0) <= 0) { at(0); continue; }
+        // (stepped along its closing: the first step that reaches the surface, then halved down to it; an arc that
+        // never reaches it stops where it comes nearest, if that's near — a finger reaching round past the thing, not
+        // curled into the air beside it)
+        let n0 = -1, bt = 1, bg = Infinity;
+        for (let n = 1; n <= 16; n++) { const g = at(n / 16); if (g <= 0) { n0 = n; break; } if (g < bg) { bg = g; bt = n / 16; } }
+        if (n0 < 0) { at(bg < 0.03 * sc ? bt : 1); continue; }
+        let lo = (n0 - 1) / 16, hi2 = n0 / 16;
+        for (let it = 0; it < 10; it++) { const mid = (lo + hi2) / 2; if (at(mid) > 0) lo = mid; else hi2 = mid; }
+        at(lo);
+      }
+    }
+  }
+  private pen = new Float64Array(3); private from = new Float64Array(HAND_N);
   private fkP = new Float64Array(12); private fkU = new Float64Array(9); private fkK = new Float64Array(3); private fkZ = new Float64Array(3);
 
   /** a finger's spread and joint angles (bind-space, about the hand's own axes) that put its tip on a world point: the
@@ -2748,6 +2943,7 @@ export class HeroRig {
     const hx = norm(this.skinDir(head, [1, 0, 0])), hu = norm(this.skinDir(head, [0, 1, 0])), hf = norm(this.skinDir(head, [0, 0, 1]));
     const mid = this.skinPoint(head, [0, E.y, E.z]);
     const to = norm(lerp3(hf, norm(sub(look, mid)), 0.9));
+    this.face.attend = this.asset.header.faceRig?.attend ?? 0;
     const S = this.face.update(dt, fromLegacy(want, this.fxBase), [dot(to, hx), dot(to, hu), dot(to, hf)]);
     toLegacy(S, this.fx);
     this.gaze = S.gaze;
@@ -2763,7 +2959,8 @@ export class HeroRig {
     const blink = this.blink;
     const gp = Math.asin(clamp(g[1], -1, 1));
     const heavy = Math.max(0, S.lidUp);
-    const thU0 = -gp * 0.6 + F.squint * 0.12 - F.wide * 0.22 + heavy * 0.35, thD0 = -gp * 0.25 - F.smile * 0.1 - F.squint * 0.22 + F.wide * 0.08;
+    const lo = this.asset.header.faceRig?.lidOpen ?? 0;
+    const thU0 = -gp * 0.6 + F.squint * 0.12 - F.wide * 0.22 + heavy * 0.35 - lo * 0.2, thD0 = -gp * 0.25 - F.smile * 0.1 - F.squint * 0.22 + F.wide * 0.08 + lo * 0.07;
     const thU = clamp(thU0 + (0.6 - thU0) * blink, -0.2, 0.85);
     const thD = clamp(thD0 + (-0.23 - thD0) * blink, -0.45, 0.3);
     const rx = (v: V3, th: number): V3 => [v[0], v[1] * Math.cos(th) - v[2] * Math.sin(th), v[1] * Math.sin(th) + v[2] * Math.cos(th)];
@@ -2781,7 +2978,8 @@ export class HeroRig {
     if (ji === undefined) return;
     const s = this.s;
     const hinge = this.B[ji].head;
-    const ang = JAW_OPEN * F.jaw;
+    const modelled = this.asset.header.faceRig ?? null;
+    const ang = (modelled ? modelled.jaw ?? JAW_OPEN_MODELLED : JAW_OPEN) * F.jaw;
     const turn = (p: V3, a: number): V3 => { const dy = p[1] - hinge[1], dz = p[2] - hinge[2], c = Math.cos(a), sn = Math.sin(a); return [p[0], hinge[1] + dy * c - dz * sn, hinge[2] + dy * sn + dz * c]; };
     const turnD = (dd: V3, a: number): V3 => [dd[0], dd[1] * Math.cos(a) - dd[2] * Math.sin(a), dd[1] * Math.sin(a) + dd[2] * Math.cos(a)];
     for (const name of FACE_RIG) {
@@ -2793,10 +2991,23 @@ export class HeroRig {
       const kind = name.startsWith('lipU') ? (side ? 'lipUS' : 'lipU') : name.startsWith('lipD') ? (side ? 'lipDS' : 'lipD') : name.replace(/[LR]$/, '');
       const P = FACE_POSE[kind];
       const o: V3 = [0, 0, 0];
-      if (kind === 'browIn' || kind === 'browOut') {
+      const Mk = modelled ? MODELLED[kind] : undefined;
+      if (Mk) {
+        const g = modelled!.gain ?? 1;
+        const want = { smile: S.smile, frown: S.frown, spread: S.spread, round: S.round, press: S.press, tuck: S.tuck, teeth: S.teeth, open: S.open, smirk: 0 };
+        // (a smirk: one corner up)
+        const sm = side ? Math.max(0, S.smirk * side) : 0;
+        want.smile = Math.min(1.2, want.smile + sm);
+        for (const key in Mk) {
+          const vv = Mk[key as keyof typeof Mk]!;
+          const w = want[key as keyof typeof want] * (modelled!.shapes?.[key] ?? 1);
+          o[0] += (side || 1) * vv[0] * w * s * g; o[1] += vv[1] * w * s * g; o[2] += vv[2] * w * s * g;
+        }
+      } else if (kind === 'browIn' || kind === 'browOut') {
         // (each brow's end by its own side: up, down, drawn in)
         const v = kind === 'browIn' ? (side > 0 ? S.browInL : S.browInR) : side > 0 ? S.browOutL : S.browOutR;
-        o[0] = side * -0.0015 * S.knit * (kind === 'browIn' ? 1 : 0.3) * s; o[1] = (0.0035 * v - 0.0012 * S.knit) * s; o[2] = 0.0004 * Math.abs(v) * s;
+        const bg = modelled ? 1.6 * (modelled.gain ?? 1) : 1;
+        o[0] = side * -0.0015 * S.knit * (kind === 'browIn' ? 1 : 0.3) * s * bg; o[1] = (0.0035 * v - 0.0012 * S.knit) * s * bg; o[2] = 0.0004 * Math.abs(v) * s * bg;
       } else for (const key in P) {
         const vv = P[key as keyof FaceExpr]!;
         const w = F[key as keyof FaceExpr];

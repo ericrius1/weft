@@ -66,8 +66,13 @@ export const JOINTS = {
     // back into it, ~42° (Cooney et al. 1981); the metacarpal's own turn (pronation, the pad coming round to face the
     // fingers: opposition) is coupled to both (fingers.ts), ~17° of it the joint's own and the rest the saddle's shape.
     // The thumb's MCP: ~56° of flexion, a few degrees back; its IP: ~80° of flexion, ~20° back (Hume et al. 1990)
-    cmc: { flex: dof(-25, 45, -10, 25, undefined, undefined, 0.1, 0.2), abd: dof(-20, 32, -8, 18, undefined, undefined, 0.1, 0.2) },
-    thumbMcp: { flex: dof(-10, 56, 0, 35, undefined, undefined, 0.1, 0.2) },
+    // The thumb's base here is the whole column at the wrist (the scaphotrapezial joint adds ~10-15° to each of the saddle's
+    // arcs: Kapandji), from a built hand's bind (its metacarpal ~8° out from the index's in the palm's plane, ~16° in front
+    // of it): flexion across the palm 55°, extension 25°; abduction in front of the palm 40°, adduction back against the
+    // index's metacarpal 25°. Its MCP: 65° (Hume's 56° the mean of a wide spread; a thumb opposing the little finger uses
+    // all of it).
+    cmc: { flex: dof(-25, 55, -10, 30, undefined, undefined, 0.1, 0.2), abd: dof(-25, 40, -12, 22, undefined, undefined, 0.1, 0.2) },
+    thumbMcp: { flex: dof(-10, 65, 0, 38, undefined, undefined, 0.1, 0.2) },
     thumbIp: { flex: dof(-20, 80, -5, 45, undefined, undefined, 0.1, 0.2) },
 };
 /** how far each finger's knuckle spreads (MCP abduction, + toward the thumb; radians, from the bind's straight fingers,
