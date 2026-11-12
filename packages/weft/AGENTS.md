@@ -399,6 +399,29 @@ whole piece is planned once, and the hands are posed from the clock's second alo
 puts a finger on the wrong key. `p.struck` lists every stroke (hand, finger, `t0`, `up`) to schedule the sound ahead,
 and `p.simplified` names any note it had to stretch for. `p.stopScore()` stops it and takes the hands off the clock.
 
+The hand as a hand (`@ericrius1/cast/fingers`): `HandModel.of(asset, 'L' | 'R')` reads a body's bind hand (null unless
+every finger and the thumb are three bones each), and `solveHand(model, solve, ask)` places several fingertips at once
+with each joint inside a person's range (`body/anatomy.ts`: knuckle spread and the webs, the thumb's opposing saddle, the
+palm's arch, enslaved neighbours). The rig uses it by itself for any `HandGoal` with fingertip targets (`tips`); a goal
+without them poses the hand exactly as before. Four `HandGoal` options steer it:
+
+- `palmFree` (0..1, default 0): how far the palm may move and turn from the goal's `palm`/`fwd`/`down` to reach its
+  fingertips (1: within the wrist's and arm's ease, a few cm and tens of degrees). Use it for a hand that places itself
+  on its notes (keys, a fingerboard); leave it 0 for a hand held to something (a flute's holes). Ignored with `exact`.
+- `tipW` (per finger, thumb first, default 1): how much each target counts. Lower it for a finger that only hovers
+  over its place, so it gives way to the fingers that are playing.
+- `floor` (`{ at, n, clear }`, world): a surface the fingertips without a target keep `clear` metres above (the keys'
+  tops, a fingerboard), so a resting finger never sinks into it.
+- `lay` (per finger, 0..1): how flat a finger lies along what it presses (1: its middle and end joints straight). Use
+  it for a barre, the index laid across every string.
+
+A fretting or stopping hand (a guitar, a violin): give the fingertip targets on the strings (null for a finger not
+stopping), `palmFree: 1`, `turn: 0`, the fingerboard as `floor` (a point on it, its normal toward the hand, `clear`
+~0.006), `lay` for a barre, and a starting frame the solve moves from: `palm` near where the hand sits under the neck
+(the knuckles by the board's edge), `fwd` along the hand across the neck, `down` its palm toward the board. The solve
+starts there each frame (warm from the last), so a frame a few cm off still lands; one on the wrong side of the neck
+does not. `rig.handMiss(i)` gives each fingertip's miss after the solve (m) for checking.
+
 ## Where to look in the source
 
 | question | file (in `src/`, `shaders/` or `plugin/`) |
