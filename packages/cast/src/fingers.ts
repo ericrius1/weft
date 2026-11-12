@@ -788,7 +788,7 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
  *  argument the hand solved last), and cleared when the watch is turned off */
 let TERMW: number[] | null = null;
 const TERMS: { prev: number[] | null; last: string; cur: Record<string, number[]>; S: HandSolve | null } = { prev: null, last: '', cur: {}, S: null };
-const TERMBY = new WeakMap<HandSolve, Record<string, number[]>>();
+let TERMBY = new WeakMap<HandSolve, Record<string, number[]>>();
 function termMark(g: Float64Array, name: string) {
   const now = TERMW!.map((i) => g[i]);
   if (TERMS.prev) TERMS.cur[TERMS.last] = now.map((v, k) => v - TERMS.prev![k]);
@@ -796,7 +796,9 @@ function termMark(g: Float64Array, name: string) {
 }
 export function setTermWatch(ix: number[] | null) {
   TERMW = ix && ix.length ? ix.slice() : null;
-  if (!TERMW) { TERMS.prev = null; TERMS.cur = {}; TERMS.S = null; }
+  // (off: every reading dropped, each hand's too — kept, a hand's reading from before came back as its own once the watch
+  // was on again, until that hand was solved again)
+  if (!TERMW) { TERMS.prev = null; TERMS.cur = {}; TERMS.S = null; TERMBY = new WeakMap(); }
 }
 /** the last reading (a copy): of hand solve S, or of the hand solved last; empty while the watch is off */
 export function termPulls(S?: HandSolve): Record<string, number[]> {

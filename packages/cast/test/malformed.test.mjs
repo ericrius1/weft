@@ -54,3 +54,17 @@ test('the term readout is per hand solve, a copy, and empty once the watch is of
   setTermWatch(null);
   assert.deepEqual(termPulls(), {}); assert.deepEqual(termPulls(A), {});
 });
+
+test('the term readout is not stale after the watch is turned off and on again (0.6.2 release check)', async () => {
+  const { setTermWatch, termPulls } = await import('../dist/fingers.js');
+  setTermWatch([8, 9, 10]);
+  const A = new HandSolve(), Q = ask();
+  solveHand(M, A, Q, 4);
+  assert.ok(Object.keys(termPulls(A)).length > 0);
+  setTermWatch(null); setTermWatch([8, 9, 10]);
+  assert.deepEqual(termPulls(A), {}, 'nothing read since the watch came back on');
+  assert.deepEqual(termPulls(), {});
+  solveHand(M, A, Q, 4);
+  assert.ok(Object.keys(termPulls(A)).length > 0, 'read again once solved');
+  setTermWatch(null);
+});
