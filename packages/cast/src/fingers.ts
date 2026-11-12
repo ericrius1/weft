@@ -410,6 +410,8 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
 const W_LAY = 0.6, W_FLOOR = 1, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45, W_NECK = 1;
 const PALM6 = Int32Array.from([0, 1, 2, 3, 4, 5]);
+/** the most damping a solve starts from (HandSolve.lam carried frame to frame) */
+export const LAM0 = 0.1;
 /** the couplings' weights (read each solve; for tools that take one out to see what it does): the comfortable band,
  *  the end joint's tendon, the webs, the enslaving bands, the fingertips' gaps */
 export const HAND_W = { band: 6, dip: 4, web: 15, apart: 12, gap: 0.6 };
@@ -746,6 +748,10 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
 export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): number {
   const N = HAND_N, x = S.x, lo = M.lo, hi = M.hi, palm = Q.free > 0 ? 0 : 6;
   if (!S.ready) { x.set(Q.rest); for (let k = 0; k < 6; k++) x[k] = 0; S.ready = true; S.lam = 1e-3; }
+  // (the damping carried from the last frame, but never more than LAM0: one frame whose every trial step failed â€” a
+  // target that jumped across a string â€” left it at its ceiling, and the next frames' steps were too small to move the
+  // finger for a tenth of a second)
+  if (S.lam > LAM0) S.lam = LAM0;
   for (let i = 0; i < N; i++) x[i] = i < palm ? 0 : Math.min(hi[i], Math.max(lo[i], x[i]));
   let c = pass(M, S, Q, x, true), stale = false;
   let n = 0;
