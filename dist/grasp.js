@@ -15,12 +15,22 @@
 import { HAND_N, HP_ARCH, hpOf } from './fingers.js';
 import { sub, add, scale, dot, cross, norm, rej, q30 } from './math.js';
 export const GRASPS = ['wrap', 'power', 'stick', 'bow', 'pinch', 'tripod', 'stem', 'flat', 'rim', 'clasp', 'cloth'];
-/** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb). Drawn in toward the
- *  middle finger (Checkpoint M: real bowing hands' index-little fan ~25 deg, ours was 46 and read as a claw from above;
- *  0.5.0 had [0.12, 0, -0.04, -0.06]) */
-export const BOW = Object.freeze({ spread: Object.freeze([-0.04, 0, 0.08, 0.14]) });
-/** the bow hold's rests per finger (index..little: knuckle, middle, end; rad), from real bow holds (plan 'bow') */
-export const BOWREST = Object.freeze([[0.23, 0.92, 0.56], [0.72, 1.2, 0.52], [1.0, 0.98, 0.37], [1.15, 0.7, 0.25]].map((r) => Object.freeze(r)));
+/** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb), measured from real holds
+ *  (Checkpoint T: a violinist's right hand round the frog, its joints marked by hand on three frames and fitted through
+ *  the camera the bow itself gives: index +3, middle -2, ring -12, little -27 deg — the little finger reaching back along
+ *  the stick to stand on it; 0.6.1 had [-0.04, 0, 0.08, 0.14]) */
+export const BOW = Object.freeze({ spread: Object.freeze([0.05, -0.03, -0.21, -0.47]) });
+/** the bow hold's rests per finger (index..little: knuckle, middle, end; rad), from the same fits (deg: index 34/66/5,
+ *  middle 55/54/10, ring 60/52/20, little 45/51/25 — the fingers draped over the stick from behind it, the knuckles high;
+ *  the end joints vary most between frames (-10..44 deg) and are the least sure; 0.6.1's 13/53/32, 41/69/30, 58/56/21, 66/40/14 came from MediaPipe's points on hands seen along the stick, which
+ *  zig-zag round a frog, and no stick could be placed that all four reached at once) */
+export const BOWREST = Object.freeze([[34, 66, 5], [55, 54, 10], [60, 52, 20], [45, 51, 25]].map((r) => Object.freeze(r.map((d) => (d * Math.PI) / 180))));
+/** the bow's stick in the hand (hand space at a 5.38 cm knuckle span: its axis toward the tip, and its point over the
+ *  hair's end at the frog — the held shape's centre, so a caller places the grasp there) as the fits put it (the palm behind the stick and just above it, the fingers over it), and
+ *  where it crosses each finger (fingers.ts sample points: the index's end bone at its middle, past the frog toward the
+ *  tip; the middle at its end joint, over the ferrule; the ring's end bone a quarter along, over the frog; the little
+ *  finger's tip on top, by the frog's back) */
+export const BOWSTICK = Object.freeze({ a: Object.freeze([0.591, 0.782, 0.198]), c: Object.freeze([0.0958, 0.005, 0.0539]), on: Object.freeze([6, 2, 20, 3]), arch: 0.02 });
 // ------------------------------------------------------------------------------------------------- the hand's skin
 /** the drumstick's matched grip (plan 'stick'), as numbers a tool can try others for: the stick's way in hand space, the
  *  point at the heel of the hand it lies on (m at a 5.38 cm knuckle span; z off the palm's skin) and how far along from
@@ -92,7 +102,7 @@ export function grasp(M, kind, size = {}) {
             // (the thumb's pad across the shape from that finger's point)
             const [of, op] = P.oppose, q = S.pts(x, of), pt = [q[op * 3], q[op * 3 + 1], q[op * 3 + 2]];
             const ap = axisPt(P.held, pt), dir = norm(sub(pt, ap));
-            P.f[0].tgt = sub(ap, scale(dir, P.held.r + PAD[0][2] * sc));
+            P.f[0].tgt = sub(ap, scale(dir, P.held.r + PAD[0][2] * sc + (P.f[0].gap ?? 0)));
         }
         if (P.f[f].solve === false)
             continue;
@@ -235,7 +245,7 @@ class Ctx {
             if (F.on?.includes(i))
                 out.push(W_ON * (s - (F.gap ?? 0)) * mm);
             T('on' + i);
-            out.push(s < 0 ? W_PEN * s * mm : 0);
+            out.push(s < 0 ? (F.penW ?? W_PEN) * s * mm : 0);
             T('pen' + i);
             if (this.palmTest(f, i)) {
                 const sp = this.palmSd(p) - pd;
@@ -268,7 +278,7 @@ class Ctx {
         else {
             for (let j = 0; j < 3; j++)
                 out.push(rw * (x[o + 1 + j] - F.rest[j]));
-            out.push(W_DIP * (x[o + 3] - 0.7 * x[o + 2]));
+            out.push((F.dipW ?? W_DIP) * (x[o + 3] - 0.7 * x[o + 2]));
             // (past the comfortable band, a held bend costs)
             for (let j = 1; j <= 3; j++) {
                 const v = x[o + j], hi = this.M.okHi[o + j] * 1.15;
@@ -468,33 +478,41 @@ function plan(M, kind, size, sc) {
             return { held, arch: T.arch, f: [th, ...f], oppose: [1, T.fulcrum] };
         }
         case 'bow': {
-            // a bow at the frog: the stick across the fingers under the middle and ring fingers' end joints, the index leaning
-            // on it by its middle bone, the little finger's tip standing on top, the thumb bent, its tip under the stick
-            const r = size.r ?? 0.0055;
-            // (the stick in the crook of the curled fingers, on the pads of their middle bones, the tips coming round its far
-            // side: the hand close over the stick, not hanging from it by its fingertips)
-            const mid = { rest: [BOWREST[1][0], BOWREST[1][1], BOWREST[1][2]], restW: 0.3, spread: 0, on: [5] };
-            const q = restPts(M, 2, mid, 0.15), bf = boneFrame(q, 1);
-            const c = add(pt(q, 5), scale(bf.pad, PAD[2][1] * sc + r));
-            // (slanted across the fingers toward the tip, as a violinist's hand leans on the stick by the index)
-            const a = norm(rej([0.55, 1, 0], bf.pad));
+            // a bow at the frog, as real holds measure (Checkpoint T): the stick placed in the hand where the fits put it, every
+            // finger at its rest round it — the index pressing at its end joint, the middle and ring over the frog by their end
+            // bones, the little finger's tip standing on top, the thumb bent with its tip under the stick across from the
+            // middle finger. Placed from all four together, so each rest is reachable at once (0.6.1 placed the stick from the
+            // middle finger's pad alone, at a fixed slant: the ring and little ran out of reach and the little's tip target
+            // straightened it)
+            const r = size.r ?? 0.0055, B = BOWSTICK;
+            const a = norm(B.a);
+            let c = scale(B.c, sc);
+            const F = [0, 1, 2, 3].map((g) => ({ rest: [...BOWREST[g]], restW: 2.5, spread: BOW.spread[g], on: [B.on[g]], dipW: 0.5, gap: 0.0005, penW: 40 }));
+            // (the stick moved square to its axis until no finger at its rest is inside it: a few millimetres either way for
+            // another hand's proportions)
+            const qs = [1, 2, 3, 4].map((f) => restPts(M, f, F[f - 1], B.arch));
+            for (let it = 0; it < 6; it++) {
+                let worst = 0, dir = [0, 0, 0];
+                for (let g = 0; g < 4; g++)
+                    for (let j = 0; j < 3; j++)
+                        for (const t of [0.25, 0.5, 0.75, 1]) {
+                            const p = add(pt(qs[g], j), scale(sub(pt(qs[g], j + 1), pt(qs[g], j)), t));
+                            const d = rej(sub(p, c), a), dl = Math.sqrt(dot(d, d)), pen = r + PAD[g + 1][j] * sc * (t === 1 && j === 2 ? 0.85 : 1) - dl;
+                            if (pen > worst && dl > 1e-6) {
+                                worst = pen;
+                                dir = scale(d, -1 / dl);
+                            }
+                        }
+                if (worst < 2e-4)
+                    break;
+                c = add(c, scale(dir, Math.min(worst, 0.004 * sc)));
+            }
             const held = { c, a, r, h: (len ?? 0.7) / 2 };
-            const top = scale(bf.pad, -1);
-            const lq = restPts(M, 4, { rest: [BOWREST[3][0], BOWREST[3][1], BOWREST[3][2]] }, 0.15);
-            const lt = add(axisPt(held, pt(lq, 3)), scale(top, r + PAD[4][2] * sc));
-            // (the rests from real bow holds, World's reference set: 14 hands fitted from along the stick, the view that sees
-            // the fingers' bends side on — knuckle, middle, end joints index 13/53/32 deg, middle 41/69/30, ring 58/56/21,
-            // little 66/40/14: the ring and little fingers drape over from knuckles bent far more than the index's, the
-            // little finger curved standing on top; the thumb's end joint bent ~40 deg under the frog. Before (0.6.0): every
-            // knuckle 17-20 deg, the hand hanging off the stick by straight-knuckled fingers)
-            const f = [
-                { rest: [BOWREST[0][0], BOWREST[0][1], BOWREST[0][2]], restW: 0.25, spread: BOW.spread[0], on: [5] },
-                { ...mid, spread: BOW.spread[1] },
-                { rest: [BOWREST[2][0], BOWREST[2][1], BOWREST[2][2]], restW: 0.3, spread: BOW.spread[2], on: [5] },
-                { rest: [BOWREST[3][0], BOWREST[3][1], BOWREST[3][2]], restW: 0.3, spread: BOW.spread[3], on: [3], tgt: lt, tgtW: 0.5 },
-            ];
-            const th = { rest: [0.4, 0.15, 0.55, 0.7], restW: 0.12, on: [3], tgtW: 0.6 };
-            return { held, arch: 0.15, f: [th, ...f], oppose: [2, 5] };
+            // (the little finger's tip held on top, where its rest puts it round the stick)
+            const lt0 = pt(qs[3], 3), ap = axisPt(held, lt0), ld = norm(sub(lt0, ap));
+            F[3] = { ...F[3], tgt: add(ap, scale(ld, r + PAD[4][2] * sc * 0.85 + 0.0005)), tgtW: 0.5 };
+            const th = { rest: [0.4, 0.15, 0.55, 0.7], restW: 0.12, on: [3], tgtW: 0.6, gap: 0.0005, penW: 40 };
+            return { held, arch: B.arch, f: [th, ...F], oppose: [2, B.on[1]] };
         }
         case 'pinch': {
             // a pick between the thumb's pad and the side of the index's end bone (the thumb's side of it)

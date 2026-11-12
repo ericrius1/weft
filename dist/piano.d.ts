@@ -139,12 +139,19 @@ export declare class Pianist {
     idleLift: number[];
     /** how high a finger waits over its next key before it falls (m) */
     hover: number;
+    /** each finger's wait over its next key above the hover (m, thumb first; null: idleLift's) */
+    strokeLift: number[] | null;
     /** how much further in (toward the fallboard) each finger plays a white key than the press line (m, thumb first):
      *  the long fingers reach further in than the thumb, so they needn't curl under to land on its line (real players'
      *  fingers lie long across the keys: World tools/hands/planstats.mjs) */
     fingerIn: number[];
     /** how much further along a black key a built hand's long fingers land than its short ones, at most (m; forHand) */
     blackIn: number;
+    /** a built hand's: how far in (m, from the press line) each finger plays a white key while the hand is among the black
+     *  keys (eased in and out over DEEP_EASE around each black key's stroke), and how far along a black key each lands
+     *  (forHand; null: the older rule from fingerIn) */
+    deepIn: number[] | null;
+    blackAlong: number[] | null;
     /** a built hand's fingers further still along a black key, each (m; forHand): the ring finger, shorter than the middle
      *  but landing level with it, came out bent at its middle joint in a black chord (Checkpoint Q: 13.43 s, PIP 45 deg
      *  against the others' 15-33) */
@@ -189,6 +196,10 @@ export declare class Pianist {
     playScore(score: Score, o?: {
         clock?: () => number;
     }): void;
+    /** a clocked piece's last second once it's over: the hands rest at the keys as its plan left them (planAt, every
+     *  finger idle) until there's something else to play — handed to the live plan in a frame, its goals (no prior, no
+     *  free palm, no idle targets) straightened every finger's knuckle 30 deg at once */
+    private after;
     stopScore(): void;
     get playingScore(): boolean;
     /** the keyboard's middle, as a coordinate along it */
@@ -215,11 +226,17 @@ export declare class Pianist {
     private plan;
     private along;
     /** a key that stands over the others (a black key: its touch point higher than middle C's) */
+    /** how far a hand is among the black keys at s (0..1): 1 from DEEP_EASE before a black key's finger is taken until it's
+     *  let go, easing in and out over DEEP_EASE on the clock (the same at every frame rate) */
+    private deepness;
     private black;
     /** the whole piece planned: hands, fingers, strokes, each hand's places */
     private planScore;
     /** a hand's centre at second s: eased from one place to the next, arriving TRAVEL_END before the note it's for */
     private handAt;
+    /** how long a finger taken from rest takes to come over from its idle place to its key (s): APPROACH, and longer by
+     *  how far it goes (its idle place along the keys from the key, as the hand will be when it's taken) */
+    private approachOf;
     /** a finger's stroke at second s: its note (null: resting) and its tip's height over the key's top (m) */
     private stroke;
     /** the hands' goals at the clock's second s */

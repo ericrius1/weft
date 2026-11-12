@@ -17,14 +17,29 @@ export interface GraspSize {
     len?: number;
     thick?: number;
 }
-/** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb). Drawn in toward the
- *  middle finger (Checkpoint M: real bowing hands' index-little fan ~25 deg, ours was 46 and read as a claw from above;
- *  0.5.0 had [0.12, 0, -0.04, -0.06]) */
+/** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb), measured from real holds
+ *  (Checkpoint T: a violinist's right hand round the frog, its joints marked by hand on three frames and fitted through
+ *  the camera the bow itself gives: index +3, middle -2, ring -12, little -27 deg — the little finger reaching back along
+ *  the stick to stand on it; 0.6.1 had [-0.04, 0, 0.08, 0.14]) */
 export declare const BOW: {
     readonly spread: readonly number[];
 };
-/** the bow hold's rests per finger (index..little: knuckle, middle, end; rad), from real bow holds (plan 'bow') */
+/** the bow hold's rests per finger (index..little: knuckle, middle, end; rad), from the same fits (deg: index 34/66/5,
+ *  middle 55/54/10, ring 60/52/20, little 45/51/25 — the fingers draped over the stick from behind it, the knuckles high;
+ *  the end joints vary most between frames (-10..44 deg) and are the least sure; 0.6.1's 13/53/32, 41/69/30, 58/56/21, 66/40/14 came from MediaPipe's points on hands seen along the stick, which
+ *  zig-zag round a frog, and no stick could be placed that all four reached at once) */
 export declare const BOWREST: readonly (readonly number[])[];
+/** the bow's stick in the hand (hand space at a 5.38 cm knuckle span: its axis toward the tip, and its point over the
+ *  hair's end at the frog — the held shape's centre, so a caller places the grasp there) as the fits put it (the palm behind the stick and just above it, the fingers over it), and
+ *  where it crosses each finger (fingers.ts sample points: the index's end bone at its middle, past the frog toward the
+ *  tip; the middle at its end joint, over the ferrule; the ring's end bone a quarter along, over the frog; the little
+ *  finger's tip on top, by the frog's back) */
+export declare const BOWSTICK: Readonly<{
+    a: readonly number[];
+    c: readonly number[];
+    on: readonly number[];
+    arch: 0.02;
+}>;
 /** a grasp solved: the hand's numbers (fingers.ts, palm's move 0), the held shape in hand space, and how well it holds:
  *  per finger (thumb first) the worst miss of the pads that should touch (m; 0 none asked), the deepest any skin goes
  *  into the shape (m, < 0 clear), the thumb's opposition (cos of the angle about the shape between the thumb's pad and

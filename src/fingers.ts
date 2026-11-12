@@ -459,7 +459,7 @@ function accRow(H: Float64Array, g: Float64Array, r: number, C: Int32Array) {
  *  fingertips' misses, each number's rest, the end joints' tendon, the webs, the enslaving, the tips' gaps, a surface,
  *  the palm */
 function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: boolean): number {
-  if (TERMW && jac) { TERMS.prev = null; TERMS.cur = {}; }
+  if (TERMW && jac) { TERMS.prev = null; TERMS.cur = {}; TERMS.S = S; TERMBY.set(S, TERMS.cur); }
   const P = S.P, K = S.K, Zf = S.Zf, T = S.T, R = S.R, J = S.J, H = S.H, g = S.g, N = HAND_N, fP = S.fP;
   const W_BAND = HAND_W.band, W_DIP = HAND_W.dip, W_WEB = HAND_W.web, W_APART = HAND_W.apart, W_GAP = HAND_W.gap;
   rotM(x[3], x[4], x[5], R);
@@ -784,16 +784,26 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
 }
 
 /** each term's share of the gradient on chosen numbers at the last Jacobian pass (a diagnostic: setTermWatch([indices])
- *  then read termPulls(); off — and free — by default) */
+ *  then read termPulls(); off — and free — by default). Kept per hand solve (termPulls(S) for that hand; with no
+ *  argument the hand solved last), and cleared when the watch is turned off */
 let TERMW: number[] | null = null;
-const TERMS: { prev: number[] | null; last: string; cur: Record<string, number[]> } = { prev: null, last: '', cur: {} };
+const TERMS: { prev: number[] | null; last: string; cur: Record<string, number[]>; S: HandSolve | null } = { prev: null, last: '', cur: {}, S: null };
+const TERMBY = new WeakMap<HandSolve, Record<string, number[]>>();
 function termMark(g: Float64Array, name: string) {
   const now = TERMW!.map((i) => g[i]);
   if (TERMS.prev) TERMS.cur[TERMS.last] = now.map((v, k) => v - TERMS.prev![k]);
   TERMS.prev = now; TERMS.last = name;
 }
-export function setTermWatch(ix: number[] | null) { TERMW = ix; }
-export function termPulls(): Record<string, number[]> { return TERMS.cur; }
+export function setTermWatch(ix: number[] | null) {
+  TERMW = ix && ix.length ? ix.slice() : null;
+  if (!TERMW) { TERMS.prev = null; TERMS.cur = {}; TERMS.S = null; }
+}
+/** the last reading (a copy): of hand solve S, or of the hand solved last; empty while the watch is off */
+export function termPulls(S?: HandSolve): Record<string, number[]> {
+  if (!TERMW) return {};
+  const r = S ? TERMBY.get(S) : TERMS.S ? TERMBY.get(TERMS.S) : TERMS.cur;
+  return Object.fromEntries(Object.entries(r ?? {}).map(([k, v]) => [k, v.slice()]));
+}
 /** the hand solved for what's asked: S.x updated in place (warm: from last frame's), at most `iters` iterations;
  *  returns the cost. The palm's numbers are held at 0 unless the ask frees it */
 export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): number {
@@ -824,7 +834,9 @@ export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): nu
     let m = 0;
     for (let i = palm; i < N; i++) if (!((x[i] <= lo[i] + 1e-9 && g[i] > 0) || (x[i] >= hi[i] - 1e-9 && g[i] < 0))) act[m++] = i;
     let ok = false, gain = 0;
-    for (let t = 0; t < 5 && !ok; t++) {
+    // (a hand under the real hands' prior — the Pianist's — tries more dampings before it gives up a frame: with five a
+    // ring finger's every trial failed once as it fell, it stayed 8 mm over its key and its note landed 20 ms late)
+    for (let t = 0, tries = Q.wp > 0 ? 8 : 5; t < tries && !ok; t++) {
       for (let a = 0; a < m; a++) {
         const ia = act[a] * N;
         for (let q = 0; q < m; q++) A[a * m + q] = H[ia + act[q]];

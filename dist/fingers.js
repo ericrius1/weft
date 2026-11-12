@@ -543,6 +543,8 @@ function pass(M, S, Q, x, jac) {
     if (TERMW && jac) {
         TERMS.prev = null;
         TERMS.cur = {};
+        TERMS.S = S;
+        TERMBY.set(S, TERMS.cur);
     }
     const P = S.P, K = S.K, Zf = S.Zf, T = S.T, R = S.R, J = S.J, H = S.H, g = S.g, N = HAND_N, fP = S.fP;
     const W_BAND = HAND_W.band, W_DIP = HAND_W.dip, W_WEB = HAND_W.web, W_APART = HAND_W.apart, W_GAP = HAND_W.gap;
@@ -962,9 +964,11 @@ function cholSolve(A, b, x, n) {
     return true;
 }
 /** each term's share of the gradient on chosen numbers at the last Jacobian pass (a diagnostic: setTermWatch([indices])
- *  then read termPulls(); off — and free — by default) */
+ *  then read termPulls(); off — and free — by default). Kept per hand solve (termPulls(S) for that hand; with no
+ *  argument the hand solved last), and cleared when the watch is turned off */
 let TERMW = null;
-const TERMS = { prev: null, last: '', cur: {} };
+const TERMS = { prev: null, last: '', cur: {}, S: null };
+const TERMBY = new WeakMap();
 function termMark(g, name) {
     const now = TERMW.map((i) => g[i]);
     if (TERMS.prev)
@@ -972,8 +976,21 @@ function termMark(g, name) {
     TERMS.prev = now;
     TERMS.last = name;
 }
-export function setTermWatch(ix) { TERMW = ix; }
-export function termPulls() { return TERMS.cur; }
+export function setTermWatch(ix) {
+    TERMW = ix && ix.length ? ix.slice() : null;
+    if (!TERMW) {
+        TERMS.prev = null;
+        TERMS.cur = {};
+        TERMS.S = null;
+    }
+}
+/** the last reading (a copy): of hand solve S, or of the hand solved last; empty while the watch is off */
+export function termPulls(S) {
+    if (!TERMW)
+        return {};
+    const r = S ? TERMBY.get(S) : TERMS.S ? TERMBY.get(TERMS.S) : TERMS.cur;
+    return Object.fromEntries(Object.entries(r ?? {}).map(([k, v]) => [k, v.slice()]));
+}
 /** the hand solved for what's asked: S.x updated in place (warm: from last frame's), at most `iters` iterations;
  *  returns the cost. The palm's numbers are held at 0 unless the ask frees it */
 export function solveHand(M, S, Q, iters = 4) {
@@ -1024,7 +1041,9 @@ export function solveHand(M, S, Q, iters = 4) {
             if (!((x[i] <= lo[i] + 1e-9 && g[i] > 0) || (x[i] >= hi[i] - 1e-9 && g[i] < 0)))
                 act[m++] = i;
         let ok = false, gain = 0;
-        for (let t = 0; t < 5 && !ok; t++) {
+        // (a hand under the real hands' prior — the Pianist's — tries more dampings before it gives up a frame: with five a
+        // ring finger's every trial failed once as it fell, it stayed 8 mm over its key and its note landed 20 ms late)
+        for (let t = 0, tries = Q.wp > 0 ? 8 : 5; t < tries && !ok; t++) {
             for (let a = 0; a < m; a++) {
                 const ia = act[a] * N;
                 for (let q = 0; q < m; q++)

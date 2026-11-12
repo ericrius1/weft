@@ -160,7 +160,8 @@ export declare const SOLVES: {
     iters1: number;
 };
 export declare function setTermWatch(ix: number[] | null): void;
-export declare function termPulls(): Record<string, number[]>;
+/** the last reading (a copy): of hand solve S, or of the hand solved last; empty while the watch is off */
+export declare function termPulls(S?: HandSolve): Record<string, number[]>;
 /** the hand solved for what's asked: S.x updated in place (warm: from last frame's), at most `iters` iterations;
  *  returns the cost. The palm's numbers are held at 0 unless the ask frees it */
 export declare function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters?: number): number;

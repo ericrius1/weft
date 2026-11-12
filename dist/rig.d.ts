@@ -2,6 +2,7 @@ import { type V3 } from './math.js';
 import type { HeroAsset } from './asset.js';
 import { Face, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose } from './body/solve.js';
+import { HandSolve } from './fingers.js';
 /** what the body should be doing with the water (bending.ts) */
 export interface BendPose {
     mode: 'idle' | 'draw' | 'hold' | 'push' | 'throw' | 'swirl' | 'wave' | 'flow' | 'freeze' | 'melt' | 'carryIce';
@@ -88,6 +89,11 @@ export interface HandGoal {
     /** how flat each finger lies along what it presses (thumb first, 0..1: 1 its middle and end joints straight — a
      *  guitar's barre, the index laid across every string; default 0) */
     lay?: number[];
+    /** how far each finger's key stands over the floor (m, thumb first; a black key's top over the white keys'): the thumb
+     *  reaches in flatter onto a raised key. Without it the target's own height says, and a thumb's stroke — hovering over
+     *  a white key, then down into it — crossed that line twice a stroke and swapped its rests each time (its end joint
+     *  10 to 40 deg in one frame, the duet's worst steps) */
+    keyTop?: (number | null)[];
     /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
      *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
     floor?: {
@@ -271,6 +277,20 @@ export interface FaceExpr {
 }
 /** the most velocity (m/s) the constraints may add to a chain's point in a step (see Chain.step) */
 export declare const MAX_KICK = 4;
+/** the keys path's rules that are the pianist's alone (a built hand WITH the real hands' prior, HandGoal.prior) and
+ *  everything else's (0.6.1's, unchanged: pointing, plain tips, a Pianist without forHand). Pure, so a test pins them:
+ *  a playing finger's rests (knuckle, middle, end), their least weight, and the thumb's raised share by its key's top or
+ *  its target's height over the floor (0..1; eased for the pianist, switched at 6 mm for the rest) */
+export declare function keysTipRest(K: {
+    tip: number[][];
+    tipBuilt: number[][];
+    tipBuiltPrior: number[][];
+}, built: boolean, prior: boolean, g: number): number[];
+export declare function keysTipW(K: {
+    wTip: number;
+    wTipBuilt: number;
+}, built: boolean, prior: boolean): number;
+export declare function thumbRaised(eased: boolean, up: number, keyTop?: number | null): number;
 export declare class HeroRig {
     asset: HeroAsset;
     bones: Float32Array<ArrayBuffer>;
@@ -426,6 +446,11 @@ export declare class HeroRig {
         idle: number[][];
         tip: number[][];
         fan: number[];
+        tipBuiltPrior: number[][];
+        /** a built hand's playing rests on the keys path WITHOUT the prior (any tips goal that isn't a hold, loose or a neck:
+         *  pointing, plain tips, a Pianist without forHand): 0.6.1's, unchanged — the per-finger side-clip rests above are
+         *  the pianist's own (with goal.prior); applied to every built hand they moved World's pointing and tips goals
+         *  (the 0.6.2 release check) */
         tipBuilt: number[][];
         idleBuilt: number[][];
         thumbIdleBuilt: number[];
@@ -436,6 +461,7 @@ export declare class HeroRig {
          *  per mm, so these shape the hand, not where the tips land) */
         wTip: number;
         wThumb: number;
+        wTipBuilt: number;
         /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
          *  the idle thumb: times restThumb — real idle thumbs are bent) and the playing ones keep under it */
         wPrior: number;
@@ -477,6 +503,8 @@ export declare class HeroRig {
         joint: number;
     };
     private handM;
+    /** each hand's share of a key surface's clearance, eased (see askHand) */
+    private clearV;
     private handS;
     private handQ;
     private palmX;
@@ -489,6 +517,8 @@ export declare class HeroRig {
     handIters(i: number): number;
     /** each hand's solved numbers (fingers.ts HAND_N: the palm's move, the arch, the fingers', the thumb's) */
     handX(i: number): Float64Array;
+    /** hand i's solve state (for fingers.ts termPulls(S): the term readout of that hand alone) */
+    handSolve(i: number): HandSolve;
     /** each hand's palm move as last solved (hand space: its move, m, and its turn's rotation vector) */
     handPalm(i: number): Float64Array;
     /** a foot touched down (footsteps), and the pedal under the right foot (0..1, at an instrument) */
