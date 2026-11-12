@@ -175,7 +175,16 @@ export class HandModel {
     // comfortable bands stay where they were)
     if (this.built) { this.hi[23] = 62 * Math.PI / 180; this.hi[25] = 75 * Math.PI / 180; }
     this.pron = this.built ? PRON : PRON_OLD;
+    // (the palm's skin, sampled: a third and two thirds of the way from the wrist to each knuckle, and the thenar between
+    // the thumb's saddle and the index's knuckle, each out on the palm's side by the palm's thickness there (13 mm at a
+    // 5.38 cm knuckle span: World tools/hands/handgeo.mjs) — what a neck held in the hand must keep clear of)
+    const pz = 0.013 * this.width / 0.0538, P: number[] = [];
+    for (let f = 1; f <= 4; f++) for (const u of [0.35, 0.7]) P.push(this.base[f * 3] * u, this.base[f * 3 + 1] * u, this.base[f * 3 + 2] * u + pz);
+    P.push((this.base[0] + this.base[3]) / 2, (this.base[1] + this.base[4]) / 2, (this.base[2] + this.base[5]) / 2 + pz * 0.8);
+    this.palmPts = Float64Array.from(P);
   }
+  /** the palm's skin sampled (hand space, before the palm's move; 3 per point): see the constructor */
+  readonly palmPts: Float64Array;
 
   /** a body's hand ('L' her left), or null if its fingers aren't each three bones */
   static of(a: HeroAsset, T: 'L' | 'R'): HandModel | null {
@@ -309,7 +318,32 @@ export interface HandAsk {
    *  pianists' at the keys) — and how much it counts (0: none). With fingertips held on their targets, the rest of the
    *  hand takes the posture real hands have with those fingers there (the Gaussian's conditional mean) */
   priorMu: Float64Array | null; priorP: Float64Array | null; wp: number;
+  /** a neck held in the hand (a guitar's, a violin's; HandGoal.neck), hand space: a point on the fingerboard's surface
+   *  over the neck's middle (0-2), the neck's way (3-5), out of the fingerboard (6-8), across it (9-11), the board's half
+   *  width (12), the neck's depth under it (13), the air the palm's skin keeps from the wood (14), the clearance of the
+   *  knuckles' and joints' centres (15: a finger's half thickness, so the skin just touches), its weight (16; 0: none),
+   *  how firmly the index's knuckle is drawn onto the wood (17: the neck in the web between thumb and index).
+   *  The palm's skin, the knuckles and the fingers' and thumb's joints are kept off the wood (optional: absent, none) */
+  neck?: Float64Array;
 }
+/** a neck's cross-section (HandAsk.neck): the signed distance (m) of a point u across and v out of the board from the
+ *  wood — the board's flat top (half width a), the neck's back a half ellipse b deep — and its gradient (out[0..1]) */
+function neckSd(u: number, v: number, a: number, b: number, out: Float64Array): number {
+  if (v >= 0) {
+    const au = Math.abs(u);
+    if (au <= a) { out[0] = 0; out[1] = 1; return v; }
+    const du = au - a, d = Math.sqrt(du * du + v * v) || 1e-9;
+    out[0] = (u < 0 ? -du : du) / d; out[1] = v / d; return d;
+  }
+  const k = Math.sqrt((u * u) / (a * a) + (v * v) / (b * b)) || 1e-9;
+  const gu = u / (a * a * k), gv = v / (b * b * k), gl = Math.sqrt(gu * gu + gv * gv) || 1e-9;
+  const e = (k - 1) / gl;
+  // (inside: the nearer of the back and the board's top)
+  if (e < 0 && v > e) { out[0] = 0; out[1] = 1; return v; }
+  out[0] = gu / gl; out[1] = gv / gl;
+  return e;
+}
+const NSD = new Float64Array(2);
 export const handAsk = (): HandAsk => ({ lay: new Float64Array(5), tgt: new Float64Array(15), w: new Float64Array(5), rest: new Float64Array(HAND_N), wr: new Float64Array(HAND_N), free: 0, resting: new Uint8Array(5),
   floor: new Float64Array(4), clear: 0, priorMu: null, priorP: null, wp: 0 });
 /** the prior's numbers: HAND_N from the arch (6) on */
@@ -374,7 +408,10 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
 
 /** the weights: a fingertip's miss (per mm), the end joint's tendon, the webs and the enslaving bands (hinges past
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
-const W_LAY = 0.6, W_FLOOR = 1, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
+const W_LAY = 0.6, W_FLOOR = 1, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45, W_NECK = 1;
+const PALM6 = Int32Array.from([0, 1, 2, 3, 4, 5]);
+/** the most damping a solve starts from (HandSolve.lam carried frame to frame) */
+export const LAM0 = 0.1;
 /** the couplings' weights (read each solve; for tools that take one out to see what it does): the comfortable band,
  *  the end joint's tendon, the webs, the enslaving bands, the fingertips' gaps */
 export const HAND_W = { band: 6, dip: 4, web: 15, apart: 12, gap: 0.6 };
@@ -608,6 +645,68 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       }
     }
   }
+  // a neck held: the palm's skin, the knuckles and the fingers' and thumb's joints off its wood (a residual per point
+  // inside its clearance, along the wood's normal; the palm's points move with the palm alone, the joints with their
+  // finger's numbers too, by differences)
+  const NK = Q.neck;
+  if (NK && NK[16] > 0) {
+    const wN = 1000 * W_NECK * NK[16], Rd = S.Rd;
+    const sdAt = (p0: number, p1: number, p2: number) => {
+      const e0 = p0 - NK[0], e1 = p1 - NK[1], e2 = p2 - NK[2];
+      return neckSd(e0 * NK[9] + e1 * NK[10] + e2 * NK[11], e0 * NK[6] + e1 * NK[7] + e2 * NK[8], NK[12], NK[13], NSD);
+    };
+    // (the palm's skin: only the palm can move it)
+    if (free) {
+      const L = M.palmPts;
+      for (let i = 0; i < L.length; i += 3) {
+        const l0 = L[i], l1 = L[i + 1], l2 = L[i + 2];
+        const p0 = x[0] + R[0] * l0 + R[1] * l1 + R[2] * l2, p1 = x[1] + R[3] * l0 + R[4] * l1 + R[5] * l2, p2 = x[2] + R[6] * l0 + R[7] * l1 + R[8] * l2;
+        const s = sdAt(p0, p1, p2);
+        if (s >= NK[14]) continue;
+        const r = wN * (NK[14] - s);
+        cost += r * r;
+        if (!jac) continue;
+        const n0 = NSD[0] * NK[9] + NSD[1] * NK[6], n1 = NSD[0] * NK[10] + NSD[1] * NK[7], n2 = NSD[0] * NK[11] + NSD[1] * NK[8];
+        GR[0] = -wN * n0; GR[1] = -wN * n1; GR[2] = -wN * n2;
+        for (let k = 0; k < 3; k++) {
+          const o = k * 9;
+          const d0 = (Rd[o] * l0 + Rd[o + 1] * l1 + Rd[o + 2] * l2 - (p0 - x[0])) / 1e-5, d1 = (Rd[o + 3] * l0 + Rd[o + 4] * l1 + Rd[o + 5] * l2 - (p1 - x[1])) / 1e-5, d2 = (Rd[o + 6] * l0 + Rd[o + 7] * l1 + Rd[o + 8] * l2 - (p2 - x[2])) / 1e-5;
+          GR[3 + k] = -wN * (n0 * d0 + n1 * d1 + n2 * d2);
+        }
+        accRow(H, g, r, PALM6);
+      }
+    }
+    // (each finger's knuckle and middle joint, the thumb's two joints)
+    const xt = S.xt, fq = S.fP, Rq = S.Rq;
+    for (let f = 0; f < 5; f++) {
+      const pb = f * 12, C = COLS[free][f];
+      for (const jj of f === 0 ? [1, 2] : [0, 1]) {
+        const at = (PP: Float64Array, o: number, RR: Float64Array, xx: Float64Array) => {
+          const l0 = PP[o + jj * 3], l1 = PP[o + jj * 3 + 1], l2 = PP[o + jj * 3 + 2];
+          return sdAt(xx[0] + RR[0] * l0 + RR[1] * l1 + RR[2] * l2, xx[1] + RR[3] * l0 + RR[4] * l1 + RR[5] * l2, xx[2] + RR[6] * l0 + RR[7] * l1 + RR[8] * l2);
+        };
+        const s = at(P, pb, R, x);
+        // (the index's knuckle rests against the wood — the neck in the web between the thumb and the index — as far as
+        // NK[17] asks; every other joint only kept off it)
+        const rest = f === 1 && jj === 0 ? NK[17] : 0, rs = NK[15] + 0.003;
+        // (a finger laid flat — a barre — lies on the strings by its joints: only its knuckle is kept off the wood)
+        if (jj > 0 && Q.lay[f] > 0.5) continue;
+        if (s >= NK[15] && !(rest > 0 && s > rs)) continue;
+        const r = s < NK[15] ? wN * (NK[15] - s) : -wN * rest * (s - rs);
+        cost += r * r;
+        if (!jac) continue;
+        const gk = s < NK[15] ? -wN : -wN * rest;
+        for (let a = 0; a < C.length; a++) {
+          const c = C[a];
+          xt.set(x); xt[c] += 1e-5;
+          M.fk(xt, f, fq, null, S.fK, S.fZ);
+          rotM(xt[3], xt[4], xt[5], Rq);
+          GR[c] = gk * (at(fq, 0, Rq, xt) - s) / 1e-5;
+        }
+        accRow(H, g, r, C);
+      }
+    }
+  }
   // the palm: its move and turn from where the goal put it
   if (free) {
     const wm = W_PALM / (PALM_M * Q.free), wr = W_PALM / (PALM_R * Q.free);
@@ -649,6 +748,11 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
 export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): number {
   const N = HAND_N, x = S.x, lo = M.lo, hi = M.hi, palm = Q.free > 0 ? 0 : 6;
   if (!S.ready) { x.set(Q.rest); for (let k = 0; k < 6; k++) x[k] = 0; S.ready = true; S.lam = 1e-3; }
+  // (the damping carried from the last frame, but never more than LAM0: one frame whose every trial step failed — a
+  // target that jumped across a string — left it at its ceiling, and the next frames' steps were too small to move the
+  // finger for a tenth of a second). A built hand's only: the older bodies' fingers kept exactly as their projects have
+  // them (release-ab)
+  if (M.built && S.lam > LAM0) S.lam = LAM0;
   for (let i = 0; i < N; i++) x[i] = i < palm ? 0 : Math.min(hi[i], Math.max(lo[i], x[i]));
   let c = pass(M, S, Q, x, true), stale = false;
   let n = 0;
