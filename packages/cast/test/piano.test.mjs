@@ -56,7 +56,9 @@ test('each finger lands on its note\'s second: over the key a frame before, on i
     const at = tipOver(P, I, st, st.t0, (x) => { s = x; });
     // (the tip's joint is the pad's 4 mm over where it touches)
     assert.ok(before > 0.0055, `${st.note}@${st.t0.toFixed(3)} already down a frame early (${before})`);
-    assert.ok(Math.abs(at - 0.004) < 1e-6, `${st.note}@${st.t0.toFixed(3)} not on its key at its second (${at})`);
+    // (on it at its second, its pad on the key and into its travel: a stroke lands a few ms ahead of the second, as a
+    // rig's fingertip follows its goal about a frame behind)
+    assert.ok(at <= 0.004 + 1e-9 && at > 0.004 - I.pressDepth - 1e-9, `${st.note}@${st.t0.toFixed(3)} not on its key at its second (${at})`);
   }
 });
 
