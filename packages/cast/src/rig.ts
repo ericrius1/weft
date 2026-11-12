@@ -2394,9 +2394,6 @@ export class HeroRig {
 
   private rigFingers(side: number, curl: number, grip: number, goal: HandGoal | null, goalW: number, dt: number) {
     const t = side > 0 ? 'L' : 'R';
-    // (the hand's solve carries its numbers frame to frame: what comes in is held to a grid first, so no engine's own
-    // last bits get in — the same pose in every browser and in Node; math.ts dsin)
-    curl = q30(curl); grip = q30(grip); goalW = q30(goalW);
     // (holding something: the goal's grip; else the keys' resting curve below)
     const holds = !!goal && goal.grip !== undefined && goalW > 0.001;
     if (holds) grip = lerp(grip, goal!.grip!, goalW);
@@ -2432,11 +2429,13 @@ export class HeroRig {
     }
     if (this.bi['index1' + t] === undefined) return;
     // (fingertips with targets: the hand solved as a hand — fingers.ts)
-    if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, c, grip, holds, goal, goalW, dt); return; }
+    // (the hand's solve carries its numbers frame to frame: what comes in is held to a grid first, so no engine's own
+    // last bits get in — the same pose in every browser and in Node; math.ts dsin)
+    if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
     // (a built hand — its file's own hand, header.hand — with no fingertip to place: its fingers at their rests through
     // the hand model, each finger bending about its own knuckle's axis; the older path below turns every finger about
     // the hand's one axis, which a modelled hand's curved, fanned fingers don't survive)
-    if (this.asset.header.hand && this.handM[hi]) { this.restFingers(hi, c, grip, holds, goal, goalW, dt); return; }
+    if (this.asset.header.hand && this.handM[hi]) { this.restFingers(hi, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
     // per-joint fingers: a relaxed hand cascades (the index curls least, the pinky most), the end joints fairly
     // straight; at an instrument each finger with a target reaches it — its curl solved so the tip lands there (the
     // middle and end joints coupled as a hand's are), its spread turned toward it
