@@ -391,6 +391,14 @@ In the vertex shader: `#include "weft/skin"`, declare `DQ: array<vec4f>` (two pe
 cast's README lists every module (face, speech, garments, strands, strokes, the body solver, performers), and its
 MIGRATION.md explains how a project replaces its local copy.
 
+A pianist (`@ericrius1/cast/piano`) plays a seat at any `Playable` keyboard (`pianoPlayable(geometry, sound)` for a
+piano). `p.sit(playable, from, yaw)`, then `p.playScore(score)` plays a `{ notes: { note, t0, t1, vel }[], pedal:
+{ t, down }[], duration }` on the frames' dt, calling `noteOn`, `noteOff` and `pedalSet`. Pass
+`p.playScore(score, { clock: () => transport.seconds })` (after `sit()`) to tie it to your audio clock instead: the
+whole piece is planned once, and the hands are posed from the clock's second alone, so a slow or dropped frame never
+puts a finger on the wrong key. `p.struck` lists every stroke (hand, finger, `t0`, `up`) to schedule the sound ahead,
+and `p.simplified` names any note it had to stretch for. `p.stopScore()` stops it and takes the hands off the clock.
+
 ## Where to look in the source
 
 | question | file (in `src/`, `shaders/` or `plugin/`) |
