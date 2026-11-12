@@ -501,12 +501,20 @@ export class Pianist {
    *  let go, easing in and out over DEEP_EASE on the clock (the same at every frame rate) */
   private deepness(h: number, s: number): number {
     let k = 0;
-    for (let f = 0; f < 5; f++) for (const x of this.byFinger[h][f]) {
+    // (from the first stroke not yet over: a finger's strokes are let up in order — planScore cuts each before the next
+    // — so found by halving, not by scanning every note played so far each frame)
+    for (let f = 0; f < 5; f++) {
+      const F = this.byFinger[h][f];
+      let lo = 0, hi = F.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (F[m].up + DEEP_EASE < s) lo = m + 1; else hi = m; }
+      for (let i = lo; i < F.length; i++) {
+      const x = F[i];
       const a = x.t0 - FALL - REACH - this.approachOf(h, f, x);
       if (a - DEEP_EASE > s) break;
       if (!this.black(x.note) || s > x.up + DEEP_EASE) continue;
       const v = s < a ? (s - (a - DEEP_EASE)) / DEEP_EASE : s <= x.up ? 1 : 1 - (s - x.up) / DEEP_EASE;
       if (v > k) k = v;
+      }
     }
     k = clamp(k, 0, 1);
     return k * k * (3 - 2 * k);
