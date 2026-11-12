@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **0.2.8: camera-relative matrices.** `Camera.viewRel`, `viewProjRel`, `invViewProjRel`, `prevViewProjRel` (last
+  frame's about this frame's eye, the move in doubles) and `camLo`; the `Frame` fields after `user` (none moved);
+  `weft/frame`'s `fromEye`, `clipAt`, `clipRel`, `prevClipAt`, `prevClipRel`, `relFromDepth`. A draw through them is as
+  sharp 6,000 km from the origin as at it (2e-3 px at 4K, `test/camera.test.mjs`, against the same camera at the origin).
 - **`AGENTS.md`'s cast section** covers cast 0.5.0: a neck held in the hand (`HandGoal.neck`) for a fretting or
   stopping hand, the bow hold and the pick as grasps, `elbowW` of 100 or more, `Pianist.blackIn`.
 - **`AGENTS.md`'s cast section** covers cast 0.4.0: grasps (`grasp`, `graspGoal`, `HandGoal.pose`), `HandGoal.around`,

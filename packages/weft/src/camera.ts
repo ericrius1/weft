@@ -39,7 +39,10 @@ export class Camera {
   /** last frame's viewProj taken about this frame's eye (motion vectors for camera-relative positions) */
   readonly prevViewProjRel = mat4();
   /** what float32 loses of `position`: position − fround(position), per axis (Frame.camPos + Frame.camLo is the eye to
-   *  a float's precision of the lost part: under a nanometre at 1,000 km) */
+   *  a float's precision of the lost part: under a nanometre at 1,000 km). With `viewOverride` the eye is read back from
+   *  that matrix's inverse, a Float32Array: camLo is then what float32 loses of a position already rounded to float32,
+   *  0, and the eye is only as good as the matrix (a shadow camera 1,000 km out: 6 cm). Give such a camera a `position`
+   *  in doubles and a rotation-only override instead when it must be exact far from the origin */
   readonly camLo: V3 = [0, 0, 0];
   private prevRot = mat4();
   private prevPos: V3 = [0, 0, 0];
@@ -62,7 +65,8 @@ export class Camera {
   /** recompute matrices for a viewport (width, height in pixels) */
   update(width: number, height: number) {
     this.aspect = width / Math.max(1, height);
-    if (!this.first) { this.prevViewProj.set(this.viewProj); this.prevRot.set(this.viewProjRel); this.prevPos = [...this.position] as V3; }
+    // (last frame's matrices, before this frame's overwrite them; its eye is prevPos, kept at the end of the last update)
+    if (!this.first) { this.prevViewProj.set(this.viewProj); this.prevRot.set(this.viewProjRel); }
     if (this.viewOverride) {
       this.view.set(this.viewOverride);
       mat4Invert(this.view, this.invView);
@@ -113,10 +117,13 @@ export class Camera {
     const p = this.position;
     for (let i = 0; i < 3; i++) this.camLo[i] = p[i] - Math.fround(p[i]);
     if (this.first) { this.prevViewProj.set(this.viewProj); this.prevRot.set(this.viewProjRel); this.prevPos = [p[0], p[1], p[2]]; this.first = false; }
-    // last frame's rotation-only matrix times a translation by (last eye − this eye), the difference in doubles
+    // last frame's rotation-only matrix times a translation by (this eye − last eye), the difference in doubles: a
+    // point at r from this eye is at r + (eye − lastEye) from the last one, so prevViewProjRel · r = prevViewProj · p
     const m = this.prevRot, o = this.prevViewProjRel, d0 = p[0] - this.prevPos[0], d1 = p[1] - this.prevPos[1], d2 = p[2] - this.prevPos[2];
     o.set(m);
-    for (let r = 0; r < 4; r++) o[12 + r] = m[12 + r] - (m[r] * d0 + m[4 + r] * d1 + m[8 + r] * d2);
+    for (let r = 0; r < 4; r++) o[12 + r] = m[12 + r] + (m[r] * d0 + m[4 + r] * d1 + m[8 + r] * d2);
+    // (this eye is the next update's last eye)
+    this.prevPos = [p[0], p[1], p[2]];
   }
 
   /** forget motion history (after a cut, so motion vectors don't smear; a Taau drops its history too) */

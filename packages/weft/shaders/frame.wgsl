@@ -40,6 +40,15 @@ fn clipAt(p: vec3f) -> vec4f { return frame.viewProjRel * vec4f(fromEye(p), 1.0)
 fn clipRel(r: vec3f) -> vec4f { return frame.viewProjRel * vec4f(r, 1.0); }
 // last frame's clip position of a world position (motion vectors)
 fn prevClipAt(p: vec3f) -> vec4f { return frame.prevViewProjRel * vec4f(fromEye(p), 1.0); }
+// last frame's clip position of a position relative to this frame's eye
+fn prevClipRel(r: vec3f) -> vec4f { return frame.prevViewProjRel * vec4f(r, 1.0); }
+// a position relative to the eye from a screen uv (0..1, y down) and a depth-buffer value: worldFromDepth without the
+// world's large coordinates in it (precise as far from the origin as near it)
+fn relFromDepth(uv: vec2f, d: f32) -> vec3f {
+  let ndc = vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+  let w = frame.invViewProjRel * ndc;
+  return w.xyz / w.w;
+}
 
 // reversed-Z, infinite far plane: view distance along the view axis from a depth-buffer value
 fn linearDepth(d: f32) -> f32 { return frame.near / max(d, 1e-7); }
