@@ -622,7 +622,7 @@ const MODELLED: Record<string, Partial<Record<'smile' | 'frown' | 'spread' | 'ro
   lipUS: { smile: [0.0022, 0.0026, -0.0012], spread: [0.0028, 0.0006, -0.001], round: [-0.0042, 0.0004, 0.0032], press: [0, -0.001, 0.0003], teeth: [0, 0.0026, 0.0004], tuck: [0, 0.001, 0.0006] },
   lipD: { smile: [0, 0.0004, -0.0004], frown: [0, 0.0012, 0.0015], round: [0, -0.0004, 0.004], press: [0, 0.0028, 0.0008], tuck: [0, 0.0045, -0.0035], teeth: [0, -0.0012, 0] },
   lipDS: { smile: [0.0018, 0.0012, -0.001], frown: [0.0004, -0.001, 0], spread: [0.0026, -0.0004, -0.0008], round: [-0.0038, 0, 0.0032], press: [0, 0.0024, 0.0006], tuck: [0, 0.0036, -0.003], teeth: [0, -0.0014, 0] },
-  cheek: { smile: [0.0012, 0.0045, 0.0018], round: [-0.0012, -0.0004, -0.0006] },
+  cheek: { smile: [0.0012, 0.0045, 0.0018], round: [-0.0012, -0.0004, -0.0006], open: [-0.0008, -0.0035, -0.0004] },
 };
 const JAW_OPEN_MODELLED = 0.24;
 
@@ -2710,7 +2710,7 @@ export class HeroRig {
     const s = this.s;
     const hinge = this.B[ji].head;
     const modelled = this.asset.header.faceRig ?? null;
-    const ang = (modelled ? JAW_OPEN_MODELLED : JAW_OPEN) * F.jaw;
+    const ang = (modelled ? modelled.jaw ?? JAW_OPEN_MODELLED : JAW_OPEN) * F.jaw;
     const turn = (p: V3, a: number): V3 => { const dy = p[1] - hinge[1], dz = p[2] - hinge[2], c = Math.cos(a), sn = Math.sin(a); return [p[0], hinge[1] + dy * c - dz * sn, hinge[2] + dy * sn + dz * c]; };
     const turnD = (dd: V3, a: number): V3 => [dd[0], dd[1] * Math.cos(a) - dd[2] * Math.sin(a), dd[1] * Math.sin(a) + dd[2] * Math.cos(a)];
     for (const name of FACE_RIG) {

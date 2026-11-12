@@ -29,7 +29,7 @@ export interface HeroHeader {
   hand?: { source: string; len: number; breadth: number };
   /** a modelled face (lips, a jaw that opens on teeth and a tongue, brows, lids over real eyes: built, not drawn): its
    *  bones move as far as a real face's (rig.ts MODELLED), times `gain` */
-  faceRig?: { gain?: number };
+  faceRig?: { gain?: number; /** the jaw's opening at full (rad; 0.24 if unset) */ jaw?: number };
 }
 export interface HeroAsset {
   header: HeroHeader;
