@@ -831,6 +831,8 @@ export class HeroRig {
   private handS = [new HandSolve(), new HandSolve()];
   private handQ: HandAsk[] = [handAsk(), handAsk()];
   private palmX = [new Float64Array(6), new Float64Array(6)];
+  /** the hand as the palm's solve placed it this frame (wrist, its way, its palm's; [9] set when it's this frame's) */
+  private palmAt = [new Float64Array(10), new Float64Array(10)];
   /** each hand's fingertips' misses as the palm's solve left them (before the arm took the palm) */
   readonly palmMiss = [new Float64Array(5), new Float64Array(5)];
   /** each hand's fingertips' misses after its solve (m; thumb first) and its iterations, for tools and tests */
@@ -2548,6 +2550,8 @@ export class HeroRig {
     const turn = (v: V3): V3 => (a < 1e-9 ? v : rotateAxis(v, [x[3] / a, x[4] / a, x[5] / a], a));
     const h2 = W(...turn([1, 0, 0])), p2 = W(...turn([0, 0, 1]));
     const w2 = add(wrist, W(x[0], x[1], x[2]));
+    // (where the hand is to be, so the fingers' second solve can be skipped when the arm put it there)
+    const E = this.palmAt[i]; E.set(w2, 0); E.set(h2, 3); E.set(p2, 6); E[9] = 1;
     return { ...goal, palm: add(w2, scale(h2, hl * 0.55)), knuckles: goal.knuckles ? add(w2, scale(h2, kl)) : undefined, fwd: h2, down: p2, exact: true, turn: 0 };
   }
 
@@ -2564,7 +2568,12 @@ export class HeroRig {
     });
     Q.free = 0;
     for (let j = 0; j < 6; j++) S.x[j] = 0;
-    solveHand(M, S, Q, HeroRig.handIters[1]);
+    // (the arm put the hand where the palm's solve asked, within a tenth of a millimetre and a few hundredths of a
+    // degree: the fingers as solved there stand; else solved again on the hand as it is)
+    const E = this.palmAt[hi], wb2 = this.skinPoint(M.hb, M.wrist), hx = this.skinDir(M.hb, X), pz = this.skinDir(M.hb, Z);
+    const there = E[9] === 1 && Math.hypot(wb2[0] - E[0], wb2[1] - E[1], wb2[2] - E[2]) < 1e-4 && hx[0] * E[3] + hx[1] * E[4] + hx[2] * E[5] > 0.9999995 && pz[0] * E[6] + pz[1] * E[7] + pz[2] * E[8] > 0.9999995;
+    E[9] = 0;
+    if (!there) solveHand(M, S, Q, HeroRig.handIters[1]);
     const P = new Float64Array(12), U = new Float64Array(9), K = new Float64Array(3), Zf = new Float64Array(3);
     const hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {

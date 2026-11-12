@@ -41,12 +41,27 @@ const PRON_F = 0.55, PRON_A = 0.35;
 /** the end joint's share of the middle's bend (its tendon) */
 export const DIP_K = 0.7;
 
+/** a 3-vector's length (Math.hypot is slow) */
+const len3 = (a: number, b: number, c: number) => Math.sqrt(a * a + b * b + c * c);
 const rodr = (o: Float64Array, i: number, vx: number, vy: number, vz: number, kx: number, ky: number, kz: number, c: number, s: number) => {
   const d = (kx * vx + ky * vy + kz * vz) * (1 - c);
   o[i] = vx * c + (ky * vz - kz * vy) * s + kx * d;
   o[i + 1] = vy * c + (kz * vx - kx * vz) * s + ky * d;
   o[i + 2] = vz * c + (kx * vy - ky * vx) * s + kz * d;
 };
+
+/** a finger's three bones' ways (v), their ups (u, or null) and the thumb's pad (q) turned by a about k */
+function turnAll(v: Float64Array, u: Float64Array | null, q: Float64Array, kx: number, ky: number, kz: number, a: number) {
+  if (a === 0) return;
+  const c = Math.cos(a), s = Math.sin(a);
+  for (let j = 0; j < 9; j += 3) { rodr(v, j, v[j], v[j + 1], v[j + 2], kx, ky, kz, c, s); if (u) rodr(u, j, u[j], u[j + 1], u[j + 2], kx, ky, kz, c, s); }
+  rodr(q, 0, q[0], q[1], q[2], kx, ky, kz, c, s);
+}
+/** o at i turned about (k0, k1, k2) by (c, s), then about K by (cb, sb) */
+function rodr2(o: Float64Array, i: number, k0: number, k1: number, k2: number, c: number, s: number, K: Float64Array, cb: number, sb: number) {
+  rodr(o, i, o[i], o[i + 1], o[i + 2], k0, k1, k2, c, s);
+  rodr(o, i, o[i], o[i + 1], o[i + 2], K[0], K[1], K[2], cb, sb);
+}
 
 /** one body's hand, from its bind skeleton */
 export class HandModel {
@@ -95,7 +110,7 @@ export class HandModel {
       let L = 0;
       for (let k = 0; k < 3; k++) {
         const v = sub(B[k].tail, B[k].head);
-        L += Math.hypot(v[0], v[1], v[2]);
+        L += len3(v[0], v[1], v[2]);
         toC(v, this.seg, f * 9 + k * 3, true);
         toC(norm(B[k].up), this.up, f * 9 + k * 3, true);
       }
@@ -109,7 +124,7 @@ export class HandModel {
     }
     const kn = (f: number) => [this.base[f * 3], this.base[f * 3 + 1], this.base[f * 3 + 2]];
     const a1 = kn(1), a4 = kn(4);
-    this.width = Math.hypot(a1[0] - a4[0], a1[1] - a4[1], a1[2] - a4[2]);
+    this.width = len3(a1[0] - a4[0], a1[1] - a4[1], a1[2] - a4[2]);
     // the thumb: its pad faces across the palm toward the fingers (away from the thumb's side, a little palmward)
     const t0 = norm([this.seg[0], this.seg[1], this.seg[2]]);
     this.q0.set(norm(rej([0.15, -1, 0.65], t0)));
@@ -159,20 +174,14 @@ export class HandModel {
       const ca = x[24], cf = x[23];
       const ka = this.kAb, q = this.sq, m = this.sm;
       q.set(this.q0);
-      const turn = (kx: number, ky: number, kz: number, a: number) => {
-        if (a === 0) return;
-        const c = Math.cos(a), s = Math.sin(a);
-        for (let j = 0; j < 9; j += 3) { rodr(v, j, v[j], v[j + 1], v[j + 2], kx, ky, kz, c, s); if (U) rodr(u, j, u[j], u[j + 1], u[j + 2], kx, ky, kz, c, s); }
-        rodr(q, 0, q[0], q[1], q[2], kx, ky, kz, c, s);
-      };
-      turn(ka[0], ka[1], ka[2], ca);
-      turn(0, 0, -1, cf);
-      const l0 = Math.hypot(v[0], v[1], v[2]);
+      turnAll(v, U ? u : null, q, ka[0], ka[1], ka[2], ca);
+      turnAll(v, U ? u : null, q, 0, 0, -1, cf);
+      const l0 = len3(v[0], v[1], v[2]);
       m[0] = v[0] / l0; m[1] = v[1] / l0; m[2] = v[2] / l0;
-      turn(m[0], m[1], m[2], PRON_F * cf + PRON_A * ca);
+      turnAll(v, U ? u : null, q, m[0], m[1], m[2], PRON_F * cf + PRON_A * ca);
       // the MCP and the IP hinge toward the pad
       let kx = v[1] * q[2] - v[2] * q[1], ky = v[2] * q[0] - v[0] * q[2], kz = v[0] * q[1] - v[1] * q[0];
-      const kl = Math.hypot(kx, ky, kz) || 1; kx /= kl; ky /= kl; kz /= kl;
+      const kl = len3(kx, ky, kz) || 1; kx /= kl; ky /= kl; kz /= kl;
       K[0] = kx; K[1] = ky; K[2] = kz;
       Zf[0] = q[0]; Zf[1] = q[1]; Zf[2] = q[2];
       const a1 = x[25], a2 = x[25] + x[26];
@@ -200,11 +209,10 @@ export class HandModel {
       const cg = Math.cos(g), sg = Math.sin(g);
       rodr(k, 0, this.kAx[f * 3], this.kAx[f * 3 + 1], this.kAx[f * 3 + 2], -m0, -m1, -m2, cg, sg);
       const cb = Math.cos(be), sb = Math.sin(be);
-      const both = (o2: Float64Array, j: number) => { rodr(o2, j, o2[j], o2[j + 1], o2[j + 2], -m0, -m1, -m2, cg, sg); rodr(o2, j, o2[j], o2[j + 1], o2[j + 2], k[0], k[1], k[2], cb, sb); };
-      for (let j = 0; j < 9; j += 3) { both(v, j); if (U) both(u, j); }
-      both(zf, 0);
+      for (let j = 0; j < 9; j += 3) { rodr2(v, j, -m0, -m1, -m2, cg, sg, k, cb, sb); if (U) rodr2(u, j, -m0, -m1, -m2, cg, sg, k, cb, sb); }
+      rodr2(zf, 0, -m0, -m1, -m2, cg, sg, k, cb, sb);
       b[0] -= p0; b[1] -= p1; b[2] -= p2;
-      both(b, 0);
+      rodr2(b, 0, -m0, -m1, -m2, cg, sg, k, cb, sb);
       b[0] += p0; b[1] += p1; b[2] += p2;
     }
     // the spread, about the palm's normal (as the arch has turned it)
@@ -216,7 +224,7 @@ export class HandModel {
     Zf[0] = zf[0]; Zf[1] = zf[1]; Zf[2] = zf[2];
     // the hinges: about the knuckle's axis (the first bone's way crossed with the palm's normal: bending toward the palm)
     let kx = v[1] * zf[2] - v[2] * zf[1], ky = v[2] * zf[0] - v[0] * zf[2], kz = v[0] * zf[1] - v[1] * zf[0];
-    const kl = Math.hypot(kx, ky, kz) || 1; kx /= kl; ky /= kl; kz /= kl;
+    const kl = len3(kx, ky, kz) || 1; kx /= kl; ky /= kl; kz /= kl;
     K[0] = kx; K[1] = ky; K[2] = kz;
     P[0] = b[0]; P[1] = b[1]; P[2] = b[2];
     let a = 0;
@@ -261,12 +269,12 @@ export class HandSolve {
   readonly A = new Float64Array(HAND_N * HAND_N); readonly dx = new Float64Array(HAND_N); readonly xn = new Float64Array(HAND_N);
   readonly R = new Float64Array(9); readonly Rd = new Float64Array(27);
   readonly fP = new Float64Array(12); readonly fK = new Float64Array(3); readonly fZ = new Float64Array(3);
-  readonly xt = new Float64Array(HAND_N); readonly b = new Float64Array(HAND_N); readonly at = new Uint8Array(HAND_N);
+  readonly xt = new Float64Array(HAND_N); readonly b = new Float64Array(HAND_N); readonly act = new Int32Array(HAND_N);
 }
 
 /** the rotation vector w as a matrix (row-major) */
 function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
-  const a = Math.hypot(w0, w1, w2);
+  const a = len3(w0, w1, w2);
   if (a < 1e-9) { R.fill(0, o, o + 9); R[o] = R[o + 4] = R[o + 8] = 1; return; }
   const k0 = w0 / a, k1 = w1 / a, k2 = w2 / a, c = Math.cos(a), s = Math.sin(a), t = 1 - c;
   R[o] = c + k0 * k0 * t; R[o + 1] = k0 * k1 * t - k2 * s; R[o + 2] = k0 * k2 * t + k1 * s;
@@ -280,101 +288,113 @@ const W_FLOOR = 1, W_BAND = 6, W_DIP = 4, W_WEB = 15, W_APART = 12, W_GAP = 0.6,
 /** the fingertips kept this far apart (a share of the knuckles' width) */
 const GAP = 0.26;
 
+// (the numbers each fingertip moves with — the palm's when it's free, the arch for ring and little, its own four — and
+// those of two neighbouring fingertips together)
+const COLS: Int32Array[][] = [0, 1].map((free) => [0, 1, 2, 3, 4].map((f) => {
+  const o = f === 0 ? 23 : 7 + 4 * (f - 1), c: number[] = [];
+  if (free) c.push(0, 1, 2, 3, 4, 5);
+  if (f >= 3) c.push(HP_ARCH);
+  c.push(o, o + 1, o + 2, o + 3);
+  return Int32Array.from(c);
+}));
+const COLS2: Int32Array[][] = [0, 1].map((free) => [0, 1, 2].map((f) => Int32Array.from([...new Set([...COLS[free][f + 1], ...COLS[free][f + 2]])])));
+/** the scratch for one row's gradient over its columns */
+const GR = new Float64Array(HAND_N);
+
+/** a residual r on one number (gradient ci) into the normal equations */
+function acc1(H: Float64Array, g: Float64Array, r: number, i: number, ci: number) {
+  H[i * HAND_N + i] += ci * ci; g[i] += ci * r;
+}
+/** a residual r on two numbers */
+function acc2(H: Float64Array, g: Float64Array, r: number, i: number, ci: number, j: number, cj: number) {
+  const N = HAND_N;
+  H[i * N + i] += ci * ci; H[j * N + j] += cj * cj; H[i * N + j] += ci * cj; H[j * N + i] += ci * cj;
+  g[i] += ci * r; g[j] += cj * r;
+}
+/** a residual r with its gradient in GR over the columns C */
+function accRow(H: Float64Array, g: Float64Array, r: number, C: Int32Array) {
+  const N = HAND_N;
+  for (let a = 0; a < C.length; a++) {
+    const ca = C[a], ga = GR[ca];
+    if (ga === 0) continue;
+    g[ca] += ga * r;
+    const o = ca * N;
+    for (let b = 0; b < C.length; b++) H[o + C[b]] += ga * GR[C[b]];
+  }
+}
+
 /** the cost, and with `jac` the normal equations (H, g) — the residuals each pass adds:
- *  fingertips' misses, each number's rest, the end joints' tendon, the webs, the enslaving, the tips' gaps, the palm */
+ *  fingertips' misses, each number's rest, the end joints' tendon, the webs, the enslaving, the tips' gaps, a surface,
+ *  the palm */
 function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: boolean): number {
-  const P = S.P, K = S.K, Zf = S.Zf, T = S.T, R = S.R, J = S.J, H = S.H, g = S.g, N = HAND_N;
+  const P = S.P, K = S.K, Zf = S.Zf, T = S.T, R = S.R, J = S.J, H = S.H, g = S.g, N = HAND_N, fP = S.fP;
   rotM(x[3], x[4], x[5], R);
   for (let f = 0; f < 5; f++) {
-    M.fk(x, f, S.fP, null, S.fK, S.fZ);
-    P.set(S.fP, f * 12); K.set(S.fK, f * 3); Zf.set(S.fZ, f * 3);
-    const l0 = S.fP[9], l1 = S.fP[10], l2 = S.fP[11];
+    M.fk(x, f, fP, null, S.fK, S.fZ);
+    P.set(fP, f * 12); K.set(S.fK, f * 3); Zf.set(S.fZ, f * 3);
+    const l0 = fP[9], l1 = fP[10], l2 = fP[11];
     T[f * 3] = x[0] + R[0] * l0 + R[1] * l1 + R[2] * l2;
     T[f * 3 + 1] = x[1] + R[3] * l0 + R[4] * l1 + R[5] * l2;
     T[f * 3 + 2] = x[2] + R[6] * l0 + R[7] * l1 + R[8] * l2;
   }
+  const free = Q.free > 0 ? 1 : 0;
   let cost = 0;
-  if (jac) { H.fill(0); g.fill(0); }
-  // (a residual r with a sparse gradient: up to two numbers, or a fingertip's)
-  const one = (r: number, i: number, ci: number) => { cost += r * r; if (jac && ci !== 0) { H[i * N + i] += ci * ci; g[i] += ci * r; } };
-  const two = (r: number, i: number, ci: number, j: number, cj: number) => {
-    cost += r * r;
-    if (!jac) return;
-    H[i * N + i] += ci * ci; H[j * N + j] += cj * cj; H[i * N + j] += ci * cj; H[j * N + i] += ci * cj;
-    g[i] += ci * r; g[j] += cj * r;
-  };
   if (jac) {
-    // each fingertip's Jacobian (3 x N, dense rows; only its own numbers, the arch's and the palm's are non-zero)
-    J.fill(0);
-    rotM(x[3] + 1e-5, x[4], x[5], S.Rd, 0); rotM(x[3], x[4] + 1e-5, x[5], S.Rd, 9); rotM(x[3], x[4], x[5] + 1e-5, S.Rd, 18);
+    H.fill(0); g.fill(0); J.fill(0);
+    // each fingertip's Jacobian (3 x N rows; only its own numbers, the arch's and the palm's are non-zero)
     const Rd = S.Rd, xt = S.xt;
+    if (free) { rotM(x[3] + 1e-5, x[4], x[5], Rd, 0); rotM(x[3], x[4] + 1e-5, x[5], Rd, 9); rotM(x[3], x[4], x[5] + 1e-5, Rd, 18); }
     for (let f = 0; f < 5; f++) {
-      const jb = f * 3 * N, l0 = P[f * 12 + 9], l1 = P[f * 12 + 10], l2 = P[f * 12 + 11];
-      const put = (c: number, d0: number, d1: number, d2: number) => {
-        // (a hand-space change in the fingertip, before the palm's turn: turned with it)
-        J[jb + c] = R[0] * d0 + R[1] * d1 + R[2] * d2;
-        J[jb + N + c] = R[3] * d0 + R[4] * d1 + R[5] * d2;
-        J[jb + 2 * N + c] = R[6] * d0 + R[7] * d1 + R[8] * d2;
-      };
-      if (Q.free > 0) {
+      const jb = f * 3 * N, pb = f * 12, l0 = P[pb + 9], l1 = P[pb + 10], l2 = P[pb + 11];
+      if (free) {
         J[jb] = 1; J[jb + N + 1] = 1; J[jb + 2 * N + 2] = 1;
+        const r0 = R[0] * l0 + R[1] * l1 + R[2] * l2, r1 = R[3] * l0 + R[4] * l1 + R[5] * l2, r2 = R[6] * l0 + R[7] * l1 + R[8] * l2;
         for (let k = 0; k < 3; k++) {
           const o = k * 9;
-          J[jb + 3 + k] = (Rd[o] * l0 + Rd[o + 1] * l1 + Rd[o + 2] * l2 - (R[0] * l0 + R[1] * l1 + R[2] * l2)) / 1e-5;
-          J[jb + N + 3 + k] = (Rd[o + 3] * l0 + Rd[o + 4] * l1 + Rd[o + 5] * l2 - (R[3] * l0 + R[4] * l1 + R[5] * l2)) / 1e-5;
-          J[jb + 2 * N + 3 + k] = (Rd[o + 6] * l0 + Rd[o + 7] * l1 + Rd[o + 8] * l2 - (R[6] * l0 + R[7] * l1 + R[8] * l2)) / 1e-5;
+          J[jb + 3 + k] = (Rd[o] * l0 + Rd[o + 1] * l1 + Rd[o + 2] * l2 - r0) / 1e-5;
+          J[jb + N + 3 + k] = (Rd[o + 3] * l0 + Rd[o + 4] * l1 + Rd[o + 5] * l2 - r1) / 1e-5;
+          J[jb + 2 * N + 3 + k] = (Rd[o + 6] * l0 + Rd[o + 7] * l1 + Rd[o + 8] * l2 - r2) / 1e-5;
         }
       }
       const k0 = K[f * 3], k1 = K[f * 3 + 1], k2 = K[f * 3 + 2];
-      // (a hinge at joint j: the tip turns about its axis, the lever from j to the tip)
-      const hinge = (c: number, j: number) => {
-        const r0 = l0 - P[f * 12 + j * 3], r1 = l1 - P[f * 12 + j * 3 + 1], r2 = l2 - P[f * 12 + j * 3 + 2];
-        put(c, k1 * r2 - k2 * r1, k2 * r0 - k0 * r2, k0 * r1 - k1 * r0);
-      };
-      const o = hpOf(f);
-      // (by differences: the numbers that aren't a plain hinge)
-      const diff = (c: number) => {
+      // (a hinge at joint j: the tip turns about its axis, the lever from j to the tip; turned with the palm)
+      for (let j = f === 0 ? 1 : 0; j < 3; j++) {
+        const c = f === 0 ? 24 + j : hpOf(f) + 1 + j;
+        const r0 = l0 - P[pb + j * 3], r1 = l1 - P[pb + j * 3 + 1], r2 = l2 - P[pb + j * 3 + 2];
+        const d0 = k1 * r2 - k2 * r1, d1 = k2 * r0 - k0 * r2, d2 = k0 * r1 - k1 * r0;
+        J[jb + c] = R[0] * d0 + R[1] * d1 + R[2] * d2; J[jb + N + c] = R[3] * d0 + R[4] * d1 + R[5] * d2; J[jb + 2 * N + c] = R[6] * d0 + R[7] * d1 + R[8] * d2;
+      }
+      // (a finger's spread: the whole finger turns about the palm's normal through its knuckle)
+      if (f > 0) {
+        const c = hpOf(f), z0 = Zf[f * 3], z1 = Zf[f * 3 + 1], z2 = Zf[f * 3 + 2];
+        const r0 = l0 - P[pb], r1 = l1 - P[pb + 1], r2 = l2 - P[pb + 2];
+        const d0 = z1 * r2 - z2 * r1, d1 = z2 * r0 - z0 * r2, d2 = z0 * r1 - z1 * r0;
+        J[jb + c] = R[0] * d0 + R[1] * d1 + R[2] * d2; J[jb + N + c] = R[3] * d0 + R[4] * d1 + R[5] * d2; J[jb + 2 * N + c] = R[6] * d0 + R[7] * d1 + R[8] * d2;
+      }
+      // (by differences: the thumb's saddle, the arch)
+      for (let q = 0; q < 2; q++) {
+        const c = f === 0 ? 23 + q : f >= 3 && q === 0 ? HP_ARCH : -1;
+        if (c < 0) continue;
         xt.set(x); xt[c] += 1e-5;
-        M.fk(xt, f, S.fP, null, S.fK, S.fZ);
-        put(c, (S.fP[9] - l0) / 1e-5, (S.fP[10] - l1) / 1e-5, (S.fP[11] - l2) / 1e-5);
-      };
-      if (f === 0) { diff(23); diff(24); hinge(25, 1); hinge(26, 2); }
-      else {
-        const z0 = Zf[f * 3], z1 = Zf[f * 3 + 1], z2 = Zf[f * 3 + 2];
-        const r0 = l0 - P[f * 12], r1 = l1 - P[f * 12 + 1], r2 = l2 - P[f * 12 + 2];
-        put(o, z1 * r2 - z2 * r1, z2 * r0 - z0 * r2, z0 * r1 - z1 * r0);
-        hinge(o + 1, 0); hinge(o + 2, 1); hinge(o + 3, 2);
-        if (f >= 3) diff(HP_ARCH);
+        M.fk(xt, f, fP, null, S.fK, S.fZ);
+        const d0 = (fP[9] - l0) / 1e-5, d1 = (fP[10] - l1) / 1e-5, d2 = (fP[11] - l2) / 1e-5;
+        J[jb + c] = R[0] * d0 + R[1] * d1 + R[2] * d2; J[jb + N + c] = R[3] * d0 + R[4] * d1 + R[5] * d2; J[jb + 2 * N + c] = R[6] * d0 + R[7] * d1 + R[8] * d2;
       }
     }
   }
   // the fingertips' misses (per mm)
-  const cols = (f: number, out: number[]) => {
-    out.length = 0;
-    if (Q.free > 0) out.push(0, 1, 2, 3, 4, 5);
-    if (f >= 3) out.push(HP_ARCH);
-    const o = hpOf(f);
-    out.push(o, o + 1, o + 2, o + 3);
-  };
-  const C1: number[] = [], C2: number[] = [];
-  const row = (r: number, f1: number, c1: number, k: number, f2 = -1, c2 = 0) => {
-    // a residual from one or two fingertips' coordinate k (grad: c1 * J[f1][k] + c2 * J[f2][k])
-    cost += r * r;
-    if (!jac) return;
-    cols(f1, C1);
-    if (f2 >= 0) { cols(f2, C2); for (const c of C2) if (!C1.includes(c)) C1.push(c); }
-    const j1 = f1 * 3 * N + k * N, j2 = f2 * 3 * N + k * N;
-    for (const a of C1) {
-      const ga = c1 * J[j1 + a] + (f2 >= 0 ? c2 * J[j2 + a] : 0);
-      if (ga === 0) continue;
-      g[a] += ga * r;
-      for (const b of C1) { const gb = c1 * J[j1 + b] + (f2 >= 0 ? c2 * J[j2 + b] : 0); H[a * N + b] += ga * gb; }
-    }
-  };
   for (let f = 0; f < 5; f++) {
     const w = Q.w[f];
     if (w <= 0) continue;
-    for (let k = 0; k < 3; k++) row(1000 * w * (T[f * 3 + k] - Q.tgt[f * 3 + k]), f, 1000 * w, k);
+    const C = COLS[free][f];
+    for (let k = 0; k < 3; k++) {
+      const r = 1000 * w * (T[f * 3 + k] - Q.tgt[f * 3 + k]);
+      cost += r * r;
+      if (!jac) continue;
+      const jr = f * 3 * N + k * N;
+      for (let a = 0; a < C.length; a++) GR[C[a]] = 1000 * w * J[jr + C[a]];
+      accRow(H, g, r, C);
+    }
   }
   // each number's rest (a resting finger's knuckle dragged by its neighbours' bend from their rests)
   for (let i = 6; i < N; i++) {
@@ -382,57 +402,60 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     if (w <= 0) continue;
     const f = i >= 23 ? 0 : 1 + ((i - 7) >> 2);
     if (f > 0 && Q.resting[f] && i === hpOf(f) + 1) {
-      // (the knuckle: its neighbours' bends pull it along by their enslaving)
-      let r = x[i] - Q.rest[i];
-      const nb: [number, number][] = [];
-      if (f > 1) nb.push([hpOf(f - 1) + 1, ENSLAVE.drag[f - 2]]);
-      if (f < 4) nb.push([hpOf(f + 1) + 1, ENSLAVE.drag[f - 1]]);
-      // (one neighbour at a time keeps each residual two numbers wide)
-      for (const [j, d] of nb) { const k = d / nb.length; r -= k * (x[j] - Q.rest[j]); }
-      if (nb.length === 1) two(w * r, i, w, nb[0][0], -w * nb[0][1]);
-      else {
-        // (both: split into two residuals each carrying half the knuckle's pull)
-        const h = w * Math.SQRT1_2;
-        const r1 = x[i] - Q.rest[i] - nb[0][1] * (x[nb[0][0]] - Q.rest[nb[0][0]]);
-        const r2 = x[i] - Q.rest[i] - nb[1][1] * (x[nb[1][0]] - Q.rest[nb[1][0]]);
-        two(h * r1, i, h, nb[0][0], -h * nb[0][1]);
-        two(h * r2, i, h, nb[1][0], -h * nb[1][1]);
+      // (one residual per neighbour, each with its share of the pull)
+      const n = (f > 1 ? 1 : 0) + (f < 4 ? 1 : 0), h = w / Math.sqrt(n);
+      for (let side = -1; side <= 1; side += 2) {
+        const nf = f + side;
+        if (nf < 1 || nf > 4) continue;
+        const j = hpOf(nf) + 1, d = ENSLAVE.drag[side < 0 ? f - 2 : f - 1];
+        const r = h * (x[i] - Q.rest[i] - d * (x[j] - Q.rest[j]));
+        cost += r * r;
+        if (jac) acc2(H, g, r, i, h, j, -h * d);
       }
       continue;
     }
-    one(w * (x[i] - Q.rest[i]), i, w);
+    const r = w * (x[i] - Q.rest[i]);
+    cost += r * r;
+    if (jac) acc1(H, g, r, i, w);
   }
   // past each joint's comfortable band: a pose held there is an effort (the house's discomfort, anatomy.ts)
   for (let i = 6; i < N; i++) {
-    const v = x[i];
-    if (v > M.okHi[i]) one(W_BAND * (v - M.okHi[i]), i, W_BAND);
-    else if (v < M.okLo[i]) one(W_BAND * (v - M.okLo[i]), i, W_BAND);
+    const v = x[i], e = v > M.okHi[i] ? v - M.okHi[i] : v < M.okLo[i] ? v - M.okLo[i] : 0;
+    if (e === 0) continue;
+    const r = W_BAND * e;
+    cost += r * r;
+    if (jac) acc1(H, g, r, i, W_BAND);
   }
   // the end joints with the middle ones (the tendon)
-  for (let f = 1; f <= 4; f++) { const o = hpOf(f); two(W_DIP * (x[o + 3] - DIP_K * x[o + 2]), o + 3, W_DIP, o + 2, -W_DIP * DIP_K); }
-  // the webs: two neighbours' spreads no further apart than the web between them lets them, nor crossed
+  for (let f = 1; f <= 4; f++) {
+    const o = hpOf(f), r = W_DIP * (x[o + 3] - DIP_K * x[o + 2]);
+    cost += r * r;
+    if (jac) acc2(H, g, r, o + 3, W_DIP, o + 2, -W_DIP * DIP_K);
+  }
+  // the webs: two neighbours' spreads no further apart than the web between them lets them, nor crossed; their bends
+  // no further apart than the enslaving lets them
   for (let f = 1; f < 4; f++) {
     const a = hpOf(f), b = hpOf(f + 1), d = x[a] - x[b];
-    if (d > SPREAD.web[f - 1]) two(W_WEB * (d - SPREAD.web[f - 1]), a, W_WEB, b, -W_WEB);
-    else if (d < -0.05) two(W_WEB * (d + 0.05), a, W_WEB, b, -W_WEB);
-    // (and their bends: no further apart than the enslaving lets them)
-    const ka = a + 1, kb = b + 1, e = x[ka] - x[kb], ap = ENSLAVE.apart[f - 1];
-    if (e > ap) two(W_APART * (e - ap), ka, W_APART, kb, -W_APART);
-    else if (e < -ap) two(W_APART * (e + ap), ka, W_APART, kb, -W_APART);
+    const e = d > SPREAD.web[f - 1] ? d - SPREAD.web[f - 1] : d < -0.05 ? d + 0.05 : 0;
+    if (e !== 0) { const r = W_WEB * e; cost += r * r; if (jac) acc2(H, g, r, a, W_WEB, b, -W_WEB); }
+    const ka = a + 1, kb = b + 1, ee = x[ka] - x[kb], ap = ENSLAVE.apart[f - 1];
+    const e2 = ee > ap ? ee - ap : ee < -ap ? ee + ap : 0;
+    if (e2 !== 0) { const r = W_APART * e2; cost += r * r; if (jac) acc2(H, g, r, ka, W_APART, kb, -W_APART); }
   }
   // the fingertips a finger's breadth apart (neighbours)
   const gap = GAP * M.width;
   for (let f = 1; f < 4; f++) {
-    const d0 = T[f * 3] - T[f * 3 + 3], d1 = T[f * 3 + 1] - T[f * 3 + 4], d2 = T[f * 3 + 2] - T[f * 3 + 5], d = Math.hypot(d0, d1, d2);
+    const d0 = T[f * 3] - T[f * 3 + 3], d1 = T[f * 3 + 1] - T[f * 3 + 4], d2 = T[f * 3 + 2] - T[f * 3 + 5], d = len3(d0, d1, d2);
     if (d >= gap || d < 1e-6) continue;
-    // (the gap along the line between them: each of the three coordinates' share)
-    const r = 1000 * W_GAP * (gap - d), u = [d0 / d, d1 / d, d2 / d];
+    const r = 1000 * W_GAP * (gap - d);
     cost += r * r;
     if (!jac) continue;
-    cols(f, C1); cols(f + 1, C2); for (const c of C2) if (!C1.includes(c)) C1.push(c);
-    const ja = f * 3 * N, jb = (f + 1) * 3 * N;
-    const gr = (c: number) => -1000 * W_GAP * (u[0] * (J[ja + c] - J[jb + c]) + u[1] * (J[ja + N + c] - J[jb + N + c]) + u[2] * (J[ja + 2 * N + c] - J[jb + 2 * N + c]));
-    for (const a of C1) { const ga = gr(a); if (ga === 0) continue; g[a] += ga * r; for (const b of C1) H[a * N + b] += ga * gr(b); }
+    const u0 = d0 / d, u1 = d1 / d, u2 = d2 / d, C = COLS2[free][f - 1], ja = f * 3 * N, jb = (f + 1) * 3 * N;
+    for (let a = 0; a < C.length; a++) {
+      const c = C[a];
+      GR[c] = -1000 * W_GAP * (u0 * (J[ja + c] - J[jb + c]) + u1 * (J[ja + N + c] - J[jb + N + c]) + u2 * (J[ja + 2 * N + c] - J[jb + 2 * N + c]));
+    }
+    accRow(H, g, r, C);
   }
   // a surface: the fingertips without a target clear of it
   if (Q.clear > 0) {
@@ -442,19 +465,22 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       if (k <= 0) continue;
       const h = F[0] * T[f * 3] + F[1] * T[f * 3 + 1] + F[2] * T[f * 3 + 2] - F[3];
       if (h >= Q.clear) continue;
-      const w = 1000 * W_FLOOR * k;
-      cost += (w * (Q.clear - h)) ** 2;
+      const w = 1000 * W_FLOOR * k, r = w * (Q.clear - h);
+      cost += r * r;
       if (!jac) continue;
-      cols(f, C1);
-      const jb = f * 3 * N, r = w * (Q.clear - h);
-      const gr = (c: number) => -w * (F[0] * J[jb + c] + F[1] * J[jb + N + c] + F[2] * J[jb + 2 * N + c]);
-      for (const a of C1) { const ga = gr(a); if (ga === 0) continue; g[a] += ga * r; for (const b of C1) H[a * N + b] += ga * gr(b); }
+      const C = COLS[free][f], jb = f * 3 * N;
+      for (let a = 0; a < C.length; a++) { const c = C[a]; GR[c] = -w * (F[0] * J[jb + c] + F[1] * J[jb + N + c] + F[2] * J[jb + 2 * N + c]); }
+      accRow(H, g, r, C);
     }
   }
   // the palm: its move and turn from where the goal put it
-  if (Q.free > 0) {
+  if (free) {
     const wm = W_PALM / (PALM_M * Q.free), wr = W_PALM / (PALM_R * Q.free);
-    for (let k = 0; k < 3; k++) { one(wm * x[k], k, wm); one(wr * x[3 + k], 3 + k, wr); }
+    for (let k = 0; k < 3; k++) {
+      const a = wm * x[k], b = wr * x[3 + k];
+      cost += a * a + b * b;
+      if (jac) { acc1(H, g, a, k, wm); acc1(H, g, b, 3 + k, wr); }
+    }
   }
   return cost;
 }
@@ -465,18 +491,20 @@ export const SOLVES = { n: 0, iters: 0, n1: 0, iters1: 0 };
 /** A x = b, A symmetric positive definite (n x n, row-major; Cholesky in place over A): false if it isn't */
 function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number): boolean {
   for (let j = 0; j < n; j++) {
-    let s = A[j * n + j];
-    for (let k = 0; k < j; k++) s -= A[j * n + k] * A[j * n + k];
+    const rj = j * n;
+    let s = A[rj + j];
+    for (let k = 0; k < j; k++) s -= A[rj + k] * A[rj + k];
     if (s <= 1e-14) return false;
-    const d = Math.sqrt(s);
-    A[j * n + j] = d;
+    const d = Math.sqrt(s), inv = 1 / d;
+    A[rj + j] = d;
     for (let i = j + 1; i < n; i++) {
-      let t = A[i * n + j];
-      for (let k = 0; k < j; k++) t -= A[i * n + k] * A[j * n + k];
-      A[i * n + j] = t / d;
+      const ri = i * n;
+      let t = A[ri + j];
+      for (let k = 0; k < j; k++) t -= A[ri + k] * A[rj + k];
+      A[ri + j] = t * inv;
     }
   }
-  for (let i = 0; i < n; i++) { let t = b[i]; for (let k = 0; k < i; k++) t -= A[i * n + k] * x[k]; x[i] = t / A[i * n + i]; }
+  for (let i = 0; i < n; i++) { const ri = i * n; let t = b[i]; for (let k = 0; k < i; k++) t -= A[ri + k] * x[k]; x[i] = t / A[ri + i]; }
   for (let i = n - 1; i >= 0; i--) { let t = x[i]; for (let k = i + 1; k < n; k++) t -= A[k * n + i] * x[k]; x[i] = t / A[i * n + i]; }
   return true;
 }
@@ -484,41 +512,41 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
 /** the hand solved for what's asked: S.x updated in place (warm: from last frame's), at most `iters` iterations;
  *  returns the cost. The palm's numbers are held at 0 unless the ask frees it */
 export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): number {
-  const N = HAND_N, x = S.x, lo = M.lo, hi = M.hi;
+  const N = HAND_N, x = S.x, lo = M.lo, hi = M.hi, palm = Q.free > 0 ? 0 : 6;
   if (!S.ready) { x.set(Q.rest); for (let k = 0; k < 6; k++) x[k] = 0; S.ready = true; S.lam = 1e-3; }
-  const held = (i: number) => i < 6 && Q.free <= 0;
-  for (let i = 0; i < N; i++) x[i] = held(i) ? 0 : Math.min(hi[i], Math.max(lo[i], x[i]));
-  let c = pass(M, S, Q, x, true);
+  for (let i = 0; i < N; i++) x[i] = i < palm ? 0 : Math.min(hi[i], Math.max(lo[i], x[i]));
+  let c = pass(M, S, Q, x, true), stale = false;
   let n = 0;
+  const act = S.act, A = S.A, b = S.b, dx = S.dx, xn = S.xn, H = S.H, g = S.g;
   for (; n < iters; n++) {
     // (converged: every fingertip within a fifth of a millimetre and nothing pulling much)
     let worst = 0;
-    for (let f = 0; f < 5; f++) if (Q.w[f] > 0) worst = Math.max(worst, Math.hypot(S.T[f * 3] - Q.tgt[f * 3], S.T[f * 3 + 1] - Q.tgt[f * 3 + 1], S.T[f * 3 + 2] - Q.tgt[f * 3 + 2]));
+    for (let f = 0; f < 5; f++) if (Q.w[f] > 0) worst = Math.max(worst, len3(S.T[f * 3] - Q.tgt[f * 3], S.T[f * 3 + 1] - Q.tgt[f * 3 + 1], S.T[f * 3 + 2] - Q.tgt[f * 3 + 2]));
     let gm = 0;
-    for (let i = 0; i < N; i++) if (!held(i)) gm = Math.max(gm, Math.abs(S.g[i]));
+    for (let i = palm; i < N; i++) gm = Math.max(gm, Math.abs(g[i]));
     if (worst < 0.0002 && gm < 0.004) break;
+    // (the numbers free this step: a number at its limit and pulled past it is held there — projecting a step that
+    // wanted it further would turn the step off its way and stall the fit)
+    let m = 0;
+    for (let i = palm; i < N; i++) if (!((x[i] <= lo[i] + 1e-9 && g[i] > 0) || (x[i] >= hi[i] - 1e-9 && g[i] < 0))) act[m++] = i;
     let ok = false, gain = 0;
-    // (a number at its limit and pulled past it is held there this step: the rest solved without it — projecting a
-    // step that wanted it further would turn the step off its way and stall the fit)
-    const at = S.at;
-    for (let i = 0; i < N; i++) at[i] = held(i) || (x[i] <= lo[i] + 1e-9 && S.g[i] > 0) || (x[i] >= hi[i] - 1e-9 && S.g[i] < 0) ? 1 : 0;
     for (let t = 0; t < 5 && !ok; t++) {
-      const A = S.A;
-      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
-        const h = S.H[i * N + j];
-        A[i * N + j] = at[i] || at[j] ? (i === j ? 1 : 0) : i === j ? h + S.lam * (h + 1e-3) : h;
+      for (let a = 0; a < m; a++) {
+        const ia = act[a] * N;
+        for (let q = 0; q < m; q++) A[a * m + q] = H[ia + act[q]];
+        A[a * m + a] += S.lam * (H[ia + act[a]] + 1e-3);
+        b[a] = -g[act[a]];
       }
-      for (let i = 0; i < N; i++) S.dx[i] = at[i] ? 0 : -S.g[i];
-      S.b.set(S.dx);
-      if (!cholSolve(A, S.b, S.dx, N)) { S.lam *= 10; continue; }
+      if (!cholSolve(A, b, dx, m)) { S.lam *= 10; continue; }
       // (a step no bigger than a quarter radian or two centimetres: it walks to the pose)
       let big = 0;
-      for (let i = 0; i < N; i++) big = Math.max(big, Math.abs(S.dx[i]) / (i < 3 ? 0.02 : 0.25));
+      for (let a = 0; a < m; a++) big = Math.max(big, Math.abs(dx[a]) / (act[a] < 3 ? 0.02 : 0.25));
       const k = big > 1 ? 1 / big : 1;
-      for (let i = 0; i < N; i++) S.xn[i] = held(i) ? 0 : Math.min(hi[i], Math.max(lo[i], x[i] + S.dx[i] * k));
-      const cn = pass(M, S, Q, S.xn, false);
-      if (cn < c) { gain = (c - cn) / Math.max(c, 1e-9); x.set(S.xn); c = cn; ok = true; S.lam = Math.max(1e-6, S.lam / 4); }
-      else S.lam = Math.min(1e6, S.lam * 6);
+      xn.set(x);
+      for (let a = 0; a < m; a++) { const i = act[a]; xn[i] = Math.min(hi[i], Math.max(lo[i], x[i] + dx[a] * k)); }
+      const cn = pass(M, S, Q, xn, false);
+      if (cn < c) { gain = (c - cn) / Math.max(c, 1e-9); x.set(xn); c = cn; ok = true; stale = false; S.lam = Math.max(1e-6, S.lam / 4); }
+      else { S.lam = Math.min(1e6, S.lam * 6); stale = true; }
     }
     if (!ok) break;
     // (settled: the last step bought less than a hundredth of the cost — what's left is the targets' own compromise)
@@ -528,8 +556,8 @@ export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): nu
   S.iters = n;
   SOLVES.n++; SOLVES.iters += n; if (Q.free > 0) { SOLVES.n1++; SOLVES.iters1 += n; }
   // (the misses where it ended: a rejected trial left its own tips in S.T)
-  pass(M, S, Q, x, false);
-  for (let f = 0; f < 5; f++) S.miss[f] = Math.hypot(S.T[f * 3] - Q.tgt[f * 3], S.T[f * 3 + 1] - Q.tgt[f * 3 + 1], S.T[f * 3 + 2] - Q.tgt[f * 3 + 2]);
+  if (stale) pass(M, S, Q, x, false);
+  for (let f = 0; f < 5; f++) S.miss[f] = len3(S.T[f * 3] - Q.tgt[f * 3], S.T[f * 3 + 1] - Q.tgt[f * 3 + 1], S.T[f * 3 + 2] - Q.tgt[f * 3 + 2]);
   return c;
 }
 
