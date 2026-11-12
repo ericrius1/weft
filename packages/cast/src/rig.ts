@@ -75,6 +75,10 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  (`pad`: the finger's half-thickness at the pad, m, default 8.5 mm for a 4.8 cm-knuckled hand, scaled to the
    *  hand's) â€” nothing passes through what it holds, and the thumb opposes the fingers round it */
   around?: { at: V3; axis: V3; r: number; len?: number; pad?: number };
+  /** a reference pose for a built hand (fingers.ts's numbers, HAND_N; the palm's six ignored) and how firmly each number
+   *  is drawn to it (default 6, against a fingertip's 1 per mm): the hand posed from real players' — the caller places
+   *  the palm (exact) — and the solve only closes the fingertips onto their targets. A pose target: the palm is the look */
+  ref?: { x: ArrayLike<number>; w?: number };
   /** a built hand's fingers posed as given (fingers.ts's numbers, HAND_N; the palm's six ignored): a grasp solved
    *  against what's held (grasp.ts graspGoal), blended in with the goal's weight. Set, `around` is not closed */
   pose?: ArrayLike<number>;
@@ -2697,6 +2701,13 @@ export class HeroRig {
       const lv = f > 0 && !goal.tips[f] ? this.lever[hi][f] : 0;
       for (let j = 0; j < 4; j++) Q.wr[o + j] *= j > 0 ? lerp(kk, 1, lv) : kk;
       if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
+    }
+    // (a reference pose — a hand posed from photographs of real players doing this, the palm placed by the caller: every
+    // number drawn firmly to it, the solve only closing the last millimetres from fingertip to target)
+    const RF = goal.ref;
+    if (RF && built) {
+      const w = (RF.w ?? 6) * goalW;
+      for (let i = 6; i < HAND_N; i++) { Q.rest[i] = lerp(Q.rest[i], RF.x[i], goalW); Q.wr[i] = Math.max(Q.wr[i] * (1 - goalW), w); }
     }
     Q.clear = 0;
     const F = goal.floor;
