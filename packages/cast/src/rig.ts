@@ -2509,9 +2509,20 @@ export class HeroRig {
     for (let f = 0; f < 5; f++) {
       const tip = goal.tips[f] ?? null;
       tw[f] = damp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
-      const k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0;
+      let k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0;
+      if (tip) {
+        toC(tip, Q.tgt, f * 3);
+        // (a target the finger can't get to from where the hand is — a flute's hole while the flute is still coming up
+        // — is let go: its pull fades from the finger's length to half again past it, and the finger keeps its own
+        // shape instead of straightening toward it. The palm's solve, when free, still sees where it's going)
+        const M = this.handM[hi];
+        if (M && !goal.palmFree) {
+          const b0 = Q.tgt[f * 3] - M.base[f * 3], b1 = Q.tgt[f * 3 + 1] - M.base[f * 3 + 1], b2 = Q.tgt[f * 3 + 2] - M.base[f * 3 + 2];
+          const d = Math.sqrt(b0 * b0 + b1 * b1 + b2 * b2), L = M.lens[f];
+          k *= 1 - smoothstep(1.05 * L, 1.5 * L, d);
+        }
+      }
       Q.w[f] = k;
-      if (tip) toC(tip, Q.tgt, f * 3);
       const o = hpOf(f), wr = 0.3 + 0.9 * (1 - Math.min(1, k));
       Q.resting[f] = tip ? 0 : 1;
       if (f === 0) {
