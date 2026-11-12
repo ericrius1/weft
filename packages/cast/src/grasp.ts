@@ -35,6 +35,17 @@ export interface Grasp {
 }
 
 // ------------------------------------------------------------------------------------------------- the hand's skin
+/** the drumstick's matched grip (plan 'stick'), as numbers a tool can try others for: the stick's way in hand space, the
+ *  point at the heel of the hand it lies on (m at a 5.38 cm knuckle span; z off the palm's skin) and how far along from
+ *  there its middle is, each finger's rest (MCP, PIP, DIP), the points (fingers.ts sample 0-6) that touch it and how far
+ *  off they may sit, spreads, the index's point the thumb opposes, the arch, the thumb's rest */
+export const STICK = {
+  axis: [1, 1, 0.4], heel: [0.02, -0.03, 0], along: 0.07,
+  rest: [[0.75, 1.25, 0.6], [0.95, 1.15, 0.6], [1.0, 1.15, 0.6], [1.05, 1.1, 0.6]],
+  on: [[5], [5, 6], [5, 6], [5, 6]], gap: [0, 0.002, 0.003, 0.004], spread: [0.08, 0, -0.04, -0.09], restW: 0.1,
+  fulcrum: 5, arch: 0.3, thumb: [0.25, 0.2, 0.3, 0.25],
+};
+
 /** the pads' half-thickness at each bone (thumb first; m at a 5.38 cm knuckle span) */
 const PAD = [[0.011, 0.009, 0.0075], [0.0095, 0.0078, 0.0062], [0.0100, 0.0080, 0.0065], [0.0095, 0.0074, 0.0062], [0.0080, 0.0064, 0.0054]];
 /** the palm's skin, out of the palm (m at that span): mid-palm 13 mm (World tools/hands/handgeo.mjs: 9-17) */
@@ -358,16 +369,19 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       return { held, arch: 0.4, f: [th, ...f] };
     }
     case 'stick': {
-      // a drumstick: from the heel of the hand out between the thumb and the index; the fulcrum the thumb's pad against
-      // the side of the index's middle bone; the others loosely round
-      const r = size.r ?? 0.007;
-      const a = norm([1, 0.62, 0.32]);
-      const heel: V3 = [0.022 * sc, -0.02 * sc, zs + r];
-      const held: Held = { c: add(heel, scale(a, 0.07 * sc)), a, r, h: (len ?? 0.4) / 2 };
-      const f = fingers([0.75, 1.0, 0.5], [5, 6], [0.05, 0, -0.03, -0.07], { gap: 0.0015 });
-      f[0] = { rest: [0.6, 1.1, 0.6], on: [5], spread: 0.05, restW: 0.1 };
-      const th: FSpec = { rest: [0.25, 0.2, 0.3, 0.25], restW: 0.06, on: [6], at: 6, tgtW: 0.6 };
-      return { held, arch: 0.3, f: [th, ...f], oppose: [1, 5] };
+      // a drumstick in a matched grip (photographs of drummers' grips, German and French: Checkpoint J): the fulcrum
+      // between the thumb's pad and the side of the index's middle bone, the stick running back from there across the
+      // palm at ~45° to the fingers to the heel of the hand on the little finger's side, its butt out past the heel; the
+      // index curled round under it, the back fingers loosely round it by their middle and end bones, leaving it room to
+      // rebound. The stick lies on the palm only at the heel: from there it rises off the palm toward the fulcrum (the
+      // index's thickness under it), so the curled fingers' tips have room between it and the palm's hollow
+      const T = STICK, r = size.r ?? 0.0075;
+      const a = norm(T.axis as V3);
+      const heel: V3 = [T.heel[0] * sc, T.heel[1] * sc, zs + r + T.heel[2] * sc];
+      const held: Held = { c: add(heel, scale(a, T.along * sc)), a, r, h: (len ?? 0.4) / 2 };
+      const f: FSpec[] = [1, 2, 3, 4].map((g) => ({ rest: T.rest[g - 1], on: T.on[g - 1], spread: T.spread[g - 1], restW: T.restW, gap: T.gap[g - 1] }));
+      const th: FSpec = { rest: T.thumb, restW: 0.06, on: [6], at: 6, tgtW: 0.6 };
+      return { held, arch: T.arch, f: [th, ...f], oppose: [1, T.fulcrum] };
     }
     case 'bow': {
       // a bow at the frog: the stick across the fingers under the middle and ring fingers' end joints, the index leaning
