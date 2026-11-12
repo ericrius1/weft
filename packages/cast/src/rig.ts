@@ -836,13 +836,15 @@ export class HeroRig {
    *  idle fingers' hover match real pianists' (World tools/hands/planstats.mjs against tracked footage) */
   static keysHand = {
     idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
-    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
+    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.85, 0.7, 0.4]],
     fan: [0.08, 0.03, 0, -0.08],
-    // (the thumb as our hand's fits to overhead footage hold it: its saddle a little extended and turned away)
-    thumbIdle: [-0.28, -0.31, 0.23, 0.1], thumbTip: [-0.28, -0.31, 0.23, 0.1],
+    // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
+    // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
+    // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97)
+    thumbIdle: [-0.44, -0.35, 0.7, 0.4], thumbTip: [-0.44, -0.35, 0.7, 0.4],
     /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
      *  per mm, so these shape the hand, not where the tips land) */
-    wTip: 3, wThumb: 6,
+    wTip: 3, wThumb: 12,
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
