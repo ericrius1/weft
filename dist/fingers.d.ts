@@ -48,6 +48,8 @@ export declare class HandModel {
     readonly mc: number[];
     readonly mcB: Float64Array<ArrayBuffer>;
     private constructor();
+    /** the palm's skin sampled (hand space, before the palm's move; 3 per point): see the constructor */
+    readonly palmPts: Float64Array;
     /** a body's hand ('L' her left), or null if its fingers aren't each three bones */
     static of(a: HeroAsset, T: 'L' | 'R'): HandModel | null;
     /** a built hand (its file's own, header.hand; or one with the ring and little metacarpals) */
@@ -94,6 +96,13 @@ export interface HandAsk {
     priorMu: Float64Array | null;
     priorP: Float64Array | null;
     wp: number;
+    /** a neck held in the hand (a guitar's, a violin's; HandGoal.neck), hand space: a point on the fingerboard's surface
+     *  over the neck's middle (0-2), the neck's way (3-5), out of the fingerboard (6-8), across it (9-11), the board's half
+     *  width (12), the neck's depth under it (13), the air the palm's skin keeps from the wood (14), the clearance of the
+     *  knuckles' and joints' centres (15: a finger's half thickness, so the skin just touches), its weight (16; 0: none),
+     *  how firmly the index's knuckle is drawn onto the wood (17: the neck in the web between thumb and index).
+     *  The palm's skin, the knuckles and the fingers' and thumb's joints are kept off the wood (optional: absent, none) */
+    neck?: Float64Array;
 }
 export declare const handAsk: () => HandAsk;
 /** the prior's precision (PRN x PRN, row-major, in place in `o`) with finger f's knuckle, middle and end joints let go
@@ -130,6 +139,8 @@ export declare class HandSolve {
     readonly b: Float64Array<ArrayBuffer>;
     readonly act: Int32Array<ArrayBuffer>;
 }
+/** the most damping a solve starts from (HandSolve.lam carried frame to frame) */
+export declare const LAM0 = 0.1;
 /** the couplings' weights (read each solve; for tools that take one out to see what it does): the comfortable band,
  *  the end joint's tendon, the webs, the enslaving bands, the fingertips' gaps */
 export declare const HAND_W: {

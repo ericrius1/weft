@@ -42,7 +42,8 @@ export interface HandGoal {
     /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
     elbow?: V3;
     /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
-     *  turns through a move, rather than hopping to the other side when that side's a little easier for the wrist */
+     *  turns through a move, rather than hopping to the other side when that side's a little easier for the wrist; 100 or
+     *  more, the elbow is kept that way whatever the arm's ease (a violinist's left elbow under the fiddle) */
     elbowW?: number;
     /** the knuckles' line (its middle, world): set, the wrist goes a hand's length back from it along `fwd` (the body's
      *  own hand: a child's or a big man's), and `palm` is ignored */
@@ -87,6 +88,25 @@ export interface HandGoal {
      *  their keys — takes the posture real hands have with those fingers down, rather than each finger's own rest
      *  (the Pianist sets it for a built hand: piano.ts forHand) */
     prior?: number;
+    /** a neck held in the hand — a guitar's, a violin's (world): a point on the fingerboard's surface over the neck's middle,
+     *  the neck's way along it, the way out of the fingerboard (toward the strings), the board's half width and the neck's
+     *  depth under its surface (m), the air the palm's skin keeps from the wood (m, default 12 mm: a player's palm is off
+     *  the neck), and how much it counts (default 1). Set, the hand's solve keeps the palm, the knuckles and the joints off
+     *  the wood, and the hand is a player's on a neck rather than a pianist's at the keys: its thumb's rests a thumb's
+     *  wrapped round behind a neck (its tip's target is the caller's: on the neck's back, or over its edge), the fingers'
+     *  without a target lifted from the knuckle, hovering */
+    neck?: {
+        at: V3;
+        axis: V3;
+        up: V3;
+        half: number;
+        depth: number;
+        air?: number;
+        w?: number;
+        /** how firmly the index's base is drawn onto the neck (0..1, default 0): a player's neck lies in the web between the
+         *  thumb and the index, the index's base against the board's edge */
+        rest?: number;
+    };
 }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
@@ -424,6 +444,18 @@ export declare class HeroRig {
             w: number[];
             hook: number;
         };
+    };
+    /** a hand on a neck (HandGoal.neck): its thumb's rests when its tip has a target (saddle flexion, abduction, MCP, IP:
+     *  wrapped round behind the neck, gently bent — guitarists' and violinists' thumbs, World's reference set, Checkpoint
+     *  K) and how firmly it's drawn there; each finger's rests while it hovers (knuckle, middle, end); the palm's air to
+     *  the wood (m) and the knuckles' and joints' clearance from it (m at a 48 mm knuckle span: the finger's half
+     *  thickness, so the skin just touches — the index's base rests against a neck's edge) */
+    static neckHand: {
+        thumb: number[];
+        wThumb: number;
+        hover: number[][];
+        air: number;
+        joint: number;
     };
     private handM;
     private handS;

@@ -81,7 +81,8 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
   elbow?: V3;
   /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
-   *  turns through a move, rather than hopping to the other side when that side's a little easier for the wrist */
+   *  turns through a move, rather than hopping to the other side when that side's a little easier for the wrist; 100 or
+   *  more, the elbow is kept that way whatever the arm's ease (a violinist's left elbow under the fiddle) */
   elbowW?: number;
   /** the knuckles' line (its middle, world): set, the wrist goes a hand's length back from it along `fwd` (the body's
    *  own hand: a child's or a big man's), and `palm` is ignored */
@@ -121,7 +122,18 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  land on them, and the rest of the hand — the idle fingers, the thumb, the arch, how the playing fingers bend to
    *  their keys — takes the posture real hands have with those fingers down, rather than each finger's own rest
    *  (the Pianist sets it for a built hand: piano.ts forHand) */
-  prior?: number }
+  prior?: number;
+  /** a neck held in the hand — a guitar's, a violin's (world): a point on the fingerboard's surface over the neck's middle,
+   *  the neck's way along it, the way out of the fingerboard (toward the strings), the board's half width and the neck's
+   *  depth under its surface (m), the air the palm's skin keeps from the wood (m, default 12 mm: a player's palm is off
+   *  the neck), and how much it counts (default 1). Set, the hand's solve keeps the palm, the knuckles and the joints off
+   *  the wood, and the hand is a player's on a neck rather than a pianist's at the keys: its thumb's rests a thumb's
+   *  wrapped round behind a neck (its tip's target is the caller's: on the neck's back, or over its edge), the fingers'
+   *  without a target lifted from the knuckle, hovering */
+  neck?: { at: V3; axis: V3; up: V3; half: number; depth: number; air?: number; w?: number;
+    /** how firmly the index's base is drawn onto the neck (0..1, default 0): a player's neck lies in the web between the
+     *  thumb and the index, the index's base against the board's edge */
+    rest?: number } }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -469,7 +481,7 @@ function ik2(a: V3, target: V3, l1: number, l2: number, pole: V3, soft = 0): V3 
 /** (k: the body's suppleness, its forearm's and wrist's share of it: body/anatomy.ts flexOf) */
 type HandFrame = { h: V3; p: V3; t: V3; turn?: number; bear?: boolean; hum?: boolean; k?: number; ew?: number };
 /** a hand's goal moved bodily by d */
-const shiftGoal = (g: HandGoal, d: V3): HandGoal => ({ ...g, palm: add(g.palm, d), tips: g.tips.map((t) => t && add(t, d)), knuckles: g.knuckles && add(g.knuckles, d) });
+const shiftGoal = (g: HandGoal, d: V3): HandGoal => ({ ...g, palm: add(g.palm, d), tips: g.tips.map((t) => t && add(t, d)), knuckles: g.knuckles && add(g.knuckles, d), neck: g.neck && { ...g.neck, at: add(g.neck.at, d) } });
 /** a hand turned about its own way */
 const turnHand = (G: HandFrame, a: number): HandFrame => ({ ...G, p: rotateAxis(G.p, G.h, a), t: rotateAxis(G.t, G.h, a) });
 /** a body's forearm turn and wrist ranges by its suppleness (the forearm's a quarter as supple as the spine, the wrist
@@ -479,6 +491,8 @@ const rollK = (G: HandFrame) => 1 + ((G.k ?? 1) - 1) * 0.25, wristK = (G: HandFr
  *  own cost, and a share of it) a far way round must be before the elbow hurries over to it (boulder's hero rig, from
  *  Codevember's day 9: elbows that slide, never flip) */
 const ARM_SWING = 9, ARM_FLIP = 2.5;
+/** a goal's elbowW from which its elbow's way is kept as given (HandGoal.elbowW) */
+const ELBOW_SET = 100;
 /** the forearm's whole turn (rad, about its length, from the elbow's way: the forearm's half and the wrist's): free to
  *  TW0, eased to at most TW1 past it */
 const TW0 = 1.75, TW1 = 2.05;
@@ -894,6 +908,16 @@ export class HeroRig {
      *  of a hand with no finger playing (rad), how firmly its knuckle, middle and end joints are held there, and how far
      *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
     lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [0.05, 0.6], at: 0.1, letGo: 0.5, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
+  };
+  /** a hand on a neck (HandGoal.neck): its thumb's rests when its tip has a target (saddle flexion, abduction, MCP, IP:
+   *  wrapped round behind the neck, gently bent — guitarists' and violinists' thumbs, World's reference set, Checkpoint
+   *  K) and how firmly it's drawn there; each finger's rests while it hovers (knuckle, middle, end); the palm's air to
+   *  the wood (m) and the knuckles' and joints' clearance from it (m at a 48 mm knuckle span: the finger's half
+   *  thickness, so the skin just touches — the index's base rests against a neck's edge) */
+  static neckHand = {
+    thumb: [0.35, 0.25, 0.3, 0.2], wThumb: 1.5,
+    hover: [[0.45, 0.8, 0.4], [0.45, 0.8, 0.4], [0.5, 0.8, 0.4], [0.5, 0.8, 0.4]],
+    air: 0.012, joint: 0.009,
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -1835,6 +1859,7 @@ export class HeroRig {
       let goal = seat ? seat.hands[i] : held && I.hold?.leaned && mk > 0.001 ? {
         ...held, palm: unlean(held.palm), fwd: unleanD(held.fwd), down: unleanD(held.down), tips: held.tips.map((t) => t && unlean(t)),
         elbow: held.elbow && unleanD(held.elbow), knuckles: held.knuckles && unlean(held.knuckles),
+        neck: held.neck && { ...held.neck, at: unlean(held.neck.at), axis: unleanD(held.neck.axis), up: unleanD(held.neck.up) },
       } : held;
       // (a hold anchored to a bone — the flute's to the head: carried by how far that point has moved since the hold
       // was made, so it rides the head with no frame's lag)
@@ -2255,7 +2280,11 @@ export class HeroRig {
       if (len(p) > 0.2) { const pn = norm(p); G = { h, p: pn, t: norm(scale(cross(pn, h), side)), turn: goal.turn, bear: goal.bear, hum: goal.bear || goal.shoulder, k: this.flex, ew: goal.elbowW }; }
     }
     // (and the elbow for it: swung round the shoulder-wrist line to where the whole arm's most at ease)
-    if (G) {
+    if (G && goal?.elbow && (goal.elbowW ?? 0) >= ELBOW_SET) {
+      // (an elbow the player sets against the arm's ease — a violinist's under the fiddle: kept that way)
+      this.swPrev[ti] = null; this.swVel[ti] = 0;
+      if (G.turn) G = turnHand(G, this.psi[ti]);
+    } else if (G) {
       const fit = this.armFit(side, ti, shoulder, target, lu, lf, soft, pole, G, CS, shoulderBind, dt);
       pole = norm(lerp3(pole, fit, goalW));
       if (G.turn) G = turnHand(G, this.psi[ti]);
@@ -2560,7 +2589,7 @@ export class HeroRig {
     const Q = this.handQ[hi], tw = this.tipsW[hi];
     const CASCADE = [0, 0.04, 0.1, 0.16], REL = [-0.14, -0.02, 0.1, 0.2];
     const rc = Math.max(0, c) * (1 - grip);
-    const keys = !holds && !goal.loose, K = HeroRig.keysHand, built = !!this.asset.header.hand;
+    const neck = !holds && !goal.loose && !!goal.neck, keys = !holds && !goal.loose && !neck, K = HeroRig.keysHand, built = !!this.asset.header.hand;
     const FAN = keys ? K.fan : [0.06, 0.02, -0.03, -0.08];
     for (let f = 0; f < 5; f++) {
       const tip = goal.tips[f] ?? null;
@@ -2588,11 +2617,12 @@ export class HeroRig {
         const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
         // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
         const idle = keys && (goal.tipW?.[0] ?? 1) < 0.5;
-        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
+        const NH = HeroRig.neckHand;
+        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : up > 0.006 ? K.thumbHigh : K.thumbTip) : neck ? NH.thumb : [0.25, 0.1, 0.35, 0.2];
         const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)
-        for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : 0.6, rf); }
+        for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : neck ? NH.wThumb : 0.6, rf); }
         continue;
       }
       const g = f - 1;
@@ -2619,6 +2649,9 @@ export class HeroRig {
       // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
       // toward the little finger — where the older hands' rests were nearly straight)
       else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
+      // (on a neck a finger the caller holds lightly — hovering over its string, nothing to stop — is lifted from the
+      // knuckle and loosely bent, close over the strings, not curled away: guitarists' and violinists' idle fingers)
+      if (neck && tip) tipAng = (goal.tipW?.[f] ?? 1) < 0.5 ? HeroRig.neckHand.hover[g] : tipAng;
       if (rf > 0) { ab = lerp(ab, FAN[g], rf); ang = ang.map((a, j) => lerp(a, tipAng[j], rf)); }
       // (coming down square on its tip, as a guitarist's or a violinist's stopping finger does: the middle joint well
       // bent, the end joint with it, drawn there firmly; the tip still lands where it's asked)
@@ -2665,6 +2698,25 @@ export class HeroRig {
       Q.floor[0] = n0 / l; Q.floor[1] = n1 / l; Q.floor[2] = n2 / l; Q.floor[3] = (n0 * a[0] + n1 * a[1] + n2 * a[2]) / l;
       Q.clear = F.clear;
     }
+    // (a neck held: its line, ways and measures into hand space)
+    const NG = goal.neck;
+    if (NG) {
+      const NQ = (Q.neck ??= new Float64Array(18)), a = this.fl, b = this.fl2;
+      toC(NG.at, a, 0); NQ.set(a, 0);
+      toC(add(NG.at, NG.axis), b, 0);
+      let l = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) || 1;
+      for (let c = 0; c < 3; c++) NQ[3 + c] = (b[c] - a[c]) / l;
+      toC(add(NG.at, NG.up), b, 0);
+      // (out of the board, square to the neck's way)
+      let u0 = b[0] - a[0], u1 = b[1] - a[1], u2 = b[2] - a[2];
+      const d = u0 * NQ[3] + u1 * NQ[4] + u2 * NQ[5];
+      u0 -= d * NQ[3]; u1 -= d * NQ[4]; u2 -= d * NQ[5];
+      l = Math.hypot(u0, u1, u2) || 1;
+      NQ[6] = u0 / l; NQ[7] = u1 / l; NQ[8] = u2 / l;
+      NQ[9] = NQ[7] * NQ[5] - NQ[8] * NQ[4]; NQ[10] = NQ[8] * NQ[3] - NQ[6] * NQ[5]; NQ[11] = NQ[6] * NQ[4] - NQ[7] * NQ[3];
+      const M = this.handM[hi], k = M ? M.width / 0.048 : 1;
+      NQ[12] = NG.half; NQ[13] = NG.depth; NQ[14] = NG.air ?? HeroRig.neckHand.air; NQ[15] = HeroRig.neckHand.joint * k; NQ[16] = (NG.w ?? 1) * goalW; NQ[17] = NG.rest ?? 0;
+    } else if (Q.neck) Q.neck[16] = 0;
   }
   private fl = new Float64Array(3); private fl2 = new Float64Array(3);
   /** each finger's lever (0 playing .. 1 idle at the keys) this frame, and the prior's precision with the idle fingers let go */

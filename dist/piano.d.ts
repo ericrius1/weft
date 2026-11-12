@@ -143,6 +143,8 @@ export declare class Pianist {
      *  the long fingers reach further in than the thumb, so they needn't curl under to land on its line (real players'
      *  fingers lie long across the keys: World tools/hands/planstats.mjs) */
     fingerIn: number[];
+    /** how much further along a black key a built hand's long fingers land than its short ones, at most (m; forHand) */
+    blackIn: number;
     /** how much an idle finger's place over the keys counts against its own relaxed shape (a share of a playing
      *  finger's): low, and an idle finger rests as the hand holds it rather than being dragged into a hook */
     idleW: number;
