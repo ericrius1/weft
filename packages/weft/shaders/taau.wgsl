@@ -17,6 +17,8 @@ struct Taau {
   k: vec4f,           // x the least share of this frame (1/16 typical), y the clip's width (sigmas), z anti-flicker, w debug view
   o: vec4f,           // x 1: motion from taauVel (screen uv now − then, at the render size) in place of the camera's alone;
                       // y exposure; z 1 orthographic; w the depth mismatch that drops the history (relative; 0 never)
+  m: vec4f,           // (taaumotion.wgsl's entries) x how near a motion texel's distance must be the depth's to be the visible
+                      // surface's (relative)
 }
 @group(3) @binding(0) var<uniform> T: Taau;
 @group(3) @binding(1) var taauSrc: texture_2d<f32>;
