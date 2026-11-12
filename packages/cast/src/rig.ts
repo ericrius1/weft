@@ -98,6 +98,9 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   palmFree?: number;
   /** how much each fingertip's target counts (thumb first; default 1 each) */
   tipW?: number[];
+  /** how flat each finger lies along what it presses (thumb first, 0..1: 1 its middle and end joints straight — a
+   *  guitar's barre, the index laid across every string; default 0) */
+  lay?: number[];
   /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
    *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
   floor?: { at: V3; n: V3; clear: number } }
@@ -2501,6 +2504,9 @@ export class HeroRig {
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = wr; }
+      // (laid flat along what it presses: its middle and end joints straight)
+      const lay = goal.lay?.[f] ?? 0;
+      if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
     }
     Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;
     Q.clear = 0;
