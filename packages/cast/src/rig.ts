@@ -2484,7 +2484,7 @@ export class HeroRig {
    *  lightly toward a relaxed curl */
   private askHand(hi: number, c: number, grip: number, holds: boolean, goal: HandGoal, goalW: number, dt: number, toC: (w: V3, o: Float64Array, i: number) => void) {
     const Q = this.handQ[hi], tw = this.tipsW[hi];
-    const FAN = [0.06, 0.02, -0.03, -0.08], CASCADE = [0, 0.04, 0.1, 0.16], REL = [-0.14, -0.02, 0.1, 0.2];
+    const FAN = [0.1, 0.03, -0.05, -0.12], CASCADE = [0, 0.04, 0.1, 0.16], REL = [-0.14, -0.02, 0.1, 0.2];
     const rc = Math.max(0, c) * (1 - grip);
     const keys = !holds && !goal.loose;
     for (let f = 0; f < 5; f++) {
