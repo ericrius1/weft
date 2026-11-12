@@ -124,6 +124,11 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   /** how flat each finger lies along what it presses (thumb first, 0..1: 1 its middle and end joints straight — a
    *  guitar's barre, the index laid across every string; default 0) */
   lay?: number[];
+  /** how far each finger's key stands over the floor (m, thumb first; a black key's top over the white keys'): the thumb
+   *  reaches in flatter onto a raised key. Without it the target's own height says, and a thumb's stroke — hovering over
+   *  a white key, then down into it — crossed that line twice a stroke and swapped its rests each time (its end joint
+   *  10 to 40 deg in one frame, the duet's worst steps) */
+  keyTop?: (number | null)[];
   /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
    *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
   floor?: { at: V3; n: V3; clear: number };
@@ -2640,7 +2645,9 @@ export class HeroRig {
         // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
         const idle = keys && tipWOf(goal, 0) < 0.5;
         const NH = HeroRig.neckHand;
-        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : up > 0.006 ? K.thumbHigh : K.thumbTip) : neck ? NH.thumb : [0.25, 0.1, 0.35, 0.2];
+        // (raised: by its key's top when the goal says it, else by the target's height; eased across, never a swap in a frame)
+        const kt = goal.keyTop?.[0], raised = smoothstep(0.003, 0.009, kt !== undefined && kt !== null && Number.isFinite(kt) ? kt : up);
+        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : K.thumbTip.map((v, j) => lerp(v, K.thumbHigh[j], raised))) : neck ? NH.thumb : [0.25, 0.1, 0.35, 0.2];
         const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)
