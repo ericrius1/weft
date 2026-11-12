@@ -49,7 +49,9 @@ test('every grasp holds its shape: no fingertip inside, the pads that should tou
 test('the thumb opposes the fingers round a glass, a handle, a stick, a pen, another hand', () => {
   for (const [kind, size] of [['wrap', { r: 0.032 }], ['power', { r: 0.016 }], ['stick', {}], ['clasp', {}]]) {
     const g = grasp(R, kind, size);
-    assert.ok(g.opp < -0.5, `${kind}: the thumb's pad only ${(Math.acos(Math.max(-1, Math.min(1, g.opp))) * 180 / Math.PI).toFixed(0)}° round from the fingers'`);
+    // (measured at the thumb's end bone since checkpoint G: a clasp's thumb lies over the other hand's back, its tip only
+    // a little past a right angle round from the fingers)
+    assert.ok(g.opp < (kind === 'clasp' ? 0 : -0.5), `${kind}: the thumb's pad only ${(Math.acos(Math.max(-1, Math.min(1, g.opp))) * 180 / Math.PI).toFixed(0)}° round from the fingers'`);
   }
   // (a pen: the thumb's pad and the index's on different sides of it, more than a right angle apart round it)
   {
