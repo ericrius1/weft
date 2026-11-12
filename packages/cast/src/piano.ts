@@ -101,7 +101,9 @@ const SLOTS = [-0.05, -0.0245, 0, 0.0235, 0.046];
 const HOVER = 0.014, FALL = 0.1, REACH = 0.2, LIFT = 0.075, TRAVEL_END = 0.08, TRAVEL_MAX = 0.3, SPAN = 0.19, PAD = 0.004, LAND = 0.004;
 const THUMB_IN = 0.012, DEEP = 0.015, REST_W = 0.15;
 /** how long a finger's last key keeps it after the key's let go (s): its lift, a little more */
-const HOLD_UP = LIFT + 0.125;
+const HOLD_UP = LIFT + 0.22;
+/** the longest a finger's rise from a key, or its way over to the next, is stretched to with time to spare (s) */
+const RISE_MAX = 0.12;
 /** a finger taken from rest comes over from its idle place to its key's hover first, this long (s) before its reach */
 const APPROACH = 0.18, APPROACH_V = 0.4, APPROACH_MAX = 0.32;
 /** finger choices for a chord of n notes (thumb first): every rising run of n of the five */
@@ -595,8 +597,12 @@ export class Pianist {
       // the hand had moved away from, and the little finger hooked, 142° at its middle and end joints, while it did)
       // (and its pull lets go with it: from the lift's top it eases from a playing finger's weight to an idle one's —
       // held at full weight to its idle place it was dragged there, under the hand, whatever the hand's turn)
-      const a = clamp((s - st.up - LIFT) / (HOLD_UP - LIFT), 0, 1), w = this.idleRelease ? 1 + (this.idleW - 1) * a * a * (3 - 2 * a) : 1;
-      return { st: s - st.up > HOLD_UP ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w };
+      // (and over toward its idle place as it goes, so it's there as it's let go: it had stayed over its key and jumped
+      // back to its place as its weight ran out, the finger's own rests taking it over — its middle joint 27 to 4 deg in a
+      // frame; over 0.22 s, not 0.125)
+      const a = clamp((s - st.up - LIFT) / (HOLD_UP - LIFT), 0, 1), e = a * a * (3 - 2 * a);
+      if (!this.idleRelease) return { st: s - st.up > HOLD_UP ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w: 1 };
+      return { st: s - st.up > HOLD_UP ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w: 1 + (this.idleW - 1) * e, idle: e };
     }
     // before it lands: from its last key (let go) up, over to this one, a wait at its hover, the fall — each part
     // shortened alike when the notes come too quickly for all of it, never out of order (a finger crossing the keys
@@ -615,7 +621,10 @@ export class Pianist {
     }
     if (s < pv.up) return { st, dy: fall(1), from: null, u: 1, w: 1 };
     const lift = LIFT * (pv.note === st.note ? 0.6 : 1), k = Math.min(1, (t0 - pv.up) / (FALL + lift));
-    const a = s - pv.up, rise = lift * 0.5 * k, over = lift * 0.5 * k;
+    // (with time to spare before its fall, the rise and the way over take most of it — a thumb went up 32 mm in two frames
+    // and over two white keys in two more, then waited)
+    const spare = Math.max(0, t0 - pv.up - FALL - lift), st2 = Math.min(spare * 0.4, RISE_MAX - lift * 0.5);
+    const a = s - pv.up, rise = lift * 0.5 * k + st2, over = lift * 0.5 * k + st2;
     if (a < rise) return { st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * (a / rise)), from: pv, u: 0, w: 1 };
     if (a < rise + over) { const v = (a - rise) / over; return { st, dy: hv, from: pv, u: v * v * (3 - 2 * v), w: 1 }; }
     return { st, dy: fall(k), from: null, u: 1, w: 1 };
