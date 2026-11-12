@@ -239,6 +239,8 @@ export class Pianist {
 
   sit(inst: Playable, from: V3, yaw: number) {
     this.inst = inst;
+    // (a piece's resting hands belong to the keys it was played at: a new seat starts from the live plan)
+    this.after = null;
     this.state = 'approach';
     this.approachFrom = [...from] as V3;
     this.approachYaw = yaw;
@@ -293,7 +295,8 @@ export class Pianist {
     this.pedalSet?.(false);
     this.score = null;
     // (and off the clock: the hands back on the frames' dt, not miming the rest of the piece unheard)
-    if (this.clock && this.struck.length) this.after = Math.max(this.scoreT, ...this.struck.map((x) => x.up + HOLD_UP + 0.01));
+    // (a loop, not Math.max(...all): a long score's every note spread into one call overflows the stack)
+    if (this.clock && this.struck.length) { let a = this.scoreT; for (const x of this.struck) a = Math.max(a, x.up + HOLD_UP + 0.01); this.after = a; }
     this.clock = null;
     this.struck = [];
   }
@@ -339,10 +342,13 @@ export class Pianist {
       this.w = Math.max(0, this.w - dt / 0.6);
       // (most of the way up, she steps out)
       if (this.w < 0.45) this.out = Math.min(1, this.out + dt / 0.6);
-      if (this.w <= 0 && this.out >= 1) { this.state = 'idle'; this.inst = null; return null; }
+      if (this.w <= 0 && this.out >= 1) { this.state = 'idle'; this.inst = null; this.after = null; return null; }
     }
     const clocked = this.clock && this.struck.length ? this.clock() : null;
     if (this.score && this.state === 'seated') this.stepScore(dt, audioNow, clocked);
+    // (live notes after a clocked piece: the live plan has the hands from then on — kept, the piece's resting hands came
+    // back the moment the live notes ended, a jump)
+    if (this.after !== null && clocked === null && this.targets().length) this.after = null;
     return { pelvis: I.seat.pelvis, yaw: I.seat.yaw, feet: I.seat.feet, hands: clocked !== null ? this.planAt(clocked) : this.after !== null && !this.targets().length ? this.planAt(this.after) : this.plan(dt), look: I.look, lean: 0.2, w: this.w };
   }
 
