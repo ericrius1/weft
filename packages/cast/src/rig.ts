@@ -905,7 +905,11 @@ export class HeroRig {
     // under them the hand stood up on its knuckles (6 cm over the keys, its fingers dropping from them) and from above read
     // as a mound fringed with short fingers. Side views of pianists: knuckles ~49 mm over the lowest tip; these give 48
     // (World tools/hands/wholehand.mjs, Checkpoint I))
-    tipBuilt: [[0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.2, 0.55, 0.25]],
+    // (Checkpoint U: per finger as side clips of pianists show them playing (World tools/hands/idlejoints.mjs, knuckle as a
+    // camera beside the hand sees it: index 33, middle 34, ring 22, little 3 deg) and drawn there harder (wTipBuilt): under
+    // the real hands' prior — fitted from above, it can't tell a knuckle's bend from a middle joint's — every playing
+    // knuckle came out 30-37, the ring's and the little finger's most wrong (32 and 30). Now 36/26/23/18)
+    tipBuilt: [[0.45, 0.45, 0.2], [0.45, 0.5, 0.22], [0.2, 0.45, 0.2], [-0.2, 0.25, 0.1]],
     idleBuilt: [[0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.15, 0.45, 0.2]],
     // (and its idle thumb out from the index, less bent: from above the real idle thumb lies out to the side of the hand;
     // its points' miss from above 5.7 -> 4.3 % of the hand's length, the fan to the index 9 -> 13° (real 19), its plan
@@ -918,7 +922,7 @@ export class HeroRig {
     thumbIdle: [-0.44, -0.35, 0.95, 0.8], thumbTip: [-0.44, -0.35, 0.95, 0.8], thumbHigh: [-0.28, -0.31, 0.23, 0.1],
     /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
      *  per mm, so these shape the hand, not where the tips land) */
-    wTip: 3, wThumb: 6,
+    wTip: 3, wThumb: 6, wTipBuilt: 8,
     /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
      *  the idle thumb: times restThumb — real idle thumbs are bent) and the playing ones keep under it */
     wPrior: 1, restIdle: 0.25, restPlay: 1, restThumb: 4,
@@ -2705,7 +2709,7 @@ export class HeroRig {
       if (sq > 0) { const sr = goal.stopRest?.[f]; ang = ang.map((a, j) => { const r = sr?.[j]; return lerp(a, r !== undefined && Number.isFinite(r) ? r : HeroRig.SQUARE[j], sq); }); }
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
-      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, goal.stopW ?? 1.5, sq) : wr; }
+      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, built ? K.wTipBuilt : K.wTip) : sq > 0 ? lerp(wr, goal.stopW ?? 1.5, sq) : wr; }
       // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
       // — the cheap way up — rather than curling)
       // (a finger with no target at all — a held pose's: one the Pianist hovers keeps its playing neighbours' weights)
