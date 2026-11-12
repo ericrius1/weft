@@ -919,7 +919,7 @@ export class HeroRig {
      *  goal weight (tipW) at which it's wholly idle, how much the prior lets its bends go, and the knuckle and middle joint
      *  of a hand with no finger playing (rad), how firmly its knuckle, middle and end joints are held there, and how far
      *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
-    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [0.05, 0.6], at: 0.1, letGo: 0.5, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
+    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [0.05, 0.6], at: 0.1, letGo: 0.5, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6, wWeak: [1, 8, 8], weak: 0.7 },
   };
   /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
   static readonly SQUARE: readonly number[] = Object.freeze([0.75, 1.35, 0.75]);
@@ -2677,7 +2677,10 @@ export class HeroRig {
       // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
       // — the cheap way up — rather than curling)
       // (a finger with no target at all — a held pose's: one the Pianist hovers keeps its playing neighbours' weights)
-      if (lv > 0 && !tip) for (let j = 0; j < 3; j++) Q.wr[o + 1 + j] = K.lever.w[j];
+      // (and one with a weak target — the Pianist's idle fingers on the clock — eased the same way as its weight lets go:
+      // without it the real hands' prior and the weak target outweighed its lever rests, and on the clock the idle
+      // fingers stayed bent like playing ones — middle joints 28-30 deg against the side clips' 17-20, Checkpoint R)
+      if (lv > 0) for (let j = 0; j < 3; j++) Q.wr[o + 1 + j] = tip ? lerp(Q.wr[o + 1 + j], K.lever.wWeak[j], lv * K.lever.weak) : K.lever.w[j];
       // (laid flat along what it presses: its middle and end joints straight)
       const lay = goal.lay?.[f] ?? 0;
       Q.lay[f] = lay;
