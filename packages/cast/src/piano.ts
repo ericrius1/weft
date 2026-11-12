@@ -168,7 +168,7 @@ export class Pianist {
     // keys' front edge, just short of the black keys' fronts; the thumb near the front, on its side. Ours had them
     // 80 / 95 / 90 / 55 mm in, the long fingers wedged between the black keys: from above, a claw. Among the black keys
     // (deepIn) the white keys are played further in, as before; on the black keys themselves, as before (blackAlong).)
-    this.fingerIn = [-0.007, 0.014, 0.028, 0.018, 0].map((v) => v * k); this.deepIn = [0.025, 0.045, 0.06, 0.055, 0.045].map((v) => v * k);
+    this.fingerIn = [-0.007, 0.014, 0.028, 0.018, 0].map((v) => v * k); this.deepIn = [0.025, 0.045, 0.06, 0.055, 0.045].map((v) => v * k); this.handK = k;
     this.blackAlong = [0, 0.02, 0.03, 0.03, 0].map((v) => v * k); this.blackIn = 0.03 * k; this.blackExtra = [0, 0, 0, 0.012 * k, 0]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
   /** how far over the white keys' tops a finger with nothing to play is held clear (m: the hand's solve's floor). A built
    *  hand's (forHand) 18 mm: its idle fingers lie long as levers now, and at 6 mm their tips sank into the black keys'
@@ -511,6 +511,27 @@ export class Pianist {
     k = clamp(k, 0, 1);
     return k * k * (3 - 2 * k);
   }
+  /** how far along to move a fingertip on white key n, `inQ` (m) in past its touch point, so its pad is in the middle of
+   *  the key's narrow part between its black neighbours: none in front of them, all of it from 18 mm in (scaled by the
+   *  hand; the black keys' fronts ~20 mm past a white key's touch point on a standard keyboard), eased between; a black
+   *  key 0.58 of a white key's width (13.7 of 23.5 mm) */
+  private narrowShift(n: number, inQ: number): number {
+    const I = this.inst!, k = this.handK;
+    const e = clamp((inQ - 0.008 * k) / (0.01 * k), 0, 1);
+    if (e <= 0) return 0;
+    const x = this.along(n);
+    let ws = 0;
+    for (const d of [1, -1, 2, -2]) { const m = n + d; if (I.notePoint(m) && !this.black(m)) { ws = Math.abs(this.along(m) - x); break; } }
+    if (!(ws > 0)) return 0;
+    const bw = 0.58 * ws;
+    let lo = x - ws / 2, hi = x + ws / 2;
+    const L = n - 1, R = n + 1, lx = I.notePoint(L) && this.black(L) ? this.along(L) : null, rx = I.notePoint(R) && this.black(R) ? this.along(R) : null;
+    if (lx !== null) lo = Math.max(lo, lx + bw / 2);
+    if (rx !== null) hi = Math.min(hi, rx - bw / 2);
+    if (!(hi > lo)) return 0;
+    return ((lo + hi) / 2 - x) * e * e * (3 - 2 * e);
+  }
+  private handK = 1;
   private black(n: number): boolean { const I = this.inst!, m = I.notePoint(60)!, p = I.notePoint(n); return !!p && dot(sub(p, m), I.axes.up) > 0.004; }
 
   /** the whole piece planned: hands, fingers, strokes, each hand's places */
@@ -690,7 +711,12 @@ export class Pianist {
           // (a black key: a built hand's long fingers further along it than the thumb and little finger, as they are
           // longer — flatter, not hooked onto its front; Checkpoint L: the five-note black chord was a claw)
           if (dot(sub(q, mid), A.up) >= 0.004) return this.blackAlong ? add(q, scale(A.toward, -(this.blackAlong[f] + (this.blackExtra[f] ?? 0)))) : this.blackIn > 0 ? add(q, scale(A.toward, -(Math.min(this.blackIn, Math.max(0, this.fingerIn[f] - this.fingerIn[0])) + (this.blackExtra[f] ?? 0)))) : q;
-          if (this.deepIn) return add(q, scale(A.toward, lerp((f === 0 ? THUMB_IN : 0) - this.fingerIn[f], -(this.deepIn[f] + (this.blackExtra[f] ?? 0)), dk)));
+          if (this.deepIn) {
+            const off = lerp((f === 0 ? THUMB_IN : 0) - this.fingerIn[f], -(this.deepIn[f] + (this.blackExtra[f] ?? 0)), dk);
+            // (Checkpoint W: and in from the black keys' fronts, along to the middle of the white key's narrow part between
+            // them — at its own middle the pad lay across the black key's side, from above a finger on two keys)
+            return add(add(q, scale(A.toward, off)), scale(A.along, this.narrowShift(n, -off)));
+          }
           return add(q, scale(A.toward, deep ? -(Math.max(DEEP, this.fingerIn[f]) + (this.blackExtra[f] ?? 0)) : (f === 0 ? THUMB_IN : 0) - this.fingerIn[f]));
         };
         // (an idle finger over its place; in among the black keys, as far in as the hand has gone)
