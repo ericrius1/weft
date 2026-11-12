@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.0
+
+- **A reference pose** (`HandGoal.ref`: `{ x, w? }`, built hands only): `x` is a whole hand's numbers (fingers.ts's,
+  `HAND_N` of them; the palm's six are ignored). Every finger number is drawn to it with weight `w` (default 6, where a
+  fingertip's target counts 1 per mm), eased in with the goal's weight. The caller places the palm (`exact`), and the
+  solve only closes the fingertips onto their targets. Give all `HAND_N` numbers, every one finite: a shorter or
+  poisoned `x` holds the fingers still on a hand with targets and leaves NaN bones on one without (as `pose` does).
+- **A neck rested along the index's base bone** (`HandGoal.neck.restAt`, 0..1, default 0): where along the bone, from
+  its knuckle (0) to its middle joint (1), the neck's `rest` draws the index onto the wood. A violinist's neck lies
+  against the side of the bone, with the knuckle below the board's level. For tools: `HandAsk.neck[18]` (optional; an
+  18-number neck is read as before).
+- **A stopping finger's own square rests** (`HandGoal.stopRest`, per finger, thumb first: knuckle, middle and end, rad;
+  default `HeroRig.SQUARE`, `[0.75, 1.35, 0.75]`, as before) and how firmly they're held (`HandGoal.stopW`, default
+  1.5 as before). They act where `square` does.
+- **The bow hold's fingers drawn in toward the middle** (`grasp(M, 'bow', …)`; the spreads are now `BOW.spread`,
+  exported: index..little `[-0.04, 0, 0.08, 0.14]` rad, was `[0.12, 0, -0.04, -0.06]`). The index-to-little fan seen
+  from above goes from 46° to 27° (real bowing hands ~25°), and neighbouring fingertips sit 29-39 mm apart (was
+  35-44). The pads touch the stick as before (worst 0.4 mm off, was 0.2; 0.3 mm into it, was 0.2).
+- **What changes in behaviour**: (1) Callers passing `ref`, `restAt`, `stopRest` or `stopW`: as above. (2) **Every
+  user of the bow grasp**: the held hand's spreads move by up to 0.2 rad (11°), its fingers by up to 13 mm (World's
+  fiddler's bow hand). Every other grasp is bit for bit as 0.5.0's, on five built bodies and both hands. (3) Nothing
+  else.
+- **Identical**: every bone, fingers included, in all 85 rows of Drake's acts (tools/release-ab against 0.5.0). World's
+  built pianist at the duet (the whole score at 50, 60 and 144 fps) is bit for bit as 0.5.0's, gate 109/109. Built
+  hands with tips, `palmFree`, `neck` (with `rest`, and with `restAt: 0`), `square` (with `stopRest` set to the default)
+  and `pose` from a grasp other than the bow are bit for bit as 0.5.0's at 30, 60 and 144 fps. The hand's solve is
+  the same in Node 22 and Chrome 157 for the pianist (1,458 frames) and for the band's guitarist and fiddler, who use
+  `ref`, `restAt`, `stopRest` and the bow (2,420 frames). As in 0.5.0, some bones outside the hands differ in the last
+  bit. No export was removed or changed in type: the additions are optional fields, `HeroRig.SQUARE` and `BOW`.
+- **Size**: `rig` bundled alone grows by 0.7 KB minified (0.3 KB gzipped), `fingers` by 0.5 KB and `grasp` by 90 bytes.
+- **Cost**: unchanged where the new fields aren't given. The new work runs only with `ref` or with `restAt` above 0.
+
 ## 0.5.0
 
 - **A neck held in the hand** (`HandGoal.neck`: `{ at, axis, up, half, depth, air?, w?, rest? }`, world): a guitar's or

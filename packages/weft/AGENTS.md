@@ -437,6 +437,11 @@ wrapped round behind the neck (give the thumb's tip a target on the neck's back 
 `elbow` way whatever the arm's ease (a violinist's left elbow under the fiddle; below 100 it's weighed against the
 arm's ease, default 0.35). The bow hold and the pick are grasps: `grasp(M, 'bow', size)` and `grasp(M, 'pinch', size)`
 solved once, placed each frame with `graspGoal` (below).
+Cast 0.6.0 adds, all optional and built hands only: `ref: { x, w? }`, a whole hand's numbers (`HAND_N`, every one
+given and finite) each finger number is drawn to (default weight 6), with the palm placed by the caller (`exact`);
+`neck.restAt` (0..1) where along the index's base bone the neck's `rest` acts (a violinist's: the bone's side, not the
+knuckle); `stopRest` (per finger, thumb first) and `stopW`, a stopping finger's own `square` rests (default
+`HeroRig.SQUARE`, 1.5). The bow grasp's fingers now fan 27° index to little (was 46°: `BOW.spread`).
 `rig.handMiss(i)` gives each fingertip's miss after the solve (m) for checking. `HeroRig.handIters` (default `[8, 6]`)
 caps the iterations a frame, and `HeroRig.keysHand` holds a hand's rests at the keys.
 
