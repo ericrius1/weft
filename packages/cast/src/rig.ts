@@ -853,6 +853,17 @@ export class HeroRig {
     idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
     tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
     fan: [0.08, 0.03, 0, -0.08],
+    // (a built hand's: bent most at the middle joint, little at the knuckle — a pianist's curve. The rests above (the knuckle
+    // bent most) came from fits from above, which can't split a finger's bend between its knuckle and its middle joint;
+    // under them the hand stood up on its knuckles (6 cm over the keys, its fingers dropping from them) and from above read
+    // as a mound fringed with short fingers. Side views of pianists: knuckles ~49 mm over the lowest tip; these give 48
+    // (World tools/hands/wholehand.mjs, Checkpoint I))
+    tipBuilt: [[0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.2, 0.55, 0.25]],
+    idleBuilt: [[0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.15, 0.45, 0.2]],
+    // (and its idle thumb out from the index, less bent: from above the real idle thumb lies out to the side of the hand;
+    // its points' miss from above 5.7 -> 4.3 % of the hand's length, the fan to the index 9 -> 13° (real 19), its plan
+    // extension 0.80 -> 0.89 (real 0.79))
+    thumbIdleBuilt: [-0.44, 0.1, 0.6, 0.4],
     // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
     // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
     // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97;
@@ -2558,8 +2569,8 @@ export class HeroRig {
         const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
         // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
         const idle = keys && (goal.tipW?.[0] ?? 1) < 0.5;
-        const rt = keys ? (idle ? K.thumbIdle : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
-        const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
+        const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)
         for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : 0.6, rf); }
@@ -2569,11 +2580,11 @@ export class HeroRig {
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      const tipAng = keys ? K.tip[g] : [0.4, 0.6, 0.42];
+      const tipAng = keys ? (built ? K.tipBuilt : K.tip)[g] : [0.4, 0.6, 0.42];
       // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
       // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
       // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
-      if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
+      if (keys) ang = ang.map((a, j) => lerp(a, (built ? K.idleBuilt : K.idle)[g][j], goalW));
       // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
       // toward the little finger — where the older hands' rests were nearly straight)
       else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
