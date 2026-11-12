@@ -24,6 +24,11 @@ export interface Frame {
   aspect: number;
   mouse: Vec4;
   user: Vec4;
+  viewProjRel: Mat4;
+  invViewProjRel: Mat4;
+  prevViewProjRel: Mat4;
+  camLo: Vec3;
+  _relPad: number;
 }
 
 declare const shader: Shader<{ Frame: Frame }, 'frame' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;

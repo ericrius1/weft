@@ -167,6 +167,17 @@ down −z, and positive yaw turns left.
   `libs`. Each file is included once, and compile errors point at the real `file:line`.
 - **Group 0** (`weft/frame`): `frame: Frame` holds `viewProj, view, proj, invViewProj, invProj, invView, prevViewProj,
   camPos, camFwd, camRight, camUp, time, dt, near, frame (u32), res, invRes, jitter, fovY, aspect, mouse, user`.
+  After `user` (0.2.8; none of the fields before it moved): `viewProjRel, invViewProjRel, prevViewProjRel` (the same
+  matrices with the eye at the origin, for positions relative to the eye; `prevViewProjRel` is last frame's about this
+  frame's eye, the eye's move taken in doubles) and `camLo` (what float32 lost of the eye: `camPos + camLo` is the eye).
+  **Draw camera-relative** so a world far from its origin stays sharp: `clipAt(p)` for a world position (as
+  `viewProj * vec4(p, 1)`, but `(p − camPos) − camLo` through `viewProjRel`), `clipRel(r)` for a position already
+  relative to the eye (an origin − camera computed in doubles on the CPU, plus local), `prevClipAt(p)` / `prevClipRel(r)`
+  for motion vectors, `fromEye(p)`, and `relFromDepth(uv, d)` (a position relative to the eye from depth:
+  `worldFromDepth` without the large coordinates). On the CPU the same are `Camera.viewRel`, `viewProjRel`,
+  `invViewProjRel`, `prevViewProjRel`, `camLo`. A `viewOverride` camera (a shadow cascade, a reflection) takes its eye
+  from that Float32 matrix, so its `camLo` is 0 and it is only as precise as the matrix far from the origin: give it a
+  `position` in doubles and a rotation-only override when it must be exact there.
   Also there: samplers at bindings 2–5 and `globals` at binding 1. Don't declare anything else in group 0: binding fails
   with an error that tells you so.
 - **Depth is reversed-Z with an infinite far plane.** Clear depth to `0` and keep in mind that a larger depth is

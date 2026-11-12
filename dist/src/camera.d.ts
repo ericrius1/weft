@@ -29,6 +29,22 @@ export declare class Camera {
     readonly invProj: Float32Array<ArrayBuffer>;
     readonly invView: Float32Array<ArrayBuffer>;
     readonly prevViewProj: Float32Array<ArrayBuffer>;
+    /** camera-relative matrices: the same view with the eye at the origin, for positions given as `p − position` (the
+     *  difference taken in doubles on the CPU, or as `(p − camPos) − camLo` on the GPU: shaders/frame.wgsl `fromEye`). Only
+     *  differences reach the GPU, so a draw is as sharp a thousand kilometres from the world's origin as beside it. */
+    readonly viewRel: Float32Array<ArrayBuffer>;
+    readonly viewProjRel: Float32Array<ArrayBuffer>;
+    readonly invViewProjRel: Float32Array<ArrayBuffer>;
+    /** last frame's viewProj taken about this frame's eye (motion vectors for camera-relative positions) */
+    readonly prevViewProjRel: Float32Array<ArrayBuffer>;
+    /** what float32 loses of `position`: position − fround(position), per axis (Frame.camPos + Frame.camLo is the eye to
+     *  a float's precision of the lost part: under a nanometre at 1,000 km). With `viewOverride` the eye is read back from
+     *  that matrix's inverse, a Float32Array: camLo is then what float32 loses of a position already rounded to float32,
+     *  0, and the eye is only as good as the matrix (a shadow camera 1,000 km out: 6 cm). Give such a camera a `position`
+     *  in doubles and a rotation-only override instead when it must be exact far from the origin */
+    readonly camLo: V3;
+    private prevRot;
+    private prevPos;
     readonly planes: Float32Array<ArrayBuffer>;
     forward: V3;
     right: V3;
