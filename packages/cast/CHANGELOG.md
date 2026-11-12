@@ -1,34 +1,54 @@
 # Changelog
 
-## Unreleased (draft: world/hands-look 915f3b8..ca97fbe on 0.6.1)
+## 0.6.2
 
-Scope (what moves for a caller on 0.6.1): a built hand WITH `HandGoal.prior` (the pianist: `Pianist.forHand`) — its
-fingers, its palm and its ARMS (up to 11 cm through World's duet); any `Pianist` (approach, rise and way over, `after`:
-castbench's play mode without forHand moves too); `grasp('bow')` and `BOW`/`BOWREST` (the fiddler's bow arm 8-9 cm through
-the song). A built hand without the prior (pointing, plain tips, palmFree tips, a floor without prior) is bit-identical to
-0.6.1 (ca97fbe: the pianist's per-finger rests, their weight and the thumb's eased rests had leaked to it; test
-keysrules.test.mjs).
-- **The pianist from above** (f59ffc9, 601bfbe): `Pianist.forHand` puts the fingertips on a white key where real ones land
-  (from overhead footage: index 49, middle 63, ring 53, little 35 mm in from the front edge), new `deepIn` among the black
-  keys and `blackAlong` on them; how far among the black keys a hand is now eased on the clock (0.25 s).
-
-- **`BOW` and `BOWREST` change value** (exported constants): the bow hold refitted from hand-marked frog photographs with
-  the right hand's chirality — rests 34/66/5, 55/54/10, 60/52/20, 45/51/25 deg, spreads +3/-2/-12/-27. New export
-  `BOWSTICK` (the stick in hand space, its contact points per finger); the grasp's held centre is the stick over the hair's
-  end at the frog. A caller placing `grasp('bow')` at the old 2 cm along / tangent roll sees the hand move (World:
-  BOWHOLD.along 0, roll -1.35 rad as an angle).
-- **Leftovers of 0.6.1**: a NaN `curl` or `grip` never enters the rig's smoothed state; a NaN `tipW` is taken as 1; `ref: {}`
-  (no `x`) is skipped instead of throwing; `termPulls(S)` per hand solve (`HeroRig.handSolve(i)`), a copy, empty once the
-  watch is off.
-- **The Pianist's hands** (built hands with `prior` only; every other hand bit for bit as before — checked with World
-  `tools/hands/crossguard.mjs` on the guitarist's and the fiddler's hands): new `HandGoal.keyTop` (a thumb's rests eased by
-  its key's top, not swapped at its target's height); rests at the keys eased in with the goal's weight; a finger's
-  approach from rest by its distance, its release eased toward its idle place; rise and travel share the time to the fall;
-  the idle levers weighted by their neighbours' weights; the key surface's clearance faded by the knuckles' height (only
-  with `prior`), off at once and on eased; per-finger playing rests (`keysHand.tipBuilt`, new `keysHand.wTipBuilt` 8);
-  `Pianist.strokeLift`; after a clocked piece the hands rest on its plan; under a prior the solve tries 8 dampings (5
-  otherwise). The duet: joint steps over 10 deg in a frame 592 -> 31 at 60 fps (worst 18.7 deg), contacts 109/109 at
-  50, 60 and 144 fps.
+- **The bow hold replanned from real holds** (`grasp(M, 'bow', …)`): the stick placed in the hand where fitted frog
+  photographs put it, every finger at its rest round it; the bow grasp's knuckles go from 21/43/44/20° to 42/50/58/44°
+  (index..little, World's katara), numbers by up to 46-47° (the index's end joint), the held stick turns 37° and its
+  centre moves 23-24 mm in hand space. **`BOW` and `BOWREST` change value** (spreads +3/-2/-12/-27°; rests 34/66/5,
+  55/54/10, 60/52/20, 45/51/25°); new export `BOWSTICK` (the stick in hand space, the held shape's centre over the hair's
+  end at the frog). All three frozen. A caller placing the bow grasp the old way sees the hand move (World's fiddler on
+  its `hands` branch places it with `BOWHOLD.along 0, roll -1.35`). Every joint within 13° of its rest on the test hand,
+  katara, raker, aang and june; NOT on iroh (index middle joint 22° against 66°, a pad 3.9 mm off the stick).
+- **Leftovers of 0.6.1**: a NaN or infinite `curl` or `grip` never enters the rig's smoothed state (a NaN `grip` still
+  gives NaN bones on the frames it is asked, as before; the next good frame is finite); a `tipW` that is not a number is
+  taken as 1; `ref` without `x` (`ref: {}`) is skipped instead of throwing; `termPulls(S)` per hand solve
+  (`HeroRig.handSolve(i)`), a copy, empty while the watch is off (turned on again, a hand not solved since gives its
+  reading from before).
+- **The Pianist's hands** (new `HandGoal.keyTop`, `Pianist.strokeLift`, `deepIn`, `blackAlong`, `keysHand.wTipBuilt`,
+  `keysHand.tipBuiltPrior`): a thumb's rests eased by its key's top; rests at the keys eased in with the goal's weight; a
+  finger's approach from rest by its distance, its release eased toward its idle place (`HOLD_UP` 0.2 to 0.295 s); rise
+  and travel share the time to the fall; the idle levers weighted by their neighbours' weights; the key surface's
+  clearance faded by the knuckles' height (with `prior` only), off at once and on eased; after a clocked piece the hands
+  rest on its plan until something is played (until the next `playScore`; `sit` does not clear it); under a prior the
+  solve tries 8 dampings (5 otherwise). **The approach, the release, rise and travel, the hold after a piece and the
+  eased among-the-black-keys place are the Pianist's own, for EVERY Pianist, `forHand` or not** (World's castbench play
+  mode moves); the rest is for a built hand with `prior` only.
+- **Where the pianist's fingertips land** (`forHand`): on a white key, away from the black keys, where overhead footage
+  of real players puts them: in from the front edge, thumb 16, index 50, middle 62, ring 53, little 35 mm (World's duet;
+  were 60/80/95/102/55). Among the black keys (`deepIn`) as before but the little finger 25 mm further in (80 mm, was
+  55); on a black key as before (`blackAlong`). How far a hand is among the black keys is eased over 0.25 s on the clock
+  (it switched in a frame, moving every white finger 20-40 mm). In the duet no tip comes within 15 mm of a key's front
+  or off its key's sides.
+- **The duet** at 50/60/144 fps: contacts 109/109 (worst 14.1/13.9/14.4 ms; 0.6.1 14.1/13.1/14.4), joint steps over 10°
+  in a frame 559/592/742 -> 19/14/10 (worst in the song 21.2/17.9/11.3°), no note's fingertip leaves its key before the
+  note's up, the end's 110 mm wrist jump gone.
+- **What moves beyond the hands** (World's built bodies, old against new): the pianist's arms (upper arm, forearm, hand)
+  up to 10 cm (the left at the piece's end), 3 cm on average through the song, the clavicles 3 mm; torso, head, legs
+  unmoved. The fiddler's bow arm 8-9 cm through the whole song (mean 7 cm), its clavicle 1 cm; the singer (guitar)
+  bit for bit. World's probes as before: guitar 200/200 (worst 3.2/3.2/2.7/3.2/2.7/2.7 mm at 30/50/60/90/120/144 fps),
+  picks 300/300, fiddle stops 22/22, bows 29/29.
+- **A built hand without the prior is as 0.6.1's** (`keysTipRest`, `keysTipW`, `thumbRaised`, pinned by
+  test/keysrules.test.mjs): a first candidate had applied the pianist's per-finger playing rests, their weight and the
+  thumb's eased rests to every built hand's targeted finger (tips moved 7-16 mm, a `palmFree` goal's arm 1.7-2.8 cm).
+- **Identical**: every bone in Drake's 85 rows; World's built bodies (katara, raker) at 30, 60 and 144 fps for plain
+  tips, `palmFree` tips, a forefinger target, `neck`, `square`, `ref`, a floor without prior (a weak ring too), `loose`,
+  `grip`, no tips, and `pose` from every grasp but `bow` (96 of 132 rows; the other 36 are `prior` and `bow`); every act
+  of World's `cast/pose.ts` through its Poser (point, reach, sip, keys, ...) standing and sitting on katara, raker and
+  aang at 30/60/144 fps (270 rows). Node 22 and Chrome 157 give identical hand numbers, arm joints and fingertips for
+  the pianist (1,458 frames) and the band (2,420). No export removed.
+- **Cost**: a hand asked the impossible under the prior for 600 frames: no NaN, no freeze, rig.update as 0.6.1's
+  (median 1.1-1.5 ms against 1.2-1.4, within noise; worst case 8 damping trials an iteration where it was 5).
 
 ## 0.6.1
 
