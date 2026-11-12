@@ -98,6 +98,9 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   palmFree?: number;
   /** how much each fingertip's target counts (thumb first; default 1 each) */
   tipW?: number[];
+  /** how square each finger comes down on its target (thumb first, 0..1: 1 its middle joint well bent and its end
+   *  joint with it, the tip meeting the string end-on — a guitarist's or a violinist's stop) */
+  square?: number[];
   /** how flat each finger lies along what it presses (thumb first, 0..1: 1 its middle and end joints straight — a
    *  guitar's barre, the index laid across every string; default 0) */
   lay?: number[];
@@ -2548,11 +2551,16 @@ export class HeroRig {
       // toward the little finger — where the older hands' rests were nearly straight)
       else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
       if (rf > 0) { ab = lerp(ab, FAN[g], rf); ang = ang.map((a, j) => lerp(a, tipAng[j], rf)); }
+      // (coming down square on its tip, as a guitarist's or a violinist's stopping finger does: the middle joint well
+      // bent, the end joint with it, drawn there firmly; the tip still lands where it's asked)
+      const sq = rf > 0 ? goal.square?.[f] ?? 0 : 0;
+      if (sq > 0) ang = ang.map((a, j) => lerp(a, [0.75, 1.35, 0.75][j], sq));
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
-      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : wr; }
+      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, 1.5, sq) : wr; }
       // (laid flat along what it presses: its middle and end joints straight)
       const lay = goal.lay?.[f] ?? 0;
+      Q.lay[f] = lay;
       if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
     }
     Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;

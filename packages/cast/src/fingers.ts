@@ -271,6 +271,8 @@ export class HandModel {
 export interface HandAsk {
   tgt: Float64Array; w: Float64Array;
   rest: Float64Array; wr: Float64Array;
+  /** how flat each finger is laid along the surface (HandGoal.lay): its middle joints held down on it too (a barre) */
+  lay: Float64Array;
   free: number;
   /** a resting finger's knuckle dragged by its neighbours (enslaving): set by solveHand's caller per finger (1: rests) */
   resting: Uint8Array;
@@ -278,7 +280,7 @@ export interface HandAsk {
    *  far clear of it a fingertip without a target keeps (m; 0: no surface) */
   floor: Float64Array; clear: number;
 }
-export const handAsk = (): HandAsk => ({ tgt: new Float64Array(15), w: new Float64Array(5), rest: new Float64Array(HAND_N), wr: new Float64Array(HAND_N), free: 0, resting: new Uint8Array(5),
+export const handAsk = (): HandAsk => ({ lay: new Float64Array(5), tgt: new Float64Array(15), w: new Float64Array(5), rest: new Float64Array(HAND_N), wr: new Float64Array(HAND_N), free: 0, resting: new Uint8Array(5),
   floor: new Float64Array(4), clear: 0 });
 
 /** a hand's solve carried frame to frame: its numbers, the damping, each fingertip's miss after (m) */
@@ -295,7 +297,7 @@ export class HandSolve {
   readonly J = new Float64Array(5 * 3 * HAND_N);
   readonly H = new Float64Array(HAND_N * HAND_N); readonly g = new Float64Array(HAND_N);
   readonly A = new Float64Array(HAND_N * HAND_N); readonly dx = new Float64Array(HAND_N); readonly xn = new Float64Array(HAND_N);
-  readonly R = new Float64Array(9); readonly Rd = new Float64Array(27);
+  readonly R = new Float64Array(9); readonly Rd = new Float64Array(27); readonly Rq = new Float64Array(9);
   readonly fP = new Float64Array(12); readonly fK = new Float64Array(3); readonly fZ = new Float64Array(3);
   readonly xt = new Float64Array(HAND_N); readonly b = new Float64Array(HAND_N); readonly act = new Int32Array(HAND_N);
 }
@@ -312,7 +314,7 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
 
 /** the weights: a fingertip's miss (per mm), the end joint's tendon, the webs and the enslaving bands (hinges past
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
-const W_FLOOR = 1, W_BAND = 6, W_DIP = 4, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
+const W_LAY = 0.6, W_FLOOR = 1, W_BAND = 6, W_DIP = 4, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
 /** the fingertips kept this far apart (a share of the knuckles' width) */
 const GAP = 0.26;
 
@@ -499,6 +501,34 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       const C = COLS[free][f], jb = f * 3 * N;
       for (let a = 0; a < C.length; a++) { const c = C[a]; GR[c] = -w * (F[0] * J[jb + c] + F[1] * J[jb + N + c] + F[2] * J[jb + 2 * N + c]); }
       accRow(H, g, r, C);
+    }
+  }
+  // a laid finger (a barre): its middle and end joints down on the surface as well as its tip, so the whole finger
+  // lies along it (by differences: only for a laid finger)
+  if (Q.clear > 0) {
+    const F = Q.floor, xt = S.xt, fq = S.fP, Rq = S.Rq;
+    for (let f = 1; f <= 4; f++) {
+      const lay = Q.lay[f];
+      if (lay <= 0) continue;
+      const pb = f * 12, C = COLS[free][f];
+      for (const jj of [1, 2]) {
+        const hAt = (PP: Float64Array, o: number, RR: Float64Array, xx: Float64Array) => {
+          const l0 = PP[o + jj * 3], l1 = PP[o + jj * 3 + 1], l2 = PP[o + jj * 3 + 2];
+          const w0 = xx[0] + RR[0] * l0 + RR[1] * l1 + RR[2] * l2, w1 = xx[1] + RR[3] * l0 + RR[4] * l1 + RR[5] * l2, w2 = xx[2] + RR[6] * l0 + RR[7] * l1 + RR[8] * l2;
+          return F[0] * w0 + F[1] * w1 + F[2] * w2 - F[3];
+        };
+        const h = hAt(P, pb, R, x), wl = 1000 * W_LAY * lay, r = wl * (h - Q.clear);
+        cost += r * r;
+        if (!jac) continue;
+        for (let a = 0; a < C.length; a++) {
+          const c = C[a];
+          xt.set(x); xt[c] += 1e-5;
+          M.fk(xt, f, fq, null, S.fK, S.fZ);
+          rotM(xt[3], xt[4], xt[5], Rq);
+          GR[c] = wl * (hAt(fq, 0, Rq, xt) - h) / 1e-5;
+        }
+        accRow(H, g, r, C);
+      }
     }
   }
   // the palm: its move and turn from where the goal put it
