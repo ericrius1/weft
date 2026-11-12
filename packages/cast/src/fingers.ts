@@ -686,10 +686,10 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
           return sdAt(xx[0] + RR[0] * l0 + RR[1] * l1 + RR[2] * l2, xx[1] + RR[3] * l0 + RR[4] * l1 + RR[5] * l2, xx[2] + RR[6] * l0 + RR[7] * l1 + RR[8] * l2);
         };
         const s = at(P, pb, R, x);
-        // (the index's knuckle rests against the wood â€” the neck in the web between the thumb and the index â€” as far as
+        // (the index's knuckle rests against the wood — the neck in the web between the thumb and the index — as far as
         // NK[17] asks; every other joint only kept off it)
         const rest = f === 1 && jj === 0 ? NK[17] : 0, rs = NK[15] + 0.003;
-        // (a finger laid flat â€” a barre â€” lies on the strings by its joints: only its knuckle is kept off the wood)
+        // (a finger laid flat — a barre — lies on the strings by its joints: only its knuckle is kept off the wood)
         if (jj > 0 && Q.lay[f] > 0.5) continue;
         if (s >= NK[15] && !(rest > 0 && s > rs)) continue;
         const r = s < NK[15] ? wN * (NK[15] - s) : -wN * rest * (s - rs);
@@ -748,8 +748,8 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
 export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): number {
   const N = HAND_N, x = S.x, lo = M.lo, hi = M.hi, palm = Q.free > 0 ? 0 : 6;
   if (!S.ready) { x.set(Q.rest); for (let k = 0; k < 6; k++) x[k] = 0; S.ready = true; S.lam = 1e-3; }
-  // (the damping carried from the last frame, but never more than LAM0: one frame whose every trial step failed â€” a
-  // target that jumped across a string â€” left it at its ceiling, and the next frames' steps were too small to move the
+  // (the damping carried from the last frame, but never more than LAM0: one frame whose every trial step failed — a
+  // target that jumped across a string — left it at its ceiling, and the next frames' steps were too small to move the
   // finger for a tenth of a second). A built hand's only: the older bodies' fingers kept exactly as their projects have
   // them (release-ab)
   if (M.built && S.lam > LAM0) S.lam = LAM0;
