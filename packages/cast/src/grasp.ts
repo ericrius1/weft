@@ -27,17 +27,20 @@ export interface GraspSize { r?: number; len?: number; thick?: number }
 
 /** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb), measured from real holds
  *  (Checkpoint T: a violinist's right hand round the frog, its joints marked by hand on three frames and fitted through
- *  the camera the bow itself gives: index -12, middle -3, ring -2, little 0 deg; 0.6.1 had [-0.04, 0, 0.08, 0.14]) */
-export const BOW: { readonly spread: readonly number[] } = Object.freeze({ spread: Object.freeze([-0.21, -0.05, -0.03, 0]) });
-/** the bow hold's rests per finger (index..little: knuckle, middle, end; rad), from the same fits (deg: index 60/108/2,
- *  middle 73/94/15, ring 82/91/10, little 88/97/16 — a hold curled at the frog, the fingers draped deep over the stick;
- *  0.6.1's 13/53/32, 41/69/30, 58/56/21, 66/40/14 came from MediaPipe's points on hands seen along the stick, which
+ *  the camera the bow itself gives: index +3, middle -2, ring -12, little -27 deg — the little finger reaching back along
+ *  the stick to stand on it; 0.6.1 had [-0.04, 0, 0.08, 0.14]) */
+export const BOW: { readonly spread: readonly number[] } = Object.freeze({ spread: Object.freeze([0.05, -0.03, -0.21, -0.47]) });
+/** the bow hold's rests per finger (index..little: knuckle, middle, end; rad), from the same fits (deg: index 34/66/5,
+ *  middle 55/54/10, ring 60/52/20, little 45/51/25 — the fingers draped over the stick from behind it, the knuckles high;
+ *  the end joints vary most between frames (-10..44 deg) and are the least sure; 0.6.1's 13/53/32, 41/69/30, 58/56/21, 66/40/14 came from MediaPipe's points on hands seen along the stick, which
  *  zig-zag round a frog, and no stick could be placed that all four reached at once) */
-export const BOWREST: readonly (readonly number[])[] = Object.freeze([[60, 108, 2], [73, 94, 15], [82, 91, 10], [88, 97, 16]].map((r) => Object.freeze(r.map((d) => (d * Math.PI) / 180))));
+export const BOWREST: readonly (readonly number[])[] = Object.freeze([[34, 66, 5], [55, 54, 10], [60, 52, 20], [45, 51, 25]].map((r) => Object.freeze(r.map((d) => (d * Math.PI) / 180))));
 /** the bow's stick in the hand (hand space at a 5.38 cm knuckle span: its axis toward the tip, and its point over the
- *  hair's end at the frog — the held shape's centre, so a caller places the grasp there) as the fits put it, and where it crosses each finger (fingers.ts sample points: the index at its end
- *  joint, the middle and ring along their end bones a third and five eighths of the way, the little finger's tip on top) */
-export const BOWSTICK = Object.freeze({ a: Object.freeze([0.783, 0.453, 0.427]), c: Object.freeze([0.0732, 0.015, 0.0411]), on: Object.freeze([2, 21, 22, 3]), arch: 0.25 });
+ *  hair's end at the frog — the held shape's centre, so a caller places the grasp there) as the fits put it (the palm behind the stick and just above it, the fingers over it), and
+ *  where it crosses each finger (fingers.ts sample points: the index's end bone at its middle, past the frog toward the
+ *  tip; the middle at its end joint, over the ferrule; the ring's end bone a quarter along, over the frog; the little
+ *  finger's tip on top, by the frog's back) */
+export const BOWSTICK = Object.freeze({ a: Object.freeze([0.591, 0.782, 0.198]), c: Object.freeze([0.0958, 0.005, 0.0539]), on: Object.freeze([6, 2, 20, 3]), arch: 0.02 });
 /** a grasp solved: the hand's numbers (fingers.ts, palm's move 0), the held shape in hand space, and how well it holds:
  *  per finger (thumb first) the worst miss of the pads that should touch (m; 0 none asked), the deepest any skin goes
  *  into the shape (m, < 0 clear), the thumb's opposition (cos of the angle about the shape between the thumb's pad and
