@@ -433,8 +433,16 @@ caps the iterations a frame, and `HeroRig.keysHand` holds a hand's rests at the 
 The pianist uses the same solve: on a clock it fingers each chord with the run of fingers that fits it (thumb and
 little finger too, up to an octave and a white key a hand), the palm free, and the long fingers playing further in
 than the thumb (`p.fingerIn`). For a body with a built hand, call `p.forHand(asset.header.hand.len)` before `sit()`.
-It places the palm where real players hold theirs (knuckles back and over the wrist) and sets `reach`, `pitch`,
-`hover`, `idleHover`, `fingerIn` and `idleW` for a hand of that length. Bodies without one keep the defaults.
+It places the palm where real players hold theirs (knuckles back and over the wrist, the hand long across the keys)
+and sets `reach`, `pitch`, `hover`, `idleHover`, `fingerIn`, `idleW`, `idleLift` (idle thumbs and little fingers ride
+highest), `idleClear` (18 mm: how far a finger with nothing to play keeps over the keys), `idleRelease` (a let-go
+finger eases to an idle one's weight) and `prior: 1` for a hand of that length. Bodies without one keep the defaults.
+With `prior` (cast 0.4.0: `HandGoal.prior`, 0..1, built hands at the keys only) real pianists' hands shape the hand:
+the playing fingertips land on their keys, and the idle fingers, the thumb, the arch and how the playing fingers bend
+take the posture real hands have with those fingers down (`body/handprior.ts`, a Gaussian fitted from 431 tracked
+overhead hands). An idle finger is held off its key as a lever, lifted at the knuckle, not curled into a hook. At the
+keys every body's thumb rests as a pianist's (`HeroRig.keysHand.thumbIdle`/`thumbTip`), and the Pianist lets a
+finger's last key go 0.2 s after release.
 
 A body file can carry its own hand: `header.hand` (`{ source, len, breadth }`: where the modelled hand came from, its
 wrist-to-middle-fingertip length in m, its breadth against the source's) says the hand is grafted on and weighted to
@@ -444,6 +452,43 @@ cast only checks that `header.hand` is there. World's graft also writes `v: 2` f
 joints and metacarpals, which cast doesn't read. The two optional bones `ring0L/R` and `pinky0L/R` (the ring and
 little metacarpals, parents of `ring1`/`pinky1`) are found by name and turn with the palm's arch. Without them a
 built hand still works, with no arch in the skin. A file without `header.hand` loads and poses as before.
+A built hand's thumb opposes as a person's does (its pad turns about 100° round to the fingers at full opposition; the
+column flexes to 62°, the MCP to 75°). A hand that isn't built keeps the older saddle and ranges.
+
+Grasps (`@ericrius1/cast/grasp`, cast 0.4.0, built hands): solve a hold once per thing and size, then place it each
+frame. The solve is in the hand's own space (x along the hand, y toward the thumb, z out of the palm):
+
+```ts
+import { HandModel } from '@ericrius1/cast/fingers';
+import { grasp, graspGoal, heldWorld } from '@ericrius1/cast/grasp';
+const M = HandModel.of(asset, 'R')!, hb = asset.bones[asset.index.handR];
+const hl = Math.hypot(hb.tail[0] - hb.head[0], hb.tail[1] - hb.head[1], hb.tail[2] - hb.head[2]);
+const g = grasp(M, 'wrap', { r: 0.035, len: 0.12 });            // a glass; g.miss, g.into, g.opp say how well it holds
+const goal = graspGoal(M, g, 'R', hl, { at: glassCentre, axis: [0, 1, 0], near: shoulder });
+rig.update({ ...input, hold: { hands: [null, goal], w: [0, 1], stoop: 0 } });
+const shape = heldWorld(g, goal, 'R', hl);                      // where the held shape is, to draw it or test it
+```
+
+The kinds are `wrap`, `power`, `stick`, `bow`, `pinch`, `tripod`, `stem`, `flat`, `rim`, `clasp` and `cloth`
+(`GRASPS`). `size` is `{ r, len, thick }` (m). `graspGoal` takes the shape's centre `at` and its `axis` (a glass's up,
+a tool's head end, a disc's normal out of the palm), plus `from` (the way round it the palm comes from) or `near` (the
+way round that puts the wrist nearest that point). It returns a `HandGoal` whose `pose` holds the solved fingers.
+Without a solve, `HandGoal.around` (`{ at, axis, r, len?, pad? }`, world; a ball has `axis` [0,0,0]) with `grip` set
+closes a built hand's fingers joint by joint until each touches the shape, the thumb swinging round first.
+
+The hand's solve gives the same bits in every JavaScript engine (cast 0.4.0). `math`'s `dsin`, `dcos`, `dexp`,
+`datan2` and `drotateAxis` use + - * / only, and `q30` rounds what enters the solve to a 2^-30 grid, so a film
+rendered headless in Node poses the hands exactly as a visitor's browser does. The rest of the body can still differ in
+the last bit.
+
+A modelled face (`header.faceRig`: lips, a jaw opening on teeth, brows and lids built into the body, not drawn) has its
+face bones moved as far as a real face's, with the lips following the speech's shapes (spread for ee, round for oo,
+press for m b p, tuck for f v). Its fields: `gain`, `jaw` (the full opening, rad, default 0.24), `shapes` (each
+shape's own gain), `attend` (0..1: steadier eyes for someone speaking a metre away) and `lidOpen` (0..1). To move a
+mouth with a recorded voice, build its timeline from the recording's word times, not the text's guessed pace:
+`rig.face.speech = { tl: lineFromWords(text, words, env), t, w: 1 }` (`@ericrius1/cast/speech`; `words` is one
+`[t0, t1]` per whitespace-separated word of `text`, `env` the optional loudness envelope `{ rate, v }`), with `t`
+advanced by the audio's clock.
 
 ## Where to look in the source
 

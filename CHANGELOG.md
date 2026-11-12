@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`AGENTS.md`'s cast section** covers cast 0.4.0: grasps (`grasp`, `graspGoal`, `HandGoal.pose`), `HandGoal.around`,
+  the built hand's thumb, real pianists' hands as a prior (`HandGoal.prior`, `Pianist.forHand`), the hand's solve the
+  same in every engine, a modelled face (`header.faceRig`) and lip timing from a recording (`lineFromWords`).
 - **`AGENTS.md`'s cast section** covers the hand as a hand (cast 0.3.0's `fingers`): each `HandGoal` option for
   fingertips (`palmFree`, `tipW`, `square`, `lay`, `floor`), how an instrument gives a fretting or stopping hand its
   goal, `Pianist.forHand`, and a body file's own hand (`header.hand`, the optional `ring0`/`pinky0` bones).
