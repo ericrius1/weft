@@ -842,7 +842,7 @@ export class HeroRig {
    *  idle fingers' hover match real pianists' (World tools/hands/planstats.mjs against tracked footage) */
   static keysHand = {
     idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
-    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.85, 0.7, 0.4]],
+    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
     fan: [0.08, 0.03, 0, -0.08],
     // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
     // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
