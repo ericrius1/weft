@@ -100,6 +100,8 @@ const SPREAD = [-0.05, -0.024, 0, 0.0235, 0.046];
 const SLOTS = [-0.05, -0.0245, 0, 0.0235, 0.046];
 const HOVER = 0.014, FALL = 0.1, REACH = 0.2, LIFT = 0.075, TRAVEL_END = 0.08, TRAVEL_MAX = 0.3, SPAN = 0.19, PAD = 0.004, LAND = 0.004;
 const THUMB_IN = 0.012, DEEP = 0.015, REST_W = 0.15;
+/** how long a finger's last key keeps it after the key's let go (s): its lift, a little more */
+const HOLD_UP = LIFT + 0.125;
 /** finger choices for a chord of n notes (thumb first): every rising run of n of the five */
 const RUNS: number[][][] = [0, 1, 2, 3, 4, 5].map((n) => {
   const out: number[][] = [];
@@ -150,10 +152,15 @@ export class Pianist {
    *  reach in front of where the fingertips press and a little over the keys, as real players' hands sit (fits of our
    *  hand to tracked footage of pianists, World's tools/hands/fit.mjs: from above the fingers lie long, the knuckles
    *  well back from the black keys) — for a built hand (HeroHeader.hand); bodies without one keep the default */
-  forHand(len: number) { this.reach = [0.4 * len, 0.3 * len]; this.pitch = 0.36; this.idleHover = 0.004; this.hover = 0.008; this.fingerIn = [0, 0.014, 0.024, 0.026, -0.01]; this.idleW = 0.04; this.idleLift = [0.02, 0, 0, 0, 0]; return this; }
+  forHand(len: number) { this.prior = 1; this.idleRelease = true; this.reach = [0.4 * len, 0.3 * len]; this.pitch = 0.12; this.idleHover = 0.004; this.hover = 0.008; this.fingerIn = [0, 0.014, 0.024, 0.026, -0.01]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; return this; }
   /** how high a finger with nothing to play rides over the white keys' tops (m; real players' idle fingers stay low,
    *  within about a centimetre of the keys, and move with their neighbours) */
   idleHover = HOVER;
+  /** a finger let go eases to an idle finger's weight as it comes up (a built hand's: forHand); else it's held to its
+   *  idle place at a playing finger's weight until its next stroke (the older bodies' behaviour) */
+  idleRelease = false;
+  /** how much real pianists' hands shape the hand's posture (HandGoal.prior: a built hand's, 1; else 0) */
+  prior = 0;
   /** each idle finger's place over its neighbours' (m, thumb first, added to idleHover): real players' idle thumbs and
    *  little fingers ride highest, the ring lowest (side views of pianists: idle tips over the hand's lowest, medians
    *  thumb 38, index 27, middle 20, ring 13, little 27 mm) */
@@ -542,7 +549,12 @@ export class Pianist {
     if (s >= t0) {
       if (s < st.up) return { st, dy: -D * Math.min(1, (s - t0) / 0.012), from: null, u: 1, w: 1 };
       const u = clamp((s - st.up) / LIFT, 0, 1);
-      return { st: s - st.up > 0.6 ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w: 1 };
+      // (once it's up, it's idle: held to its last key any longer — it was 0.6 s — a finger let go stretched after a key
+      // the hand had moved away from, and the little finger hooked, 142° at its middle and end joints, while it did)
+      // (and its pull lets go with it: from the lift's top it eases from a playing finger's weight to an idle one's —
+      // held at full weight to its idle place it was dragged there, under the hand, whatever the hand's turn)
+      const a = clamp((s - st.up - LIFT) / (HOLD_UP - LIFT), 0, 1), w = this.idleRelease ? 1 + (this.idleW - 1) * a * a * (3 - 2 * a) : 1;
+      return { st: s - st.up > HOLD_UP ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w };
     }
     // before it lands: from its last key (let go) up, over to this one, a wait at its hover, the fall — each part
     // shortened alike when the notes come too quickly for all of it, never out of order (a finger crossing the keys
@@ -593,7 +605,7 @@ export class Pianist {
       this.palms[h] = palm;
       // (the hand's own solve places the palm with its fingers, a resting finger keeping clear of the keys' tops)
       goals.push({ palm, fwd: norm(add(scale(A.toward, -1), scale(A.up, this.pitch))), down: scale(A.up, -1), tips, turn: 0, palmFree: 1, tipW,
-        floor: { at: mid, n: A.up, clear: 0.006 } });
+        floor: { at: mid, n: A.up, clear: 0.006 }, prior: this.prior });
     }
     return [goals[0], goals[1]];
   }

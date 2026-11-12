@@ -37,6 +37,7 @@ import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose, BodyModel, BodyState } from './body/solve.js';
 import { HandModel, HandSolve, handAsk, solveHand, hpOf, HP_ARCH, HAND_N, type HandAsk } from './fingers.js';
+import { KEYS_PRIOR } from './body/handprior.js';
 
 type Fr = { o: V3; x: V3; y: V3; z: V3 };
 const frW = (f: Fr, l: V3): V3 => [f.o[0] + f.x[0] * l[0] + f.y[0] * l[1] + f.z[0] * l[2], f.o[1] + f.x[1] * l[0] + f.y[1] * l[1] + f.z[1] * l[2], f.o[2] + f.x[2] * l[0] + f.y[2] * l[1] + f.z[2] * l[2]];
@@ -74,6 +75,9 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  (`pad`: the finger's half-thickness at the pad, m, default 8.5 mm for a 4.8 cm-knuckled hand, scaled to the
    *  hand's) — nothing passes through what it holds, and the thumb opposes the fingers round it */
   around?: { at: V3; axis: V3; r: number; len?: number; pad?: number };
+  /** a built hand's fingers posed as given (fingers.ts's numbers, HAND_N; the palm's six ignored): a grasp solved
+   *  against what's held (grasp.ts graspGoal), blended in with the goal's weight. Set, `around` is not closed */
+  pose?: ArrayLike<number>;
   /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
   elbow?: V3;
   /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
@@ -112,7 +116,12 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   lay?: number[];
   /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
    *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
-  floor?: { at: V3; n: V3; clear: number } }
+  floor?: { at: V3; n: V3; clear: number };
+  /** how much real pianists' hands shape a built hand at the keys (0..1; body/handprior.ts): the fingertips with targets
+   *  land on them, and the rest of the hand — the idle fingers, the thumb, the arch, how the playing fingers bend to
+   *  their keys — takes the posture real hands have with those fingers down, rather than each finger's own rest
+   *  (the Pianist sets it for a built hand: piano.ts forHand) */
+  prior?: number }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -855,15 +864,19 @@ export class HeroRig {
    *  idle fingers' hover match real pianists' (World tools/hands/planstats.mjs against tracked footage) */
   static keysHand = {
     idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
-    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.85, 0.7, 0.4]],
+    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
     fan: [0.08, 0.03, 0, -0.08],
     // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
     // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
-    // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97)
-    thumbIdle: [-0.44, -0.35, 0.7, 0.4], thumbTip: [-0.44, -0.35, 0.7, 0.4], thumbHigh: [-0.28, -0.31, 0.23, 0.1],
+    // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97;
+    // MCP 0.95 / IP 0.8 with the hand's pitch 0.12 (piano.ts forHand): playing 0.87, the wrist 30 mm over the lowest tip)
+    thumbIdle: [-0.44, -0.35, 0.95, 0.8], thumbTip: [-0.44, -0.35, 0.95, 0.8], thumbHigh: [-0.28, -0.31, 0.23, 0.1],
     /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
      *  per mm, so these shape the hand, not where the tips land) */
     wTip: 3, wThumb: 6,
+    /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
+     *  the idle thumb) and the playing ones keep under it */
+    wPrior: 1, restIdle: 0.25, restPlay: 1,
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2407,9 +2420,6 @@ export class HeroRig {
 
   private rigFingers(side: number, curl: number, grip: number, goal: HandGoal | null, goalW: number, dt: number) {
     const t = side > 0 ? 'L' : 'R';
-    // (the hand's solve carries its numbers frame to frame: what comes in is held to a grid first, so no engine's own
-    // last bits get in — the same pose in every browser and in Node; math.ts dsin)
-    curl = q30(curl); grip = q30(grip); goalW = q30(goalW);
     // (holding something: the goal's grip; else the keys' resting curve below)
     const holds = !!goal && goal.grip !== undefined && goalW > 0.001;
     if (holds) grip = lerp(grip, goal!.grip!, goalW);
@@ -2445,11 +2455,13 @@ export class HeroRig {
     }
     if (this.bi['index1' + t] === undefined) return;
     // (fingertips with targets: the hand solved as a hand — fingers.ts)
-    if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, c, grip, holds, goal, goalW, dt); return; }
+    // (the hand's solve carries its numbers frame to frame: what comes in is held to a grid first, so no engine's own
+    // last bits get in — the same pose in every browser and in Node; math.ts dsin)
+    if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
     // (a built hand — its file's own hand, header.hand — with no fingertip to place: its fingers at their rests through
     // the hand model, each finger bending about its own knuckle's axis; the older path below turns every finger about
     // the hand's one axis, which a modelled hand's curved, fanned fingers don't survive)
-    if (this.asset.header.hand && this.handM[hi]) { this.restFingers(hi, c, grip, holds, goal, goalW, dt); return; }
+    if ((this.asset.header.hand || (goal?.pose && goalW > 0.001)) && this.handM[hi]) { this.restFingers(hi, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
     // per-joint fingers: a relaxed hand cascades (the index curls least, the pinky most), the end joints fairly
     // straight; at an instrument each finger with a target reaches it — its curl solved so the tip lands there (the
     // middle and end joints coupled as a hand's are), its spread turned toward it
@@ -2557,7 +2569,9 @@ export class HeroRig {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
         // (on a key standing over the surface — a black key — the thumb reaches in flatter, as a pianist's does)
         const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
-        const rt = keys ? (up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
+        // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
+        const idle = keys && (goal.tipW?.[0] ?? 1) < 0.5;
+        const rt = keys ? (idle ? K.thumbIdle : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
         const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)
@@ -2590,6 +2604,14 @@ export class HeroRig {
       if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
     }
     Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;
+    // (real pianists' hands: a prior on the whole hand's numbers; the fingers' own rests loosened under it)
+    const pr = keys && built && goal.prior ? clamp(goal.prior, 0, 1) * goalW : 0;
+    Q.wp = pr * K.wPrior; Q.priorMu = KEYS_PRIOR.mu; Q.priorP = KEYS_PRIOR.P;
+    if (pr > 0) for (let f = 0; f < 5; f++) {
+      const o = hpOf(f), kk = lerp(1, Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5) ? K.restIdle : K.restPlay, pr);
+      for (let j = 0; j < 4; j++) Q.wr[o + j] *= kk;
+      if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
+    }
     Q.clear = 0;
     const F = goal.floor;
     if (F && F.clear > 0) {
@@ -2681,7 +2703,8 @@ export class HeroRig {
     for (let i = 0; i < 6; i++) x[i] = 0;
     for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
     x[HP_ARCH] = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1));
-    if (holds && goal?.around && goalW > 0.001) this.closeAround(hi, c, goal, goalW, dt);
+    if (goal?.pose && goalW > 0.001) { const g = goal.pose; for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], x[i] + (g[i] - x[i]) * goalW)); }
+    else if (holds && goal?.around && goalW > 0.001) this.closeAround(hi, c, goal, goalW, dt);
     S.ready = true;
     const P = this.fkP, U = this.fkU, K = this.fkK, Zf = this.fkZ, hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {

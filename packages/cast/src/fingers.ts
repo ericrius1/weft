@@ -36,8 +36,18 @@ export const hpOf = (f: number) => (f === 0 ? 23 : 7 + 4 * (f - 1));
 const FN = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 /** the arch: how far the ring and little metacarpals bend palmward (rad) and turn toward the thumb, per unit of it */
 const ARCH_B = [0, 0, 0, 0.12, 0.26], ARCH_G = [0, 0, 0, 0.1, 0.22];
-/** the thumb's metacarpal turned (pronated) with its saddle's flexion and abduction (rad per rad) */
-const PRON_F = 0.55, PRON_A = 0.35;
+/** the thumb's metacarpal turned (pronated: the pad coming round to face the fingers) with its saddle's flexion across
+ *  the palm and its abduction out of it (rad per rad; a fifth as much the other way, as it extends or adducts). The
+ *  saddle's flexion here turns the metacarpal about the palm's normal, which by itself swings the pad to face the
+ *  wrist; so the turn that keeps it facing the fingers and brings it round to them is large: at the tip-to-tip
+ *  opposition with the little finger the pad has turned ~100° from the rest, and the thumb's tip reaches the little
+ *  finger's creases (Kapandji's test: 8 of 10, the last two within 3-6 mm; World tools/hands/kapandji.mjs). It was
+ *  0.55 and 0.35, ~36° at full opposition: the pint's thumb lay along the glass, the pick's and the stem's ended on
+ *  the fingers' side. */
+const PRON = [2.0, 0.8, 0.2];
+/** a hand that isn't a built one (no header.hand, no ring and little metacarpals: the older bodies, Drake's) keeps the
+ *  saddle it had — its thumb's bones aren't where a built hand's are, and its projects' poses were made with it */
+const PRON_OLD = [0.55, 0.35, 1], CMC_OLD = { flex: [-25, 45, -10, 25], abd: [-20, 32, -8, 18] }, TMCP_OLD = [-10, 56, 0, 35];
 /** the end joint's share of the middle's bend (its tendon) */
 export const DIP_K = 0.7;
 
@@ -155,6 +165,12 @@ export class HandModel {
       J(JOINTS.mcp.flex, o + 1); J(JOINTS.pip.flex, o + 2); J(JOINTS.dip.flex, o + 3);
     }
     J(JOINTS.cmc.flex, 23); J(JOINTS.cmc.abd, 24); J(JOINTS.thumbMcp.flex, 25); J(JOINTS.thumbIp.flex, 26);
+    this.built = !!(a.header as { hand?: unknown } | undefined)?.hand || this.mc[3] >= 0;
+    if (!this.built) {
+      const d = Math.PI / 180, S = (i: number, r: number[]) => set(i, r[0] * d, r[1] * d, r[2] * d, r[3] * d);
+      S(23, CMC_OLD.flex); S(24, CMC_OLD.abd); S(25, TMCP_OLD);
+    }
+    this.pron = this.built ? PRON : PRON_OLD;
   }
 
   /** a body's hand ('L' her left), or null if its fingers aren't each three bones */
@@ -165,6 +181,12 @@ export class HandModel {
     if (ids.some((r) => r.some((i) => i === undefined))) return null;
     return new HandModel(a, T, hb, ids);
   }
+
+  /** a built hand (its file's own, header.hand; or one with the ring and little metacarpals) */
+  readonly built: boolean;
+  private readonly pron: number[];
+  /** the saddle's turn (pronation, rad) for its flexion cf and abduction ca */
+  thumbPron(cf: number, ca: number) { const p = this.pron; return (cf > 0 ? p[0] : p[0] * p[2]) * cf + (ca > 0 ? p[1] : p[1] * p[2]) * ca; }
 
   private mq = new Float64Array(9); private mk2 = new Float64Array(3);
   /** finger f's metacarpal posed by the arch in x (hand space, before the palm's move): its head, tail and up (o, 9) */
@@ -206,7 +228,7 @@ export class HandModel {
       turnAll(v, U ? u : null, q, 0, 0, -1, cf);
       const l0 = len3(v[0], v[1], v[2]);
       m[0] = v[0] / l0; m[1] = v[1] / l0; m[2] = v[2] / l0;
-      turnAll(v, U ? u : null, q, m[0], m[1], m[2], PRON_F * cf + PRON_A * ca);
+      turnAll(v, U ? u : null, q, m[0], m[1], m[2], this.thumbPron(cf, ca));
       // the MCP and the IP hinge toward the pad
       let kx = v[1] * q[2] - v[2] * q[1], ky = v[2] * q[0] - v[0] * q[2], kz = v[0] * q[1] - v[1] * q[0];
       const kl = len3(kx, ky, kz) || 1; kx /= kl; ky /= kl; kz /= kl;
@@ -279,9 +301,16 @@ export interface HandAsk {
   /** a surface under the hand (the keys' tops, a fingerboard): its normal and offset (n·p = d on it, hand space) and how
    *  far clear of it a fingertip without a target keeps (m; 0: no surface) */
   floor: Float64Array; clear: number;
+  /** a prior on the hand's own numbers (HAND_N from the arch on: 21) — real hands' mean and precision (body/handprior.ts:
+   *  pianists' at the keys) — and how much it counts (0: none). With fingertips held on their targets, the rest of the
+   *  hand takes the posture real hands have with those fingers there (the Gaussian's conditional mean) */
+  priorMu: Float64Array | null; priorP: Float64Array | null; wp: number;
 }
 export const handAsk = (): HandAsk => ({ lay: new Float64Array(5), tgt: new Float64Array(15), w: new Float64Array(5), rest: new Float64Array(HAND_N), wr: new Float64Array(HAND_N), free: 0, resting: new Uint8Array(5),
-  floor: new Float64Array(4), clear: 0 });
+  floor: new Float64Array(4), clear: 0, priorMu: null, priorP: null, wp: 0 });
+/** the prior's numbers: HAND_N from the arch (6) on */
+const PR0 = HP_ARCH, PRN = HAND_N - HP_ARCH;
+const PRD = new Float64Array(PRN), PRPd = new Float64Array(PRN);
 
 /** a hand's solve carried frame to frame: its numbers, the damping, each fingertip's miss after (m) */
 export class HandSolve {
@@ -314,7 +343,10 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
 
 /** the weights: a fingertip's miss (per mm), the end joint's tendon, the webs and the enslaving bands (hinges past
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
-const W_LAY = 0.6, W_FLOOR = 1, W_BAND = 6, W_DIP = 4, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
+const W_LAY = 0.6, W_FLOOR = 1, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
+/** the couplings' weights (read each solve; for tools that take one out to see what it does): the comfortable band,
+ *  the end joint's tendon, the webs, the enslaving bands, the fingertips' gaps */
+export const HAND_W = { band: 6, dip: 4, web: 15, apart: 12, gap: 0.6 };
 /** the fingertips kept this far apart (a share of the knuckles' width) */
 const GAP = 0.26;
 
@@ -358,6 +390,7 @@ function accRow(H: Float64Array, g: Float64Array, r: number, C: Int32Array) {
  *  the palm */
 function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: boolean): number {
   const P = S.P, K = S.K, Zf = S.Zf, T = S.T, R = S.R, J = S.J, H = S.H, g = S.g, N = HAND_N, fP = S.fP;
+  const W_BAND = HAND_W.band, W_DIP = HAND_W.dip, W_WEB = HAND_W.web, W_APART = HAND_W.apart, W_GAP = HAND_W.gap;
   rotM(x[3], x[4], x[5], R);
   for (let f = 0; f < 5; f++) {
     M.fk(x, f, fP, null, S.fK, S.fZ);
@@ -447,6 +480,19 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     const r = w * (x[i] - Q.rest[i]);
     cost += r * r;
     if (jac) acc1(H, g, r, i, w);
+  }
+  // real hands' posture (a Gaussian prior on the hand's own numbers: cost wp^2 d'P d, d the numbers from the mean)
+  if (Q.wp > 0 && Q.priorP && Q.priorMu) {
+    const Pm = Q.priorP, mu = Q.priorMu, w2 = Q.wp * Q.wp;
+    for (let i = 0; i < PRN; i++) PRD[i] = x[PR0 + i] - mu[i];
+    let c2 = 0;
+    for (let i = 0; i < PRN; i++) { let t = 0; const o = i * PRN; for (let j = 0; j < PRN; j++) t += Pm[o + j] * PRD[j]; PRPd[i] = t; c2 += t * PRD[i]; }
+    cost += w2 * c2;
+    if (jac) for (let i = 0; i < PRN; i++) {
+      g[PR0 + i] += w2 * PRPd[i];
+      const o = i * PRN, oh = (PR0 + i) * N + PR0;
+      for (let j = 0; j < PRN; j++) H[oh + j] += w2 * Pm[o + j];
+    }
   }
   // past each joint's comfortable band: a pose held there is an effort (the house's discomfort, anatomy.ts)
   for (let i = 6; i < N; i++) {
