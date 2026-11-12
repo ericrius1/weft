@@ -40,6 +40,9 @@ export const BOWREST: readonly (readonly number[])[] = Object.freeze([[34, 66, 5
  *  where it crosses each finger (fingers.ts sample points: the index's end bone at its middle, past the frog toward the
  *  tip; the middle at its end joint, over the ferrule; the ring's end bone a quarter along, over the frog; the little
  *  finger's tip on top, by the frog's back) */
+/** the fitted hand's reach for its knuckles' width (the middle finger's knuckle from the wrist along the hand, and its
+ *  length: the MakeHuman hand the bow's hold was fitted on, test/fixtures/hands-built.json) */
+const BOW_REACH = 3.32;
 export const BOWSTICK = Object.freeze({ a: Object.freeze([0.591, 0.782, 0.198]), c: Object.freeze([0.0958, 0.005, 0.0539]), on: Object.freeze([6, 2, 20, 3]), arch: 0.02 });
 /** a grasp solved: the hand's numbers (fingers.ts, palm's move 0), the held shape in hand space, and how well it holds:
  *  per finger (thumb first) the worst miss of the pads that should touch (m; 0 none asked), the deepest any skin goes
@@ -414,7 +417,15 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       // straightened it)
       const r = size.r ?? 0.0055, B = BOWSTICK;
       const a = norm(B.a as V3);
-      let c: V3 = scale(B.c as V3, sc);
+      // (the stick's place scaled by the hand's reach (the middle finger's knuckle out from the wrist and its length) where
+      // that differs from its knuckles' width by more than 3 % from the fitted hand's: Iroh's fingers and palm are 7 %
+      // shorter for their width, and placed by the width alone the stick sat out of his index's reach — it straightened
+      // to touch (middle joint 21 deg, rest 66) and still missed by 3.8 mm (0.6.2 release check). Six tenths of the reach's
+      // difference (the palm's part of the place goes with the width): Iroh's index 40/76/6 deg (the fiddler's 39/76/6), the
+      // whole of it bent it to 80. Within 3 %, as before, bit for bit)
+      const reach = (M.base[6] + [0, 1, 2].reduce((s, k) => s + Math.hypot(M.seg[(6 + k) * 3], M.seg[(6 + k) * 3 + 1], M.seg[(6 + k) * 3 + 2]), 0)) / M.width;
+      const rr = reach / BOW_REACH;
+      let c: V3 = scale(B.c as V3, sc * (Math.abs(rr - 1) > 0.03 ? 1 + (rr - 1) * 0.6 : 1));
       const F: FSpec[] = [0, 1, 2, 3].map((g) => ({ rest: [...BOWREST[g]], restW: 2.5, spread: BOW.spread[g], on: [B.on[g]], dipW: 0.5, gap: 0.0005, penW: 40 }));
       // (the stick moved square to its axis until no finger at its rest is inside it: a few millimetres either way for
       // another hand's proportions)
