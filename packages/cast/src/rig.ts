@@ -2547,7 +2547,9 @@ export class HeroRig {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
         // (on a key standing over the surface — a black key — the thumb reaches in flatter, as a pianist's does)
         const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
-        const rt = keys ? (up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
+        // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
+        const idle = keys && (goal.tipW?.[0] ?? 1) < 0.5;
+        const rt = keys ? (idle ? K.thumbIdle : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
         const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)

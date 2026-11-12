@@ -100,6 +100,8 @@ const SPREAD = [-0.05, -0.024, 0, 0.0235, 0.046];
 const SLOTS = [-0.05, -0.0245, 0, 0.0235, 0.046];
 const HOVER = 0.014, FALL = 0.1, REACH = 0.2, LIFT = 0.075, TRAVEL_END = 0.08, TRAVEL_MAX = 0.3, SPAN = 0.19, PAD = 0.004, LAND = 0.004;
 const THUMB_IN = 0.012, DEEP = 0.015, REST_W = 0.15;
+/** how long a finger's last key keeps it after the key's let go (s): its lift, a little more */
+const HOLD_UP = LIFT + 0.125;
 /** finger choices for a chord of n notes (thumb first): every rising run of n of the five */
 const RUNS: number[][][] = [0, 1, 2, 3, 4, 5].map((n) => {
   const out: number[][] = [];
@@ -542,7 +544,9 @@ export class Pianist {
     if (s >= t0) {
       if (s < st.up) return { st, dy: -D * Math.min(1, (s - t0) / 0.012), from: null, u: 1, w: 1 };
       const u = clamp((s - st.up) / LIFT, 0, 1);
-      return { st: s - st.up > 0.6 ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w: 1 };
+      // (once it's up, it's idle: held to its last key any longer — it was 0.6 s — a finger let go stretched after a key
+      // the hand had moved away from, and the little finger hooked, 142° at its middle and end joints, while it did)
+      return { st: s - st.up > HOLD_UP ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w: 1 };
     }
     // before it lands: from its last key (let go) up, over to this one, a wait at its hover, the fall — each part
     // shortened alike when the notes come too quickly for all of it, never out of order (a finger crossing the keys
