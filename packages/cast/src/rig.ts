@@ -74,6 +74,9 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  (`pad`: the finger's half-thickness at the pad, m, default 8.5 mm for a 4.8 cm-knuckled hand, scaled to the
    *  hand's) — nothing passes through what it holds, and the thumb opposes the fingers round it */
   around?: { at: V3; axis: V3; r: number; len?: number; pad?: number };
+  /** a built hand's fingers posed as given (fingers.ts's numbers, HAND_N; the palm's six ignored): a grasp solved
+   *  against what's held (grasp.ts graspGoal), blended in with the goal's weight. Set, `around` is not closed */
+  pose?: ArrayLike<number>;
   /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
   elbow?: V3;
   /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
@@ -2435,7 +2438,7 @@ export class HeroRig {
     // (a built hand — its file's own hand, header.hand — with no fingertip to place: its fingers at their rests through
     // the hand model, each finger bending about its own knuckle's axis; the older path below turns every finger about
     // the hand's one axis, which a modelled hand's curved, fanned fingers don't survive)
-    if (this.asset.header.hand && this.handM[hi]) { this.restFingers(hi, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
+    if ((this.asset.header.hand || (goal?.pose && goalW > 0.001)) && this.handM[hi]) { this.restFingers(hi, q30(c), q30(grip), holds, goal, q30(goalW), dt); return; }
     // per-joint fingers: a relaxed hand cascades (the index curls least, the pinky most), the end joints fairly
     // straight; at an instrument each finger with a target reaches it — its curl solved so the tip lands there (the
     // middle and end joints coupled as a hand's are), its spread turned toward it
@@ -2667,7 +2670,8 @@ export class HeroRig {
     for (let i = 0; i < 6; i++) x[i] = 0;
     for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
     x[HP_ARCH] = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1));
-    if (holds && goal?.around && goalW > 0.001) this.closeAround(hi, c, goal, goalW, dt);
+    if (goal?.pose && goalW > 0.001) { const g = goal.pose; for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], x[i] + (g[i] - x[i]) * goalW)); }
+    else if (holds && goal?.around && goalW > 0.001) this.closeAround(hi, c, goal, goalW, dt);
     S.ready = true;
     const P = this.fkP, U = this.fkU, K = this.fkK, Zf = this.fkZ, hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {
