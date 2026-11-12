@@ -15,32 +15,40 @@
   taken as 1; `ref` without `x` (`ref: {}`) is skipped instead of throwing; `termPulls(S)` per hand solve
   (`HeroRig.handSolve(i)`), a copy, empty while the watch is off (turned on again, a hand not solved since gives its
   reading from before).
-- **The Pianist's hands** (new `HandGoal.keyTop`, `Pianist.strokeLift`, `keysHand.wTipBuilt`): a thumb's rests eased by
-  its key's top; rests at the keys eased in with the goal's weight; a finger's approach from rest by its distance, its
-  release eased toward its idle place (`HOLD_UP` 0.2 to 0.295 s); rise and travel share the time to the fall; the idle
-  levers weighted by their neighbours' weights; the key surface's clearance faded by the knuckles' height (with `prior`
-  only), off at once and on eased; after a clocked piece the hands rest on its plan until something is played (until
-  the next `playScore`; `sit` does not clear it); under a prior the solve tries 8 dampings (5 otherwise). The duet at
-  50/60/144 fps: contacts 109/109 (worst 14.1/13.4/14.4 ms, as 0.6.1's 14.1/13.1/14.4), joint steps over 10° in a
-  frame 559/592/742 -> 36/31/14 (worst in the song 20.9/18.7/17.5°), no note's fingertip leaves its key before the
+- **The Pianist's hands** (new `HandGoal.keyTop`, `Pianist.strokeLift`, `deepIn`, `blackAlong`, `keysHand.wTipBuilt`,
+  `keysHand.tipBuiltPrior`): a thumb's rests eased by its key's top; rests at the keys eased in with the goal's weight; a
+  finger's approach from rest by its distance, its release eased toward its idle place (`HOLD_UP` 0.2 to 0.295 s); rise
+  and travel share the time to the fall; the idle levers weighted by their neighbours' weights; the key surface's
+  clearance faded by the knuckles' height (with `prior` only), off at once and on eased; after a clocked piece the hands
+  rest on its plan until something is played (until the next `playScore`; `sit` does not clear it); under a prior the
+  solve tries 8 dampings (5 otherwise). **The approach, the release, rise and travel, the hold after a piece and the
+  eased among-the-black-keys place are the Pianist's own, for EVERY Pianist, `forHand` or not** (World's castbench play
+  mode moves); the rest is for a built hand with `prior` only.
+- **Where the pianist's fingertips land** (`forHand`): on a white key, away from the black keys, where overhead footage
+  of real players puts them: in from the front edge, thumb 16, index 50, middle 62, ring 53, little 35 mm (World's duet;
+  were 60/80/95/102/55). Among the black keys (`deepIn`) as before but the little finger 25 mm further in (80 mm, was
+  55); on a black key as before (`blackAlong`). How far a hand is among the black keys is eased over 0.25 s on the clock
+  (it switched in a frame, moving every white finger 20-40 mm). In the duet no tip comes within 15 mm of a key's front
+  or off its key's sides.
+- **The duet** at 50/60/144 fps: contacts 109/109 (worst 14.1/13.9/14.4 ms; 0.6.1 14.1/13.1/14.4), joint steps over 10°
+  in a frame 559/592/742 -> 19/14/10 (worst in the song 21.2/17.9/11.3°), no note's fingertip leaves its key before the
   note's up, the end's 110 mm wrist jump gone.
 - **What moves beyond the hands** (World's built bodies, old against new): the pianist's arms (upper arm, forearm, hand)
-  up to 11 cm (the left at the piece's end), 6-8.5 cm through the song, the clavicles 2.6 mm; torso, head, legs
+  up to 10 cm (the left at the piece's end), 3 cm on average through the song, the clavicles 3 mm; torso, head, legs
   unmoved. The fiddler's bow arm 8-9 cm through the whole song (mean 7 cm), its clavicle 1 cm; the singer (guitar)
   bit for bit. World's probes as before: guitar 200/200 (worst 3.2/3.2/2.7/3.2/2.7/2.7 mm at 30/50/60/90/120/144 fps),
   picks 300/300, fiddle stops 22/22, bows 29/29.
-- **Changed beyond the Pianist, not meant** (found by the release check): the per-finger playing rests
-  (`keysHand.tipBuilt`) and their weight (`wTipBuilt` 8, was `wTip` 3) apply to EVERY built hand's targeted finger on
-  the plain fingertip path (not a hold, not `loose`, no `neck`), with or without `prior`: tips on every finger move the
-  fingers 7-16 mm (numbers up to 23°), a `palmFree` tips goal moves the arm 1.7-2.8 cm, World's pointing gesture
-  (`cast/pose.ts` point) bends the index 9-11° more; and a thumb's rests over a `floor` without `prior` are now eased
-  between 3 and 9 mm (were switched at 6 mm): hands at a floor without a prior move 15-52° and their arms 2-5 cm.
-- **Identical**: every bone in Drake's 79 rows; World's built bodies (katara, raker) at 30, 60 and 144 fps for `neck`
-  goals, `loose`, `grip` holds, no tips, `ref` with no tips, and `pose` from every grasp but `bow` (on the hand with the
-  pose; `ref` with tips within 6e-8 m). Node 22 and Chrome 157 give identical hand numbers, arm joints and fingertips
-  for the pianist (1,458 frames) and the band (2,420). No export removed.
-- **Cost**: a hand asked the impossible under the prior for 600 frames: no NaN, no freeze, rig.update median 1.66 ms
-  against 1.72 (worst case 8 damping trials an iteration where it was 5).
+- **A built hand without the prior is as 0.6.1's** (`keysTipRest`, `keysTipW`, `thumbRaised`, pinned by
+  test/keysrules.test.mjs): a first candidate had applied the pianist's per-finger playing rests, their weight and the
+  thumb's eased rests to every built hand's targeted finger (tips moved 7-16 mm, a `palmFree` goal's arm 1.7-2.8 cm).
+- **Identical**: every bone in Drake's 85 rows; World's built bodies (katara, raker) at 30, 60 and 144 fps for plain
+  tips, `palmFree` tips, a forefinger target, `neck`, `square`, `ref`, a floor without prior (a weak ring too), `loose`,
+  `grip`, no tips, and `pose` from every grasp but `bow` (96 of 132 rows; the other 36 are `prior` and `bow`); every act
+  of World's `cast/pose.ts` through its Poser (point, reach, sip, keys, ...) standing and sitting on katara, raker and
+  aang at 30/60/144 fps (270 rows). Node 22 and Chrome 157 give identical hand numbers, arm joints and fingertips for
+  the pianist (1,458 frames) and the band (2,420). No export removed.
+- **Cost**: a hand asked the impossible under the prior for 600 frames: no NaN, no freeze, rig.update as 0.6.1's
+  (median 1.1-1.5 ms against 1.2-1.4, within noise; worst case 8 damping trials an iteration where it was 5).
 
 ## 0.6.1
 
