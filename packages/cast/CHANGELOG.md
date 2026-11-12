@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased (draft: world/hands-look 915f3b8..2db18aa on 0.6.1)
+
+- **`BOW` and `BOWREST` change value** (exported constants): the bow hold refitted from hand-marked frog photographs with
+  the right hand's chirality — rests 34/66/5, 55/54/10, 60/52/20, 45/51/25 deg, spreads +3/-2/-12/-27. New export
+  `BOWSTICK` (the stick in hand space, its contact points per finger); the grasp's held centre is the stick over the hair's
+  end at the frog. A caller placing `grasp('bow')` at the old 2 cm along / tangent roll sees the hand move (World:
+  BOWHOLD.along 0, roll -1.35 rad as an angle).
+- **Leftovers of 0.6.1**: a NaN `curl` or `grip` never enters the rig's smoothed state; a NaN `tipW` is taken as 1; `ref: {}`
+  (no `x`) is skipped instead of throwing; `termPulls(S)` per hand solve (`HeroRig.handSolve(i)`), a copy, empty once the
+  watch is off.
+- **The Pianist's hands** (built hands with `prior` only; every other hand bit for bit as before — checked with World
+  `tools/hands/crossguard.mjs` on the guitarist's and the fiddler's hands): new `HandGoal.keyTop` (a thumb's rests eased by
+  its key's top, not swapped at its target's height); rests at the keys eased in with the goal's weight; a finger's
+  approach from rest by its distance, its release eased toward its idle place; rise and travel share the time to the fall;
+  the idle levers weighted by their neighbours' weights; the key surface's clearance faded by the knuckles' height (only
+  with `prior`), off at once and on eased; per-finger playing rests (`keysHand.tipBuilt`, new `keysHand.wTipBuilt` 8);
+  `Pianist.strokeLift`; after a clocked piece the hands rest on its plan; under a prior the solve tries 8 dampings (5
+  otherwise). The duet: joint steps over 10 deg in a frame 592 -> 31 at 60 fps (worst 18.7 deg), contacts 109/109 at
+  50, 60 and 144 fps.
+
 ## 0.6.1
 
 - **Malformed asks no longer break a hand**: a `ref.x`, `pose` or `stopRest` number that is missing or not finite (too
