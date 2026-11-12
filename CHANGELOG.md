@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`AGENTS.md`'s cast section** covers cast 0.6.0: a reference pose for a built hand (`HandGoal.ref`), `neck.restAt`,
+  `stopRest`/`stopW`, the bow grasp drawn in.
 - **`AGENTS.md`'s cast section** covers cast 0.5.0: a neck held in the hand (`HandGoal.neck`) for a fretting or
   stopping hand, the bow hold and the pick as grasps, `elbowW` of 100 or more, `Pianist.blackIn`.
 - **`AGENTS.md`'s cast section** covers cast 0.4.0: grasps (`grasp`, `graspGoal`, `HandGoal.pose`), `HandGoal.around`,
