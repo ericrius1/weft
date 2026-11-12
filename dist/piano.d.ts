@@ -115,6 +115,26 @@ export declare class Pianist {
     private out;
     /** where the palm sits from the press line: toward her, and up (m) */
     reach: [number, number];
+    /** the palm's place for a hand of this length (wrist to the middle fingertip, m): the knuckles a curved finger's
+     *  reach in front of where the fingertips press and a little over the keys, as real players' hands sit (fits of our
+     *  hand to tracked footage of pianists, World's tools/hands/fit.mjs: from above the fingers lie long, the knuckles
+     *  well back from the black keys) — for a built hand (HeroHeader.hand); bodies without one keep the default */
+    forHand(len: number): this;
+    /** how high a finger with nothing to play rides over the white keys' tops (m; real players' idle fingers stay low,
+     *  within about a centimetre of the keys, and move with their neighbours) */
+    idleHover: number;
+    /** how high a finger waits over its next key before it falls (m) */
+    hover: number;
+    /** how much further in (toward the fallboard) each finger plays a white key than the press line (m, thumb first):
+     *  the long fingers reach further in than the thumb, so they needn't curl under to land on its line (real players'
+     *  fingers lie long across the keys: World tools/hands/planstats.mjs) */
+    fingerIn: number[];
+    /** how much an idle finger's place over the keys counts against its own relaxed shape (a share of a playing
+     *  finger's): low, and an idle finger rests as the hand holds it rather than being dragged into a hook */
+    idleW: number;
+    /** the hand's way from the wrist to the knuckles, up from level (as a slope: -0.18, a little down, the default; a
+     *  built hand's rises, the knuckles over the wrist as a pianist's arched hand is) */
+    pitch: number;
     /** the widest a hand holds at once, thumb to pinky along the keys (m: about a seventh; past it the older notes ring on
      *  under the pedal: the fingers' stretch, not the hand's size, is the limit — scored) */
     span: number;
@@ -174,6 +194,8 @@ export declare class Pianist {
     /** the hands' goals: each hand's place over the keys and each finger's tip */
     private plan;
     private along;
+    /** a key that stands over the others (a black key: its touch point higher than middle C's) */
+    private black;
     /** the whole piece planned: hands, fingers, strokes, each hand's places */
     private planScore;
     /** a hand's centre at second s: eased from one place to the next, arriving TRAVEL_END before the note it's for */

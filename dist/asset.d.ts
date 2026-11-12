@@ -42,6 +42,13 @@ export interface HeroHeader {
     /** the hair's lock lines' axis: the pole in front of the forehead and the gather at the nape, each (y, z) in bind
      *  space */
     hairAxis?: number[];
+    /** the hands as built (a modelled hand grafted on and weighted to its own bones: fitHands leaves it alone): where
+     *  it came from, wrist-to-middle-fingertip length (m), breadth against the source's */
+    hand?: {
+        source: string;
+        len: number;
+        breadth: number;
+    };
 }
 export interface HeroAsset {
     header: HeroHeader;

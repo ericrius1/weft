@@ -17,6 +17,8 @@ interface Seg { b: number; up: number; down: number; h: V3; t: V3; hand: boolean
 /** each hand's skin given to the bones it lies along; returns how many vertices changed (no allocation per vertex:
  *  it runs as each body loads) */
 export function fitHands(a: HeroAsset): number {
+  // (a hand built and weighted as a hand — tools that write `header.hand` — keeps its own weights)
+  if (a.header.hand) return 0;
   const H = a.header, lo = H.qmin, span = [H.qmax[0] - lo[0], H.qmax[1] - lo[1], H.qmax[2] - lo[2]];
   const dv = new DataView(a.verts.buffer, a.verts.byteOffset, a.verts.byteLength);
   const V = a.verts;

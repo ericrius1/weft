@@ -2,6 +2,7 @@ export * from './math.js';
 export * from './asset.js';
 export * from './garment.js';
 export * from './hands.js';
+export * from './fingers.js';
 export * from './face.js';
 export * from './speech.js';
 export * from './sip.js';

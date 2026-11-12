@@ -48,6 +48,25 @@ export interface HandGoal {
     /** the arm's fit weighs the shoulder's turn (the humerus's) as well as the forearm's and the wrist's (the body's own
      *  poses: body/solve.ts) */
     shoulder?: boolean;
+    /** how free the palm is to move to its fingertips' targets (0, the default: where the goal puts it; 1: within the
+     *  wrist's and the arm's ease — a few cm, a few tens of degrees — as a pianist's hand moves and turns to a chord):
+     *  the hand's solve (fingers.ts) places the palm and the fingers together. Ignored when held `exact` */
+    palmFree?: number;
+    /** how much each fingertip's target counts (thumb first; default 1 each) */
+    tipW?: number[];
+    /** how square each finger comes down on its target (thumb first, 0..1: 1 its middle joint well bent and its end
+     *  joint with it, the tip meeting the string end-on — a guitarist's or a violinist's stop) */
+    square?: number[];
+    /** how flat each finger lies along what it presses (thumb first, 0..1: 1 its middle and end joints straight — a
+     *  guitar's barre, the index laid across every string; default 0) */
+    lay?: number[];
+    /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
+     *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
+    floor?: {
+        at: V3;
+        n: V3;
+        clear: number;
+    };
 }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
@@ -339,6 +358,41 @@ export declare class HeroRig {
     private bodyArm;
     /** each finger's curl toward its target (smoothed: a finger presses quickly and lifts a touch slower) */
     private tipsW;
+    /** the hands as hands (fingers.ts: null for a body whose fingers aren't three bones each), their solves carried frame
+     *  to frame, what's asked of them, the palm's move as last solved */
+    /** the most iterations a hand's solve takes a frame: the palm's with its fingers, then the fingers' on the hand as
+     *  the arm put it (each stops once its fingertips are within 0.2 mm) */
+    static handIters: [number, number];
+    /** a hand at keys (fingertip targets, nothing held): each finger's rest (index..little: MCP, PIP, DIP, rad) idle and
+     *  playing, the spreads, the thumb's (saddle flexion, abduction, MCP, IP) idle and playing — set so the hand's plan
+     *  extension (a fingertip's distance from its knuckle seen from above, over the finger's length), the fan and the
+     *  idle fingers' hover match real pianists' (World tools/hands/planstats.mjs against tracked footage) */
+    static keysHand: {
+        idle: number[][];
+        tip: number[][];
+        fan: number[];
+        thumbIdle: number[];
+        thumbTip: number[];
+        /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
+         *  per mm, so these shape the hand, not where the tips land) */
+        wTip: number;
+        wThumb: number;
+    };
+    private handM;
+    private handS;
+    private handQ;
+    private palmX;
+    /** the hand as the palm's solve placed it this frame (wrist, its way, its palm's; [9] set when it's this frame's) */
+    private palmAt;
+    /** each hand's fingertips' misses as the palm's solve left them (before the arm took the palm) */
+    readonly palmMiss: Float64Array<ArrayBuffer>[];
+    /** each hand's fingertips' misses after its solve (m; thumb first) and its iterations, for tools and tests */
+    handMiss(i: number): Float64Array;
+    handIters(i: number): number;
+    /** each hand's solved numbers (fingers.ts HAND_N: the palm's move, the arch, the fingers', the thumb's) */
+    handX(i: number): Float64Array;
+    /** each hand's palm move as last solved (hand space: its move, m, and its turn's rotation vector) */
+    handPalm(i: number): Float64Array;
     /** a foot touched down (footsteps), and the pedal under the right foot (0..1, at an instrument) */
     onPlant?: (foot: number, pos: V3, speed: number) => void;
     pedal: number;
@@ -509,6 +563,28 @@ export declare class HeroRig {
      *  the best of all. */
     private armFit;
     private rigFingers;
+    /** what's asked of hand i (fingers.ts HandAsk): each fingertip's target taken into hand space by `toC`, how much it
+     *  counts (the goal's weight, the finger's own coming in and going), and every number's rest — a finger with no target
+     *  rests as the rig's own fingers would (the keys' curve, a grip's, a loose hand's), one with a target drawn only
+     *  lightly toward a relaxed curl */
+    private askHand;
+    private fl;
+    private fl2;
+    /** the palm and fingers solved together for a goal whose palm is free (HandGoal.palmFree): the goal handed back with
+     *  the palm moved and turned as solved, for the arm to take (the fingers are solved again on the hand as the arm put
+     *  it: chordFingers) */
+    private chordPalm;
+    /** the fingers solved on the hand as the arm has put it (the palm held), and posed */
+    private chordFingers;
+    private mcq;
+    private static NO_TIPS;
+    /** a built hand's fingers with nothing to reach: every number at its rest (askHand's: the curl's cascade, a grip's
+     *  wrap, the keys'), within its limits, no solve; the arch with the grip (a fist's palm cups) */
+    private restFingers;
+    private fkP;
+    private fkU;
+    private fkK;
+    private fkZ;
     /** a finger's spread and joint angles (bind-space, about the hand's own axes) that put its tip on a world point: the
      *  spread turns it toward the point; the curl (end joints coupled to the middle one, 2/3) is solved for the reach by
      *  bisection, then the knuckle aims the tip at it */

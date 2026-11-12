@@ -36,6 +36,7 @@ import { MAX_BONES } from './asset.js';
 import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose, BodyModel, BodyState } from './body/solve.js';
+import { HandModel, HandSolve, handAsk, solveHand, hpOf, HP_ARCH, type HandAsk } from './fingers.js';
 
 type Fr = { o: V3; x: V3; y: V3; z: V3 };
 const frW = (f: Fr, l: V3): V3 => [f.o[0] + f.x[0] * l[0] + f.y[0] * l[1] + f.z[0] * l[2], f.o[1] + f.x[1] * l[0] + f.y[1] * l[1] + f.z[1] * l[2], f.o[2] + f.x[2] * l[0] + f.y[2] * l[1] + f.z[2] * l[2]];
@@ -90,7 +91,22 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   bear?: boolean;
   /** the arm's fit weighs the shoulder's turn (the humerus's) as well as the forearm's and the wrist's (the body's own
    *  poses: body/solve.ts) */
-  shoulder?: boolean }
+  shoulder?: boolean;
+  /** how free the palm is to move to its fingertips' targets (0, the default: where the goal puts it; 1: within the
+   *  wrist's and the arm's ease — a few cm, a few tens of degrees — as a pianist's hand moves and turns to a chord):
+   *  the hand's solve (fingers.ts) places the palm and the fingers together. Ignored when held `exact` */
+  palmFree?: number;
+  /** how much each fingertip's target counts (thumb first; default 1 each) */
+  tipW?: number[];
+  /** how square each finger comes down on its target (thumb first, 0..1: 1 its middle joint well bent and its end
+   *  joint with it, the tip meeting the string end-on — a guitarist's or a violinist's stop) */
+  square?: number[];
+  /** how flat each finger lies along what it presses (thumb first, 0..1: 1 its middle and end joints straight — a
+   *  guitar's barre, the index laid across every string; default 0) */
+  lay?: number[];
+  /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
+   *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
+  floor?: { at: V3; n: V3; clear: number } }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -809,6 +825,40 @@ export class HeroRig {
   private bodyArm: { tw: number[]; sw: (V3 | null)[]; swv: number[]; psi: number[]; tips: number[][]; fd: V3[] } | null = null;
   /** each finger's curl toward its target (smoothed: a finger presses quickly and lifts a touch slower) */
   private tipsW: number[][] = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]];
+  /** the hands as hands (fingers.ts: null for a body whose fingers aren't three bones each), their solves carried frame
+   *  to frame, what's asked of them, the palm's move as last solved */
+  /** the most iterations a hand's solve takes a frame: the palm's with its fingers, then the fingers' on the hand as
+   *  the arm put it (each stops once its fingertips are within 0.2 mm) */
+  static handIters: [number, number] = [8, 6];
+  /** a hand at keys (fingertip targets, nothing held): each finger's rest (index..little: MCP, PIP, DIP, rad) idle and
+   *  playing, the spreads, the thumb's (saddle flexion, abduction, MCP, IP) idle and playing — set so the hand's plan
+   *  extension (a fingertip's distance from its knuckle seen from above, over the finger's length), the fan and the
+   *  idle fingers' hover match real pianists' (World tools/hands/planstats.mjs against tracked footage) */
+  static keysHand = {
+    idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
+    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
+    fan: [0.08, 0.03, 0, -0.08],
+    // (the thumb as our hand's fits to overhead footage hold it: its saddle a little extended and turned away)
+    thumbIdle: [-0.28, -0.31, 0.23, 0.1], thumbTip: [-0.28, -0.31, 0.23, 0.1],
+    /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
+     *  per mm, so these shape the hand, not where the tips land) */
+    wTip: 3, wThumb: 6,
+  };
+  private handM: (HandModel | null)[] = [null, null];
+  private handS = [new HandSolve(), new HandSolve()];
+  private handQ: HandAsk[] = [handAsk(), handAsk()];
+  private palmX = [new Float64Array(6), new Float64Array(6)];
+  /** the hand as the palm's solve placed it this frame (wrist, its way, its palm's; [9] set when it's this frame's) */
+  private palmAt = [new Float64Array(10), new Float64Array(10)];
+  /** each hand's fingertips' misses as the palm's solve left them (before the arm took the palm) */
+  readonly palmMiss = [new Float64Array(5), new Float64Array(5)];
+  /** each hand's fingertips' misses after its solve (m; thumb first) and its iterations, for tools and tests */
+  handMiss(i: number): Float64Array { return this.handS[i].miss; }
+  handIters(i: number): number { return this.handS[i].iters; }
+  /** each hand's solved numbers (fingers.ts HAND_N: the palm's move, the arch, the fingers', the thumb's) */
+  handX(i: number): Float64Array { return this.handS[i].x; }
+  /** each hand's palm move as last solved (hand space: its move, m, and its turn's rotation vector) */
+  handPalm(i: number): Float64Array { return this.palmX[i]; }
   /** a foot touched down (footsteps), and the pedal under the right foot (0..1, at an instrument) */
   onPlant?: (foot: number, pos: V3, speed: number) => void;
   pedal = 0;
@@ -851,6 +901,7 @@ export class HeroRig {
       this.bind.push({ o: b.head, x, y: cross(z, x), z });
       this.len.push(len(sub(b.tail, b.head)));
     }
+    this.handM = [HandModel.of(asset, 'L'), HandModel.of(asset, 'R')];
     const g = (n: string) => this.B[this.bi[n]];
     this.sk = {
       pelvis: g('pelvis').head, waist: g('pelvis').tail, chestBase: g('chest').head, neckBase: g('neck').head, headBase: g('head').head, headTop: g('head').tail,
@@ -906,6 +957,7 @@ export class HeroRig {
     for (let i = 0; i < 2; i++) {
       this.gripV[i] = 0; this.curlV[i] = 0.2; this.palmV[i] = 0; this.elbAimW[i] = 0; this.twPrev[i] = 0; this.swPrev[i] = null; this.swVel[i] = 0; this.psi[i] = 0;
       this.tipsW[i].fill(0);
+      this.handS[i].ready = false; this.palmX[i].fill(0);
       this.armSw[i]?.reset([0, 0, 0]);
     }
     this.first = true;
@@ -948,6 +1000,8 @@ export class HeroRig {
       this.twPrev[i] = from.twPrev[i]; this.psi[i] = from.psi[i]; this.swVel[i] = from.swVel[i];
       this.swPrev[i] = from.swPrev[i] && v3(from.swPrev[i]!);
       this.tipsW[i] = [...from.tipsW[i]];
+      this.handS[i].x.set(from.handS[i].x); this.handS[i].ready = from.handS[i].ready;
+      for (let k = 0; k < 6; k++) this.palmX[i][k] = from.palmX[i][k] * (k < 3 ? r : 1);
       Object.assign(this.armStat[i], from.armStat[i]);
     }
     // (the face: where the eyes look, a blink under way, the expression)
@@ -1742,6 +1796,9 @@ export class HeroRig {
       const gw0 = seat ? sw * 1.4 - 0.4 : I.hold?.w[i] ?? 0;
       if (goal && gw0 > 0.001) {
         goalW = ease(clamp(gw0, 0, 1));
+        // (a hand free to move to its fingertips: the palm and the fingers solved together first, the arm then given
+        // the palm as solved)
+        if ((goal.palmFree ?? 0) > 0 && !goal.exact && this.handM[i] && goal.tips.some((t) => t)) goal = this.chordPalm(i, side, T, goal, goalW, dt);
         // (the wrist sits back from the palm's middle along the hand)
         const hl = this.len[this.bi['hand' + T]];
         const wristT = goal.knuckles ? sub(goal.knuckles, scale(goal.fwd, this.knuckleLen(T))) : sub(goal.palm, scale(goal.fwd, hl * 0.55));
@@ -2363,6 +2420,12 @@ export class HeroRig {
       this.setBone(th, this.skinPoint(hb, Th.head), this.skinPoint(hb, add(Th.head, tv2)), this.skinDir(hb, rej(tdir, norm(tv2))));
     }
     if (this.bi['index1' + t] === undefined) return;
+    // (fingertips with targets: the hand solved as a hand — fingers.ts)
+    if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, c, grip, holds, goal, goalW, dt); return; }
+    // (a built hand — its file's own hand, header.hand — with no fingertip to place: its fingers at their rests through
+    // the hand model, each finger bending about its own knuckle's axis; the older path below turns every finger about
+    // the hand's one axis, which a modelled hand's curved, fanned fingers don't survive)
+    if (this.asset.header.hand && this.handM[hi]) { this.restFingers(hi, c, grip, holds, goal, goalW, dt); return; }
     // per-joint fingers: a relaxed hand cascades (the index curls least, the pinky most), the end joints fairly
     // straight; at an instrument each finger with a target reaches it — its curl solved so the tip lands there (the
     // middle and end joints coupled as a hand's are), its spread turned toward it
@@ -2400,6 +2463,11 @@ export class HeroRig {
         p = n;
       }
     }
+    // (a built hand's ring and little metacarpals: held as at the bind, on the hand)
+    for (const n of ['ring0', 'pinky0']) {
+      const mi = this.bi[n + t];
+      if (mi !== undefined) { const MB = Bn[mi]; this.setBone(mi, this.skinPoint(hb, MB.head), this.skinPoint(hb, MB.tail), this.skinDir(hb, MB.up)); }
+    }
     const tid = [1, 2, 3].map((k) => this.bi['thumb' + k + t]);
     if (tid.some((x) => x === undefined)) return;
     const tq = [Bn[tid[0]].head, Bn[tid[0]].tail, Bn[tid[1]].tail, Bn[tid[2]].tail];
@@ -2430,6 +2498,179 @@ export class HeroRig {
       p = n;
     }
   }
+
+  /** what's asked of hand i (fingers.ts HandAsk): each fingertip's target taken into hand space by `toC`, how much it
+   *  counts (the goal's weight, the finger's own coming in and going), and every number's rest — a finger with no target
+   *  rests as the rig's own fingers would (the keys' curve, a grip's, a loose hand's), one with a target drawn only
+   *  lightly toward a relaxed curl */
+  private askHand(hi: number, c: number, grip: number, holds: boolean, goal: HandGoal, goalW: number, dt: number, toC: (w: V3, o: Float64Array, i: number) => void) {
+    const Q = this.handQ[hi], tw = this.tipsW[hi];
+    const CASCADE = [0, 0.04, 0.1, 0.16], REL = [-0.14, -0.02, 0.1, 0.2];
+    const rc = Math.max(0, c) * (1 - grip);
+    const keys = !holds && !goal.loose, K = HeroRig.keysHand, built = !!this.asset.header.hand;
+    const FAN = keys ? K.fan : [0.06, 0.02, -0.03, -0.08];
+    for (let f = 0; f < 5; f++) {
+      const tip = goal.tips[f] ?? null;
+      tw[f] = damp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
+      let k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0, rf = tip ? 1 : 0;
+      if (tip) {
+        toC(tip, Q.tgt, f * 3);
+        // (a target the finger can't get to from where the hand is — a flute's hole while the flute is still coming up
+        // — is let go: its pull fades from the finger's length to half again past it, and the finger keeps its own
+        // shape instead of straightening toward it. The palm's solve, when free, still sees where it's going)
+        const M = this.handM[hi];
+        if (M && !goal.palmFree) {
+          const b0 = Q.tgt[f * 3] - M.base[f * 3], b1 = Q.tgt[f * 3 + 1] - M.base[f * 3 + 1], b2 = Q.tgt[f * 3 + 2] - M.base[f * 3 + 2];
+          const d = Math.sqrt(b0 * b0 + b1 * b1 + b2 * b2), L = M.lens[f];
+          rf = 1 - smoothstep(1.05 * L, 1.5 * L, d);
+          k *= rf;
+        }
+      }
+      Q.w[f] = k;
+      const o = hpOf(f), wr = 0.3 + 0.9 * (1 - Math.min(1, k));
+      Q.resting[f] = tip ? 0 : 1;
+      if (f === 0) {
+        // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
+        const rt = keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2];
+        const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+          : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
+        // (a target let go: its rests the hand's own again, as far as it's let go)
+        for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : 0.6, rf); }
+        continue;
+      }
+      const g = f - 1;
+      let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
+      let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
+        -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
+      const tipAng = keys ? K.tip[g] : [0.4, 0.6, 0.42];
+      // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
+      // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
+      // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
+      if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
+      // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
+      // toward the little finger — where the older hands' rests were nearly straight)
+      else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
+      if (rf > 0) { ab = lerp(ab, FAN[g], rf); ang = ang.map((a, j) => lerp(a, tipAng[j], rf)); }
+      // (coming down square on its tip, as a guitarist's or a violinist's stopping finger does: the middle joint well
+      // bent, the end joint with it, drawn there firmly; the tip still lands where it's asked)
+      const sq = rf > 0 ? goal.square?.[f] ?? 0 : 0;
+      if (sq > 0) ang = ang.map((a, j) => lerp(a, [0.75, 1.35, 0.75][j], sq));
+      // (a spread held is an effort: drawn back harder than a bend)
+      Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
+      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, 1.5, sq) : wr; }
+      // (laid flat along what it presses: its middle and end joints straight)
+      const lay = goal.lay?.[f] ?? 0;
+      Q.lay[f] = lay;
+      if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
+    }
+    Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;
+    Q.clear = 0;
+    const F = goal.floor;
+    if (F && F.clear > 0) {
+      // (the surface into hand space: a point on it and one a metre out along its normal)
+      const a = this.fl, b = this.fl2;
+      toC(F.at, a, 0); toC(add(F.at, F.n), b, 0);
+      const n0 = b[0] - a[0], n1 = b[1] - a[1], n2 = b[2] - a[2], l = Math.hypot(n0, n1, n2) || 1;
+      Q.floor[0] = n0 / l; Q.floor[1] = n1 / l; Q.floor[2] = n2 / l; Q.floor[3] = (n0 * a[0] + n1 * a[1] + n2 * a[2]) / l;
+      Q.clear = F.clear;
+    }
+  }
+  private fl = new Float64Array(3); private fl2 = new Float64Array(3);
+
+  /** the palm and fingers solved together for a goal whose palm is free (HandGoal.palmFree): the goal handed back with
+   *  the palm moved and turned as solved, for the arm to take (the fingers are solved again on the hand as the arm put
+   *  it: chordFingers) */
+  private chordPalm(i: number, side: number, T: string, goal: HandGoal, goalW: number, dt: number): HandGoal {
+    const M = this.handM[i]!, S = this.handS[i], Q = this.handQ[i];
+    // (the goal's own frame: its roll is the solve's to choose now, not the arm's turn — the hand is handed back held
+    // exactly as solved)
+    const h = norm(goal.fwd), p = norm(rej(goal.down, h)), t = norm(scale(cross(p, h), side));
+    const hl = this.len[this.bi['hand' + T]], kl = this.knuckleLen(T);
+    const wrist = goal.knuckles ? sub(goal.knuckles, scale(goal.fwd, kl)) : sub(goal.palm, scale(goal.fwd, hl * 0.55));
+    this.askHand(i, clamp(goal.curl ?? 0.55, -0.3, 1.2), 0, goal.grip !== undefined, goal, goalW, 0, (w, o, j) => {
+      const d0 = w[0] - wrist[0], d1 = w[1] - wrist[1], d2 = w[2] - wrist[2];
+      o[j] = d0 * h[0] + d1 * h[1] + d2 * h[2]; o[j + 1] = d0 * t[0] + d1 * t[1] + d2 * t[2]; o[j + 2] = d0 * p[0] + d1 * p[1] + d2 * p[2];
+    });
+    // (the fingers' weights came in above at this frame's rate: chordFingers steps them)
+    void dt;
+    Q.free = clamp(goal.palmFree ?? 0, 0, 1) * goalW;
+    S.x.set(this.palmX[i], 0);
+    solveHand(M, S, Q, HeroRig.handIters[0]);
+    this.palmX[i].set(S.x.subarray(0, 6));
+    this.palmMiss[i].set(S.miss);
+    const x = S.x, a = Math.hypot(x[3], x[4], x[5]);
+    const W = (c0: number, c1: number, c2: number): V3 => [h[0] * c0 + t[0] * c1 + p[0] * c2, h[1] * c0 + t[1] * c1 + p[1] * c2, h[2] * c0 + t[2] * c1 + p[2] * c2];
+    const turn = (v: V3): V3 => (a < 1e-9 ? v : rotateAxis(v, [x[3] / a, x[4] / a, x[5] / a], a));
+    const h2 = W(...turn([1, 0, 0])), p2 = W(...turn([0, 0, 1]));
+    const w2 = add(wrist, W(x[0], x[1], x[2]));
+    // (where the hand is to be, so the fingers' second solve can be skipped when the arm put it there)
+    const E = this.palmAt[i]; E.set(w2, 0); E.set(h2, 3); E.set(p2, 6); E[9] = 1;
+    return { ...goal, palm: add(w2, scale(h2, hl * 0.55)), knuckles: goal.knuckles ? add(w2, scale(h2, kl)) : undefined, fwd: h2, down: p2, exact: true, turn: 0 };
+  }
+
+  /** the fingers solved on the hand as the arm has put it (the palm held), and posed */
+  private chordFingers(hi: number, side: number, c: number, grip: number, holds: boolean, goal: HandGoal, goalW: number, dt: number) {
+    const M = this.handM[hi]!, S = this.handS[hi], Q = this.handQ[hi], m = this.bones, k = M.hb * 16;
+    const wb = M.wrist, X = M.X, Y = M.Y, Z = M.Z;
+    void side;
+    this.askHand(hi, c, grip, holds, goal, goalW, dt, (w, o, j) => {
+      // (the world point into the hand bone's bind space, then hand space)
+      const e0 = w[0] - m[k + 12], e1 = w[1] - m[k + 13], e2 = w[2] - m[k + 14];
+      const b0 = m[k] * e0 + m[k + 1] * e1 + m[k + 2] * e2 - wb[0], b1 = m[k + 4] * e0 + m[k + 5] * e1 + m[k + 6] * e2 - wb[1], b2 = m[k + 8] * e0 + m[k + 9] * e1 + m[k + 10] * e2 - wb[2];
+      o[j] = b0 * X[0] + b1 * X[1] + b2 * X[2]; o[j + 1] = b0 * Y[0] + b1 * Y[1] + b2 * Y[2]; o[j + 2] = b0 * Z[0] + b1 * Z[1] + b2 * Z[2];
+    });
+    Q.free = 0;
+    for (let j = 0; j < 6; j++) S.x[j] = 0;
+    // (the arm put the hand where the palm's solve asked, within a tenth of a millimetre and a few hundredths of a
+    // degree: the fingers as solved there stand; else solved again on the hand as it is)
+    const E = this.palmAt[hi], wb2 = this.skinPoint(M.hb, M.wrist), hx = this.skinDir(M.hb, X), pz = this.skinDir(M.hb, Z);
+    const there = E[9] === 1 && Math.hypot(wb2[0] - E[0], wb2[1] - E[1], wb2[2] - E[2]) < 1e-4 && hx[0] * E[3] + hx[1] * E[4] + hx[2] * E[5] > 0.9999995 && pz[0] * E[6] + pz[1] * E[7] + pz[2] * E[8] > 0.9999995;
+    E[9] = 0;
+    if (!there) solveHand(M, S, Q, HeroRig.handIters[1]);
+    const P = new Float64Array(12), U = new Float64Array(9), K = new Float64Array(3), Zf = new Float64Array(3);
+    const hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
+    for (let f = 0; f < 5; f++) {
+      M.fk(S.x, f, P, U, K, Zf);
+      for (let j = 0; j < 3; j++) {
+        M.bindOf(P, j * 3, hp); M.bindOf(P, j * 3 + 3, tp); M.bindOf(U, j * 3, up, true);
+        this.setBone(M.bones[f][j], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
+      }
+      // (the ring and little metacarpals, where the body has them, turned with the palm's arch)
+      if (M.mc[f] >= 0) {
+        const q = this.mcq;
+        M.mcPose(S.x, f, q);
+        M.bindOf(q, 0, hp); M.bindOf(q, 3, tp); M.bindOf(q, 6, up, true);
+        this.setBone(M.mc[f], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
+      }
+    }
+  }
+  private mcq = new Float64Array(9);
+  private static NO_TIPS: HandGoal = { palm: [0, 0, 0], fwd: [0, 0, 1], down: [0, -1, 0], tips: [null, null, null, null, null], loose: true };
+  /** a built hand's fingers with nothing to reach: every number at its rest (askHand's: the curl's cascade, a grip's
+   *  wrap, the keys'), within its limits, no solve; the arch with the grip (a fist's palm cups) */
+  private restFingers(hi: number, c: number, grip: number, holds: boolean, goal: HandGoal | null, goalW: number, dt: number) {
+    const M = this.handM[hi]!, S = this.handS[hi], Q = this.handQ[hi], x = S.x;
+    this.askHand(hi, c, grip, holds, goal ?? HeroRig.NO_TIPS, goal ? goalW : 0, dt, () => { /* no targets */ });
+    for (let i = 0; i < 6; i++) x[i] = 0;
+    for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
+    x[HP_ARCH] = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1));
+    S.ready = true;
+    const P = this.fkP, U = this.fkU, K = this.fkK, Zf = this.fkZ, hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
+    for (let f = 0; f < 5; f++) {
+      M.fk(x, f, P, U, K, Zf);
+      for (let j = 0; j < 3; j++) {
+        M.bindOf(P, j * 3, hp); M.bindOf(P, j * 3 + 3, tp); M.bindOf(U, j * 3, up, true);
+        this.setBone(M.bones[f][j], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
+      }
+      if (M.mc[f] >= 0) {
+        const q = this.mcq;
+        M.mcPose(x, f, q);
+        M.bindOf(q, 0, hp); M.bindOf(q, 3, tp); M.bindOf(q, 6, up, true);
+        this.setBone(M.mc[f], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
+      }
+    }
+  }
+  private fkP = new Float64Array(12); private fkU = new Float64Array(9); private fkK = new Float64Array(3); private fkZ = new Float64Array(3);
 
   /** a finger's spread and joint angles (bind-space, about the hand's own axes) that put its tip on a world point: the
    *  spread turns it toward the point; the curl (end joints coupled to the middle one, 2/3) is solved for the reach by

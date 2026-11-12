@@ -94,6 +94,33 @@ export declare const JOINTS: {
     readonly dip: {
         readonly flex: Dof;
     };
+    readonly cmc: {
+        readonly flex: Dof;
+        readonly abd: Dof;
+    };
+    readonly thumbMcp: {
+        readonly flex: Dof;
+    };
+    readonly thumbIp: {
+        readonly flex: Dof;
+    };
+};
+/** how far each finger's knuckle spreads (MCP abduction, + toward the thumb; radians, from the bind's straight fingers,
+ *  index to little): the index and the little finger have their own abductors and spread furthest, the middle least;
+ *  and how far two neighbours can part (their spreads' difference: the web between them — index–middle ~30°,
+ *  middle–ring ~20°, ring–little ~30°) — a hand spread wide is ~75° index to little (AAOS; Kapandji, The Physiology of
+ *  the Joints I) */
+export declare const SPREAD: {
+    abd: [number, number][];
+    web: number[];
+};
+/** the fingers' enslaving (Zatsiorsky, Li & Latash 2000; Häger-Ross & Schieber 2000): one finger's knuckle bending
+ *  drags its neighbours some way (the ring finger most: it shares the middle's and the little's tendons), and how far
+ *  apart in bend two neighbours can be held (rad: index–middle, middle–ring, ring–little) — the ring finger lifts
+ *  ~30° clear of its neighbours held down, not more */
+export declare const ENSLAVE: {
+    drag: number[];
+    apart: number[];
 };
 export type JointName = keyof typeof JOINTS;
 /** where a humerus can point (on the thorax, the body's left side; x out, y up, z forward): within 140° of this axis —
