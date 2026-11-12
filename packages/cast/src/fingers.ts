@@ -36,8 +36,17 @@ export const hpOf = (f: number) => (f === 0 ? 23 : 7 + 4 * (f - 1));
 const FN = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 /** the arch: how far the ring and little metacarpals bend palmward (rad) and turn toward the thumb, per unit of it */
 const ARCH_B = [0, 0, 0, 0.12, 0.26], ARCH_G = [0, 0, 0, 0.1, 0.22];
-/** the thumb's metacarpal turned (pronated) with its saddle's flexion and abduction (rad per rad) */
-const PRON_F = 0.55, PRON_A = 0.35;
+/** the thumb's metacarpal turned (pronated: the pad coming round to face the fingers) with its saddle's flexion across
+ *  the palm and its abduction out of it (rad per rad; a fifth as much the other way, as it extends or adducts). The
+ *  saddle's flexion here turns the metacarpal about the palm's normal, which by itself swings the pad to face the
+ *  wrist; so the turn that keeps it facing the fingers and brings it round to them is large: at the tip-to-tip
+ *  opposition with the little finger the pad has turned ~100° from the rest, and the thumb's tip reaches the little
+ *  finger's creases (Kapandji's test: 8 of 10, the last two within 3-6 mm; World tools/hands/kapandji.mjs). It was
+ *  0.55 and 0.35, ~36° at full opposition: the pint's thumb lay along the glass, the pick's and the stem's ended on
+ *  the fingers' side. */
+const PRON_F = 2.0, PRON_A = 0.8, PRON_NEG = 0.2;
+/** the saddle's turn for its flexion cf and abduction ca (rad) */
+export const thumbPron = (cf: number, ca: number) => (cf > 0 ? PRON_F : PRON_F * PRON_NEG) * cf + (ca > 0 ? PRON_A : PRON_A * PRON_NEG) * ca;
 /** the end joint's share of the middle's bend (its tendon) */
 export const DIP_K = 0.7;
 
@@ -206,7 +215,7 @@ export class HandModel {
       turnAll(v, U ? u : null, q, 0, 0, -1, cf);
       const l0 = len3(v[0], v[1], v[2]);
       m[0] = v[0] / l0; m[1] = v[1] / l0; m[2] = v[2] / l0;
-      turnAll(v, U ? u : null, q, m[0], m[1], m[2], PRON_F * cf + PRON_A * ca);
+      turnAll(v, U ? u : null, q, m[0], m[1], m[2], thumbPron(cf, ca));
       // the MCP and the IP hinge toward the pad
       let kx = v[1] * q[2] - v[2] * q[1], ky = v[2] * q[0] - v[0] * q[2], kz = v[0] * q[1] - v[1] * q[0];
       const kl = len3(kx, ky, kz) || 1; kx /= kl; ky /= kl; kz /= kl;
