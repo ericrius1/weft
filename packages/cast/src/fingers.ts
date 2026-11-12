@@ -322,7 +322,9 @@ export interface HandAsk {
    *  over the neck's middle (0-2), the neck's way (3-5), out of the fingerboard (6-8), across it (9-11), the board's half
    *  width (12), the neck's depth under it (13), the air the palm's skin keeps from the wood (14), the clearance of the
    *  knuckles' and joints' centres (15: a finger's half thickness, so the skin just touches), its weight (16; 0: none),
-   *  how firmly the index's knuckle is drawn onto the wood (17: the neck in the web between thumb and index).
+   *  how firmly the index's knuckle is drawn onto the wood (17: the neck in the web between thumb and index), and where
+   *  along the index's base bone that rest acts (18: 0 its knuckle, 1 its middle joint; a violinist's neck lies against
+   *  the side of the bone's base, the knuckle below the board, the bone rising beside the neck: optional, 0).
    *  The palm's skin, the knuckles and the fingers' and thumb's joints are kept off the wood (optional: absent, none) */
   neck?: Float64Array;
 }
@@ -688,7 +690,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
         const s = at(P, pb, R, x);
         // (the index's knuckle rests against the wood — the neck in the web between the thumb and the index — as far as
         // NK[17] asks; every other joint only kept off it)
-        const rest = f === 1 && jj === 0 ? NK[17] : 0, rs = NK[15] + 0.003;
+        const rest = f === 1 && jj === 0 && !(NK[18] > 0) ? NK[17] : 0, rs = NK[15] + 0.003;
         // (a finger laid flat — a barre — lies on the strings by its joints: only its knuckle is kept off the wood)
         if (jj > 0 && Q.lay[f] > 0.5) continue;
         if (s >= NK[15] && !(rest > 0 && s > rs)) continue;
@@ -704,6 +706,31 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
           GR[c] = gk * (at(fq, 0, Rq, xt) - s) / 1e-5;
         }
         accRow(H, g, r, C);
+      }
+    }
+    // (the index's base drawn onto the wood at a point along its base bone, NK[18] of the way to its middle joint: the
+    // bone, not the knuckle, lies against the neck's side)
+    const ua = NK.length > 18 ? NK[18] : 0;
+    if (ua > 0 && NK[17] > 0) {
+      const C = COLS[free][1], rs = NK[15] + 0.003, ub = 1 - ua;
+      const at = (PP: Float64Array, o: number, RR: Float64Array, xx: Float64Array) => {
+        const l0 = PP[o] * ub + PP[o + 3] * ua, l1 = PP[o + 1] * ub + PP[o + 4] * ua, l2 = PP[o + 2] * ub + PP[o + 5] * ua;
+        return sdAt(xx[0] + RR[0] * l0 + RR[1] * l1 + RR[2] * l2, xx[1] + RR[3] * l0 + RR[4] * l1 + RR[5] * l2, xx[2] + RR[6] * l0 + RR[7] * l1 + RR[8] * l2);
+      };
+      const s = at(P, 12, R, x);
+      if (s > rs) {
+        const wr = -wN * NK[17], r = wr * (s - rs);
+        cost += r * r;
+        if (jac) {
+          for (let a = 0; a < C.length; a++) {
+            const c = C[a];
+            xt.set(x); xt[c] += 1e-5;
+            M.fk(xt, 1, fq, null, S.fK, S.fZ);
+            rotM(xt[3], xt[4], xt[5], Rq);
+            GR[c] = wr * (at(fq, 0, Rq, xt) - s) / 1e-5;
+          }
+          accRow(H, g, r, C);
+        }
       }
     }
   }
