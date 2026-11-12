@@ -34,10 +34,10 @@ export const BOW: { readonly spread: readonly number[] } = Object.freeze({ sprea
  *  0.6.1's 13/53/32, 41/69/30, 58/56/21, 66/40/14 came from MediaPipe's points on hands seen along the stick, which
  *  zig-zag round a frog, and no stick could be placed that all four reached at once) */
 export const BOWREST: readonly (readonly number[])[] = Object.freeze([[60, 108, 2], [73, 94, 15], [82, 91, 10], [88, 97, 16]].map((r) => Object.freeze(r.map((d) => (d * Math.PI) / 180))));
-/** the bow's stick in the hand (hand space at a 5.38 cm knuckle span: its axis toward the tip, and its point nearest the
- *  hand's origin) as the fits put it, and where it crosses each finger (fingers.ts sample points: the index at its end
+/** the bow's stick in the hand (hand space at a 5.38 cm knuckle span: its axis toward the tip, and its point over the
+ *  hair's end at the frog — the held shape's centre, so a caller places the grasp there) as the fits put it, and where it crosses each finger (fingers.ts sample points: the index at its end
  *  joint, the middle and ring along their end bones a third and five eighths of the way, the little finger's tip on top) */
-export const BOWSTICK = Object.freeze({ a: Object.freeze([0.783, 0.453, 0.427]), c: Object.freeze([0.0093, -0.022, 0.0063]), on: Object.freeze([2, 21, 22, 3]), arch: 0.25 });
+export const BOWSTICK = Object.freeze({ a: Object.freeze([0.783, 0.453, 0.427]), c: Object.freeze([0.0732, 0.015, 0.0411]), on: Object.freeze([2, 21, 22, 3]), arch: 0.25 });
 /** a grasp solved: the hand's numbers (fingers.ts, palm's move 0), the held shape in hand space, and how well it holds:
  *  per finger (thumb first) the worst miss of the pads that should touch (m; 0 none asked), the deepest any skin goes
  *  into the shape (m, < 0 clear), the thumb's opposition (cos of the angle about the shape between the thumb's pad and
