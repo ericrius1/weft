@@ -942,6 +942,8 @@ export class HeroRig {
     air: 0.012, joint: 0.009,
   };
   private handM: (HandModel | null)[] = [null, null];
+  /** each hand's share of a key surface's clearance, eased (see askHand) */
+  private clearV = [0, 0];
   private handS = [new HandSolve(), new HandSolve()];
   private handQ: HandAsk[] = [handAsk(), handAsk()];
   private palmX = [new Float64Array(6), new Float64Array(6)];
@@ -2757,8 +2759,13 @@ export class HeroRig {
       // knuckle rises from the surface to 3 cm over it)
       const M = this.handM[hi], kb = M ? 3 * 2 : -1;
       const hk = M ? Q.floor[0] * M.base[kb] + Q.floor[1] * M.base[kb + 1] + Q.floor[2] * M.base[kb + 2] - Q.floor[3] : 1;
+      // (and eased in time: read off the hand as last solved, it fed back on itself — the clearance on lifted the knuckles,
+      // off let them down — and the count-in's arch swung 9 to -5 deg and back every frame)
       const fade = clamp(hk / 0.03, 0, 1);
-      Q.clear = F.clear * fade * fade * (3 - 2 * fade);
+      // (off at once, on eased: asked of knuckles still under the keys the fingers flail)
+      this.clearV[hi] = this.first || fade < this.clearV[hi] ? fade : damp(this.clearV[hi], fade, 6, dt);
+      const fv = this.clearV[hi];
+      Q.clear = F.clear * fv * fv * (3 - 2 * fv);
     }
     // (a neck held: its line, ways and measures into hand space)
     const NG = goal.neck;
@@ -2800,13 +2807,16 @@ export class HeroRig {
    *  middle joint eased by keysHand.lever, the end joint with the middle (its tendon) */
   private leverRest(hi: number, goal: HandGoal, j: number): number {
     const K = HeroRig.keysHand, L = K.lever, x = this.handS[hi].x;
+    // (each finger counted as it comes to be playing, by its weight: counted from half weight in one frame, a neighbour
+    // coming in or going out moved every idle finger's rest at once — 10-15 deg a frame at their knuckles)
     let n = 0, m = 0, p = 0;
-    for (let f = 1; f <= 4; f++) if (goal.tips[f] && tipWOf(goal, f) >= 0.5 && this.handS[hi].ready) { const o = hpOf(f); m += x[o + 1]; p += x[o + 2]; n++; }
+    for (let f = 1; f <= 4; f++) if (goal.tips[f] && this.handS[hi].ready) { const k = smoothstep(0.3, 0.8, tipWOf(goal, f)), o = hpOf(f); m += k * x[o + 1]; p += k * x[o + 2]; n += k; }
     // (no finger playing — the hand resting over the keys — the lever's own rest, L.rest)
-    if (!n) return j === 0 ? L.rest[0] : j === 1 ? L.rest[1] : L.rest[1] * L.dip;
+    const r0 = j === 0 ? L.rest[0] : j === 1 ? L.rest[1] : L.rest[1] * L.dip;
+    if (n < 1e-6) return r0;
     const mcp = m / n, pip = p / n;
     const pp = clamp(pip - L.pip, L.band[0], L.band[1]);
-    return j === 0 ? clamp(mcp - L.mcp, L.mcpBand[0], L.mcpBand[1]) : j === 1 ? pp : pp * L.dip;
+    return lerp(r0, j === 0 ? clamp(mcp - L.mcp, L.mcpBand[0], L.mcpBand[1]) : j === 1 ? pp : pp * L.dip, Math.min(1, n));
   }
 
   /** the palm and fingers solved together for a goal whose palm is free (HandGoal.palmFree): the goal handed back with
