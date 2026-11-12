@@ -75,14 +75,28 @@ interface FSpec {
   /** solved at all (else held at its rest) */
   solve?: boolean;
 }
-interface Plan { held: Held; arch: number; f: FSpec[]; /** the thumb opposes this finger's point (f, point) */ oppose?: [number, number] }
+interface Plan { held: Held; arch: number; f: FSpec[]; /** the thumb opposes this finger's point (f, point) */ oppose?: [number, number];
+  /** the way the shape is moved off the palm until the thumb's base clears it */
+  lift?: V3 }
 
-const W_PEN = 4, W_ON = 1.2, W_REST = 6, W_DIP = 10;
+const W_PEN = 4, W_ON = 3, W_REST = 6, W_DIP = 10;
 
 /** solve one grasp: the hand's numbers that hold `kind` of `size` (hand M) */
 export function grasp(M: HandModel, kind: GraspKind, size: GraspSize = {}): Grasp {
   const sc = M.width / SPAN;
   const P = plan(M, kind, size, sc);
+  // (the thumb's metacarpal — the ball of the thumb — stands out of the palm: a thing laid across the palm sits on it,
+  // the palm's hollow behind; the shape lifted off the palm until the thumb's base, swung a little out, clears it)
+  if (P.lift) {
+    const q = restPts(M, 0, P.f[0], P.arch);
+    for (let it = 0; it < 4; it++) {
+      let pen = 0;
+      for (const i of [1, 2, 3, 5, 6]) pen = Math.max(pen, PAD[0][i === 1 ? 1 : 2] * sc - heldSd(P.held, pt(q, i)));
+      if (pen <= 1e-5) break;
+      P.held.c = add(P.held.c, scale(P.lift, pen));
+      for (const F of P.f) if (F.tgt) F.tgt = add(F.tgt, scale(P.lift, pen));
+    }
+  }
   const x = new Float64Array(HAND_N);
   x[HP_ARCH] = Math.min(M.hi[HP_ARCH], Math.max(M.lo[HP_ARCH], P.arch));
   // (every finger at its rest first: the thumb is solved last, against the fingers as they lie)
@@ -96,7 +110,19 @@ export function grasp(M: HandModel, kind: GraspKind, size: GraspSize = {}): Gras
       const ap = axisPt(P.held, pt), dir = norm(sub(pt, ap));
       P.f[0].tgt = sub(ap, scale(dir, P.held.r + PAD[0][2] * sc));
     }
-    if (P.f[f].solve !== false) iters += S.solve(x, f);
+    if (P.f[f].solve === false) continue;
+    // (from a few starts — its rest, opened, closed; the thumb also swung out of the palm and across it — the best
+    // kept: a contact solve has more than one valley, a thumb under the thing or round it)
+    const o = hpOf(f), n = f === 0 ? 4 : 3, i0 = f === 0 ? o : o + 1, r = x.slice(i0, i0 + n);
+    const starts = f === 0 ? [[...r], ...S.grid(x, f, i0, 3)] : [[...r], r.map((v) => v * 0.4), r.map((v) => v + 0.35)];
+    let best = Infinity, bx = r;
+    for (const st of starts) {
+      for (let k = 0; k < n; k++) x[i0 + k] = Math.min(M.hi[i0 + k], Math.max(M.lo[i0 + k], st[k]));
+      const s = S.solve(x, f);
+      iters += s.it;
+      if (s.cost < best - 1e-9) { best = s.cost; bx = x.slice(i0, i0 + n); }
+    }
+    x.set(bx, i0);
   }
   for (let i = 6; i < HAND_N; i++) x[i] = q30(x[i]);
   // (how it holds)
@@ -105,9 +131,9 @@ export function grasp(M: HandModel, kind: GraspKind, size: GraspSize = {}): Gras
   for (let f = 0; f < 5; f++) {
     const q = S.pts(x, f), F = P.f[f];
     touch.push(F.on ?? []);
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 13; i++) {
       const p = [q[i * 3], q[i * 3 + 1], q[i * 3 + 2]], s = heldSd(P.held, p) - S.pad(f, i);
-      if (!(f > 0 && i === 0)) into = Math.max(into, -s);
+      if (!(i === 0 || (f === 0 && (i === 4 || i === 7 || i === 8)))) into = Math.max(into, -s);
       if (F.on?.includes(i)) miss[f] = Math.max(miss[f], Math.abs(s - (F.gap ?? 0)));
       if (S.palmTest(f, i)) palmInto = Math.max(palmInto, -(S.palmSd(p) - S.pad(f, i)));
     }
@@ -138,18 +164,21 @@ function setRest(M: HandModel, x: Float64Array, f: number, F: FSpec) {
 /** a finger's points and the residuals of its ask; a small Levenberg–Marquardt over its own numbers */
 class Ctx {
   private Pk = new Float64Array(12); private K = new Float64Array(3); private Zf = new Float64Array(3);
-  private q = new Float64Array(21);
+  private q = new Float64Array(39);
   private palmX: number;
   constructor(readonly M: HandModel, readonly P: Plan, readonly sc: number) {
     this.palmX = Math.min(M.base[3], M.base[6], M.base[9], M.base[12]) - 0.004 * sc;
   }
-  pad(f: number, i: number) { const r = PAD[f]; return (i < 4 ? (i === 0 ? r[0] : i === 3 ? r[2] * 0.85 : Math.min(r[i - 1], r[i])) : r[i - 4]) * this.sc; }
-  /** finger f's seven points under x (hand space) */
+  pad(f: number, i: number) { const r = PAD[f]; return (i < 4 ? (i === 0 ? r[0] : i === 3 ? r[2] * 0.85 : Math.min(r[i - 1], r[i])) : i < 7 ? r[i - 4] : r[(i - 7) >> 1]) * this.sc; }
+  /** finger f's points under x (hand space): 0-3 its joints, 4-6 its bones' middles, 7-12 their quarters */
   pts(x: ArrayLike<number>, f: number): Float64Array {
     const Pk = this.Pk, q = this.q;
     this.M.fk(x, f, Pk, null, this.K, this.Zf);
     q.set(Pk, 0);
-    for (let j = 0; j < 3; j++) for (let c = 0; c < 3; c++) q[12 + j * 3 + c] = (Pk[j * 3 + c] + Pk[j * 3 + 3 + c]) / 2;
+    for (let j = 0; j < 3; j++) for (let c = 0; c < 3; c++) {
+      const a = Pk[j * 3 + c], b = Pk[j * 3 + 3 + c];
+      q[12 + j * 3 + c] = (a + b) / 2; q[21 + j * 6 + c] = a * 0.75 + b * 0.25; q[24 + j * 6 + c] = a * 0.25 + b * 0.75;
+    }
     return q;
   }
   /** the palm as a box (hand space): from the wrist to just short of the knuckles, its skin out of the palm */
@@ -164,17 +193,20 @@ class Ctx {
   palmTest(f: number, i: number) { return f === 0 ? i === 3 || i === 6 : i === 2 || i === 3 || i === 5 || i === 6; }
   private other: Float64Array[] = [];
   /** residuals of finger f's ask under x */
-  res(x: Float64Array, f: number, out: number[]) {
+  res(x: Float64Array, f: number, out: number[], tag?: string[]) {
     out.length = 0;
+    const T = (t: string) => { if (tag) while (tag.length < out.length) tag.push(t); };
     const F = this.P.f[f], H = this.P.held, q = this.pts(x, f), mm = 1000;
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 13; i++) {
       if (f > 0 && i === 0) continue;
-      if (f === 0 && (i === 0 || i === 4)) continue;
+      if (f === 0 && (i === 0 || i === 4 || i === 7 || i === 8)) continue;
       const p = [q[i * 3], q[i * 3 + 1], q[i * 3 + 2]], pd = this.pad(f, i);
       const s = heldSd(H, p) - pd;
       if (F.on?.includes(i)) out.push(W_ON * (s - (F.gap ?? 0)) * mm);
+      T('on' + i);
       out.push(s < 0 ? W_PEN * s * mm : 0);
-      if (this.palmTest(f, i)) { const sp = this.palmSd(p) - pd; out.push(sp < 0 ? W_PEN * sp * mm : 0); }
+      T('pen' + i);
+      if (this.palmTest(f, i)) { const sp = this.palmSd(p) - pd; out.push(sp < 0 ? W_PEN * sp * mm : 0); T('palm' + i); }
       // (the thumb kept off the fingers: a breadth apart)
       if (f === 0 && i >= 2) {
         for (const Q of this.other) for (let j = 0; j < 7; j++) {
@@ -182,11 +214,12 @@ class Ctx {
           const s2 = Math.sqrt(d0 * d0 + d1 * d1 + d2 * d2) - pd - 0.007 * this.sc;
           out.push(s2 < 0 ? W_PEN * s2 * mm : 0);
         }
+        T('fing' + i);
       }
     }
-    if (F.tgt) { const at = F.at ?? 3, w = F.tgtW ?? 0.5; for (let c = 0; c < 3; c++) out.push(w * (q[at * 3 + c] - F.tgt[c]) * mm); }
+    if (F.tgt) { const at = F.at ?? 3, w = F.tgtW ?? 0.5; for (let c = 0; c < 3; c++) out.push(w * (q[at * 3 + c] - F.tgt[c]) * mm); T('tgt'); }
     const o = hpOf(f), rw = (F.restW ?? 0.15) * W_REST;
-    if (f === 0) for (let j = 0; j < 4; j++) out.push(rw * (x[o + j] - F.rest[j]));
+    if (f === 0) { for (let j = 0; j < 4; j++) out.push(rw * (x[o + j] - F.rest[j])); T('rest'); }
     else {
       for (let j = 0; j < 3; j++) out.push(rw * (x[o + 1 + j] - F.rest[j]));
       out.push(W_DIP * (x[o + 3] - 0.7 * x[o + 2]));
@@ -194,7 +227,24 @@ class Ctx {
       for (let j = 1; j <= 3; j++) { const v = x[o + j], hi = this.M.okHi[o + j] * 1.5; out.push(v > hi ? 8 * (v - hi) : 0); }
     }
   }
-  solve(x: Float64Array, f: number): number {
+  /** the best few of a coarse grid over the thumb's four numbers (its saddle swings far: a local solve alone can stay
+   *  under the thing when it should come round it) */
+  grid(x: Float64Array, f: number, i0: number, k: number): number[][] {
+    const M = this.M, r: number[] = [], out: { c: number; v: number[] }[] = [];
+    const at = (i: number, t: number) => M.lo[i] + (M.hi[i] - M.lo[i]) * t;
+    const keep = x.slice(i0, i0 + 4);
+    for (const a of [0.1, 0.35, 0.6, 0.85]) for (const b of [0.1, 0.35, 0.6, 0.9]) for (const c of [0.2, 0.55]) for (const d of [0.25, 0.6]) {
+      const v = [at(i0, a), at(i0 + 1, b), at(i0 + 2, c), at(i0 + 3, d)];
+      x.set(v, i0);
+      this.res(x, f, r);
+      let cost = 0; for (const e of r) cost += e * e;
+      out.push({ c: cost, v });
+    }
+    x.set(keep, i0);
+    out.sort((p, q) => p.c - q.c);
+    return out.slice(0, k).map((o) => o.v);
+  }
+  solve(x: Float64Array, f: number): { it: number; cost: number } {
     const M = this.M, o = hpOf(f), ids = f === 0 ? [o, o + 1, o + 2, o + 3] : [o + 1, o + 2, o + 3];
     if (f === 0) { this.other = []; for (const g of [1, 2]) this.other.push(this.pts(x, g).slice()); }
     const n = ids.length, r0: number[] = [], r1: number[] = [];
@@ -223,12 +273,12 @@ class Ctx {
         for (let k = 0; k < n; k++) x[ids[k]] = Math.min(M.hi[ids[k]], Math.max(M.lo[ids[k]], x[ids[k]] + d[k]));
         this.res(x, f, r1);
         const c1 = cost(r1);
-        if (c1 < c0) { ok = true; lam = Math.max(1e-6, lam * 0.3); const done = c0 - c1 < 1e-6 * (1 + c0); c0 = c1; r0.splice(0, r0.length, ...r1); if (done) return it + 1; }
+        if (c1 < c0) { ok = true; lam = Math.max(1e-6, lam * 0.3); const done = c0 - c1 < 1e-6 * (1 + c0); c0 = c1; r0.splice(0, r0.length, ...r1); if (done) return { it: it + 1, cost: c0 }; }
         else { for (let k = 0; k < n; k++) x[ids[k]] = old[k]; lam *= 10; }
       }
       if (!ok) break;
     }
-    return it;
+    return { it, cost: c0 };
   }
 }
 /** a small dense solve (Gaussian elimination, partial pivots) */
@@ -278,14 +328,19 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       const r = size.r ?? (kind === 'wrap' ? 0.035 : kind === 'clasp' ? 0.012 : 0.016);
       const tilt = kind === 'wrap' ? 0.18 : kind === 'clasp' ? 0.3 : 0.5;
       const a = norm([Math.sin(tilt), Math.cos(tilt), 0]);
-      // (the contact line: mid-palm for a handle, further out toward the knuckles as the thing grows)
+      // (the contact line: across the distal palm, just short of the knuckles — the fingers wrap from there, and the thumb's
+      // base has room to come up the near side)
       const kx = (K(1)[0] + K(2)[0] + K(3)[0]) / 3;
-      const x0 = kx - (0.006 + 0.3 * Math.max(0, r - 0.02)) * sc, y0 = K(2)[1];
+      const x0 = kx - 0.006 * sc, y0 = K(2)[1];
       const held: Held = { c: [x0, y0, zs + r], a, r, h: (len ?? (kind === 'clasp' ? 0.08 : 0.2)) / 2 };
       const f = fingers([0.7, 0.9, 0.6], [4, 5, 6], kind === 'wrap' ? [0.03, 0, -0.03, -0.08] : [0, 0, -0.02, -0.05]);
       // (the thumb round the other way: its pad on the far side, across from the fingers)
-      const far = add(held.c, scale(norm([-0.35, 0, 1]), r + PAD[0][2] * sc));
-      const th: FSpec = { rest: [0.35, 0.25, 0.35, 0.3], restW: 0.06, on: [6], tgt: add(far, scale(a, 0.012 * sc)), tgtW: 0.35, at: 3 };
+      // (the thumb's pad on the near side of the thing from the wrist, over the index: round a glass the thumb lies up its
+      // side, the fingers round its front; round a handle it comes over to the fingers. Our thumb's saddle turns its pad
+      // less than a person's — PRON_F/PRON_A in fingers.ts — so it can't curl flat round a wide thing as theirs can)
+      const R = r + PAD[0][2] * sc, phi = r > 0.025 ? 2.0 : 2.6;
+      const far = add(held.c, scale([-Math.sin(phi), 0, -Math.cos(phi)], R));
+      const th: FSpec = { rest: [0.35, 0.25, 0.35, 0.3], restW: 0.06, on: [6], tgt: add(far, scale(a, (r > 0.025 ? 0.06 : 0.022) * sc)), tgtW: 0.35, at: 3 };
       return { held, arch: kind === 'wrap' ? 0.25 + 3 * Math.max(0, 0.045 - r) : 0.55, f: [th, ...f] };
     }
     case 'cloth': {
@@ -367,17 +422,23 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       // a tray on the fingertips and the palm: its underside just over the palm's skin, the fingers fanned, their pads up
       // under it
       const h = (size.thick ?? 0.012) / 2, r = size.r ?? 0.2;
-      const held: Held = { c: [0.06 * sc, 0, zs + 0.002 + h], a: [0, 0, 1], r, h };
+      const held: Held = { c: [0.06 * sc, 0, zs + 0.005 * sc + h], a: [0, 0, 1], r, h };
       const f = fingers([0.25, 0.25, 0.15], [3], [0.14, 0.04, -0.06, -0.15]);
-      return { held, arch: -0.1, f: [{ rest: [-0.2, 0.45, 0.1, 0.05], restW: 0.2, on: [3] }, ...f] };
+      return { held, arch: -0.1, f: [{ rest: [-0.3, -0.3, 0.1, 0.1], restW: 0.5 }, ...f], lift: [0, 0, 1] };
     }
     case 'rim': {
-      // a plate by its rim: the rim in the web between thumb and index, the fingers spread under it, the thumb on top
+      // a plate by its rim: the rim's edge running from the web between thumb and index across to the little finger's
+      // end, the plate out over the fingers, which lie flat under it; the thumb on top, just inside the edge
       const h = (size.thick ?? 0.006) / 2, r = size.r ?? 0.12;
-      const z0 = zs + 0.004 * sc + h;
-      const held: Held = { c: [0.04 * sc + r, 0.01 * sc, z0], a: [0, 0, 1], r, h };
-      const f = fingers([0.3, 0.3, 0.15], [3, 6], [0.1, 0.03, -0.05, -0.12]);
-      const th: FSpec = { rest: [0.1, 0.6, 0.3, 0.2], restW: 0.05, on: [6], tgt: [0.075 * sc, 0.025 * sc, z0 + h + PAD[0][2] * sc], tgtW: 0.6, at: 6 };
+      const lq = restPts(M, 4, { rest: [0.15, 0.1, 0.05] }, 0), web: V3 = add(K(1), [-0.022 * sc, 0.016 * sc, 0]);
+      const lp = pt(lq, 2), e = norm([lp[0] - web[0], lp[1] - web[1], 0]), n: V3 = [-e[1], e[0], 0];
+      const nOut: V3 = n[0] > 0 ? n : scale(n, -1);
+      const z0 = 0.009 * sc + h, mid: V3 = [(web[0] + lp[0]) / 2, (web[1] + lp[1]) / 2, z0];
+      const held: Held = { c: add(mid, scale(nOut, r)), a: [0, 0, 1], r, h };
+      const f = fingers([0.15, 0.1, 0.05], [6], [0.08, 0.02, -0.04, -0.1]);
+      f[3].on = [];
+      const top = add(add(web, scale(nOut, 0.016 * sc)), [0, 0, z0 + h + PAD[0][2] * sc]);
+      const th: FSpec = { rest: [0.0, 0.5, 0.3, 0.2], restW: 0.05, on: [6], tgt: top, tgtW: 0.6, at: 6 };
       return { held, arch: 0, f: [th, ...f] };
     }
   }
