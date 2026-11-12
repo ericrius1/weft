@@ -921,13 +921,13 @@ export class HeroRig {
      *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
     lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [0.05, 0.6], at: 0.1, letGo: 0.5, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
   };
+  /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
+  static readonly SQUARE: readonly number[] = Object.freeze([0.75, 1.35, 0.75]);
   /** a hand on a neck (HandGoal.neck): its thumb's rests when its tip has a target (saddle flexion, abduction, MCP, IP:
    *  wrapped round behind the neck, gently bent — guitarists' and violinists' thumbs, World's reference set, Checkpoint
    *  K) and how firmly it's drawn there; each finger's rests while it hovers (knuckle, middle, end); the palm's air to
    *  the wood (m) and the knuckles' and joints' clearance from it (m at a 48 mm knuckle span: the finger's half
    *  thickness, so the skin just touches — the index's base rests against a neck's edge) */
-  /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
-  static SQUARE = [0.75, 1.35, 0.75];
   static neckHand = {
     thumb: [0.35, 0.25, 0.3, 0.2], wThumb: 1.5,
     hover: [[0.45, 0.8, 0.4], [0.45, 0.8, 0.4], [0.5, 0.8, 0.4], [0.5, 0.8, 0.4]],
