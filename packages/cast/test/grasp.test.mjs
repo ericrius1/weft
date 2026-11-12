@@ -16,7 +16,10 @@ const SIZES = { wrap: [{ r: 0.026 }, { r: 0.032 }, { r: 0.043 }], power: [{ r: 0
 /** the pads (fingers, then thumb) that may sit off what they should touch, mm: the little and ring fingers round a wide
  *  glass reach less far than they're asked (the solve keeps them in their comfortable range), a clasp's index rides on
  *  the other hand's knuckles */
-const SLACK = { wrap: [1.5, 2, 2, 3, 4], clasp: [1.5, 5, 3, 2, 2], rim: [2, 2.5, 2.5, 3, 3] };
+const SLACK = { wrap: [1.5, 2, 2, 3, 4], clasp: [1.5, 5, 3, 2, 2], rim: [2, 2.5, 2.5, 3, 3],
+  // (a drumstick on its fulcrum: held between the thumb's pad and the side of the index's middle joint, the index's pad
+  // and the back fingers loose round it — a drummer's back fingers leave the stick room to rebound (Checkpoint I))
+  stick: [1.5, 4.5, 4, 4.5, 5] };
 const PAD_TIP = [0.0075, 0.0062, 0.0065, 0.0062, 0.0054];
 
 function tips(M, x) {
@@ -51,7 +54,9 @@ test('the thumb opposes the fingers round a glass, a handle, a stick, a pen, ano
     const g = grasp(R, kind, size);
     // (measured at the thumb's end bone since checkpoint G: a clasp's thumb lies over the other hand's back, its tip only
     // a little past a right angle round from the fingers)
-    assert.ok(g.opp < (kind === 'clasp' ? 0 : -0.5), `${kind}: the thumb's pad only ${(Math.acos(Math.max(-1, Math.min(1, g.opp))) * 180 / Math.PI).toFixed(0)}° round from the fingers'`);
+    // (and a drumstick's thumb lies flat along the stick's side, pressing it into the index: past a right angle round
+    // from the fingers, not across from them as round a hammer — Checkpoint I)
+    assert.ok(g.opp < (kind === 'clasp' || kind === 'stick' ? -0.05 : -0.5), `${kind}: the thumb's pad only ${(Math.acos(Math.max(-1, Math.min(1, g.opp))) * 180 / Math.PI).toFixed(0)}° round from the fingers'`);
   }
   // (a pen: the thumb's pad and the index's on different sides of it, more than a right angle apart round it)
   {

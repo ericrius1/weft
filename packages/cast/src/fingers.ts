@@ -170,6 +170,10 @@ export class HandModel {
       const d = Math.PI / 180, S = (i: number, r: number[]) => set(i, r[0] * d, r[1] * d, r[2] * d, r[3] * d);
       S(23, CMC_OLD.flex); S(24, CMC_OLD.abd); S(25, TMCP_OLD);
     }
+    // (a built hand's thumb reaches the little finger's base: Kapandji's 9th step needs the column's flexion to ~62° and
+    // the MCP's to ~75° — within real thumbs' active ranges (Hume et al. 1990: MCP to the mid 70s in many); the
+    // comfortable bands stay where they were)
+    if (this.built) { this.hi[23] = 62 * Math.PI / 180; this.hi[25] = 75 * Math.PI / 180; }
     this.pron = this.built ? PRON : PRON_OLD;
   }
 
@@ -311,6 +315,33 @@ export const handAsk = (): HandAsk => ({ lay: new Float64Array(5), tgt: new Floa
 /** the prior's numbers: HAND_N from the arch (6) on */
 const PR0 = HP_ARCH, PRN = HAND_N - HP_ARCH;
 const PRD = new Float64Array(PRN), PRPd = new Float64Array(PRN);
+
+/** the prior's precision (PRN x PRN, row-major, in place in `o`) with finger f's knuckle, middle and end joints let go
+ *  by k (0..1): o <- (1 - k) o + k S, S the Schur complement that marginalises those three numbers out (the Gaussian
+ *  over the rest as if they weren't seen; their rows and columns 0). A finger the prior shouldn't shape (an idle one at
+ *  the keys, held by its own rests instead) leaves the others' posture as real hands have it. + - * / only (the hands'
+ *  determinism across engines) */
+export function priorLetGo(o: Float64Array, f: number, k: number) {
+  if (k <= 0) return;
+  const n = PRN, b0 = hpOf(f) + 1 - PR0, B = [b0, b0 + 1, b0 + 2];
+  // (the 3x3 block's inverse by its adjugate)
+  const a = (i: number, j: number) => o[B[i] * n + B[j]];
+  const c00 = a(1, 1) * a(2, 2) - a(1, 2) * a(2, 1), c01 = a(0, 2) * a(2, 1) - a(0, 1) * a(2, 2), c02 = a(0, 1) * a(1, 2) - a(0, 2) * a(1, 1);
+  const det = a(0, 0) * c00 + a(1, 0) * c01 + a(2, 0) * c02;
+  if (!(Math.abs(det) > 1e-18)) return;
+  const inv = [c00, c01, c02, a(1, 2) * a(2, 0) - a(1, 0) * a(2, 2), a(0, 0) * a(2, 2) - a(0, 2) * a(2, 0), a(0, 2) * a(1, 0) - a(0, 0) * a(1, 2),
+    a(1, 0) * a(2, 1) - a(1, 1) * a(2, 0), a(0, 1) * a(2, 0) - a(0, 0) * a(2, 1), a(0, 0) * a(1, 1) - a(0, 1) * a(1, 0)].map((v) => v / det);
+  const PB = LG; // (n x 3: each row's coupling to the block, times the block's inverse)
+  for (let i = 0; i < n; i++) for (let q = 0; q < 3; q++) PB[i * 3 + q] = o[i * n + B[0]] * inv[q] + o[i * n + B[1]] * inv[3 + q] + o[i * n + B[2]] * inv[6 + q];
+  const inB = (i: number) => i === B[0] || i === B[1] || i === B[2];
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const v = o[i * n + j];
+    const s = inB(i) || inB(j) ? 0 : v - (PB[i * 3] * o[B[0] * n + j] + PB[i * 3 + 1] * o[B[1] * n + j] + PB[i * 3 + 2] * o[B[2] * n + j]);
+    TMP[i * n + j] = v + (s - v) * k;
+  }
+  o.set(TMP);
+}
+const LG = new Float64Array(PRN * 3), TMP = new Float64Array(PRN * PRN);
 
 /** a hand's solve carried frame to frame: its numbers, the damping, each fingertip's miss after (m) */
 export class HandSolve {

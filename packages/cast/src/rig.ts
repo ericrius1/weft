@@ -36,7 +36,7 @@ import { MAX_BONES } from './asset.js';
 import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose, BodyModel, BodyState } from './body/solve.js';
-import { HandModel, HandSolve, handAsk, solveHand, hpOf, HP_ARCH, HAND_N, type HandAsk } from './fingers.js';
+import { HandModel, HandSolve, handAsk, solveHand, hpOf, priorLetGo, HP_ARCH, HAND_N, type HandAsk } from './fingers.js';
 import { KEYS_PRIOR } from './body/handprior.js';
 
 type Fr = { o: V3; x: V3; y: V3; z: V3 };
@@ -866,6 +866,17 @@ export class HeroRig {
     idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
     tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.47, 0.24], [0.65, 0.5, 0.3]],
     fan: [0.08, 0.03, 0, -0.08],
+    // (a built hand's: bent most at the middle joint, little at the knuckle — a pianist's curve. The rests above (the knuckle
+    // bent most) came from fits from above, which can't split a finger's bend between its knuckle and its middle joint;
+    // under them the hand stood up on its knuckles (6 cm over the keys, its fingers dropping from them) and from above read
+    // as a mound fringed with short fingers. Side views of pianists: knuckles ~49 mm over the lowest tip; these give 48
+    // (World tools/hands/wholehand.mjs, Checkpoint I))
+    tipBuilt: [[0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.2, 0.55, 0.25]],
+    idleBuilt: [[0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.15, 0.45, 0.2]],
+    // (and its idle thumb out from the index, less bent: from above the real idle thumb lies out to the side of the hand;
+    // its points' miss from above 5.7 -> 4.3 % of the hand's length, the fan to the index 9 -> 13° (real 19), its plan
+    // extension 0.80 -> 0.89 (real 0.79))
+    thumbIdleBuilt: [-0.44, 0.1, 0.6, 0.4],
     // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
     // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
     // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97;
@@ -875,8 +886,14 @@ export class HeroRig {
      *  per mm, so these shape the hand, not where the tips land) */
     wTip: 3, wThumb: 6,
     /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
-     *  the idle thumb) and the playing ones keep under it */
-    wPrior: 1, restIdle: 0.25, restPlay: 1,
+     *  the idle thumb: times restThumb — real idle thumbs are bent) and the playing ones keep under it */
+    wPrior: 1, restIdle: 0.25, restPlay: 1, restThumb: 4,
+    /** a built hand's idle finger held as a lever (see askHand): how much less bent than its playing neighbours its
+     *  knuckle and middle joint are (rad), the end joint's share of the middle's, the bands they're kept in (rad), and the
+     *  goal weight (tipW) at which it's wholly idle, how much the prior lets its bends go, and the knuckle and middle joint
+     *  of a hand with no finger playing (rad), how firmly its knuckle, middle and end joints are held there, and how far
+     *  past its middle joint's rest a curled one is started again from its rest (rad: unhook) */
+    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [0.05, 0.6], at: 0.1, letGo: 0.5, rest: [0.2, 0.25], w: [1, 4, 4], hook: 0.6 },
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2571,8 +2588,8 @@ export class HeroRig {
         const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
         // (an idle thumb at the keys — the Pianist asks it lightly — rests as an idle thumb, not as a playing one)
         const idle = keys && (goal.tipW?.[0] ?? 1) < 0.5;
-        const rt = keys ? (idle ? K.thumbIdle : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
-        const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+        const rt = keys ? (idle ? (built ? K.thumbIdleBuilt : K.thumbIdle) : up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
+        const r0 = keys ? (built ? K.thumbIdleBuilt : K.thumbIdle) : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)
         for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : 0.6, rf); }
@@ -2582,11 +2599,23 @@ export class HeroRig {
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      const tipAng = keys ? K.tip[g] : [0.4, 0.6, 0.42];
+      let tipAng = keys ? (built ? K.tipBuilt : K.tip)[g] : [0.4, 0.6, 0.42];
+      // (a built hand's finger the Pianist holds lightly — nothing to play — is held off its key as a pianist's is: lifted
+      // at the knuckle, not curled. Its middle and end joints as its playing neighbours have them (a little straighter),
+      // its knuckle extended from theirs, so the whole finger rises like a lever and its tip hovers ahead over its key,
+      // still pointing forward; eased in as its weight lets go (Checkpoint J: side clips of pianists, World
+      // tools/hands/idlejoints.mjs — idle fingers' knuckles ~13° and middle joints ~5-10° less bent than the playing
+      // ones'; with the playing fingers' rests the idle ones curled into hooks, their middle joints 44° seen from the side
+      // against the clips' 18)
+      // (only at a piano's keys with real pianists' prior asked: HandGoal.prior, the Pianist's for a built hand; a finger with
+      // no target at all there — a held pose's — is wholly idle)
+      const atKeys = keys && built && !!goal.prior;
+      const lv = this.lever[hi][f] = atKeys ? (tip ? clamp((1 - (goal.tipW?.[f] ?? 1)) / (1 - K.lever.at), 0, 1) : 1) : 0;
+      if (lv > 0) tipAng = tipAng.map((a, j) => lerp(a, this.leverRest(hi, goal, j), lv));
       // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
       // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
       // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
-      if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
+      if (keys) ang = ang.map((a, j) => lerp(a, atKeys ? tipAng[j] : (built ? K.idleBuilt : K.idle)[g][j], goalW));
       // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
       // toward the little finger — where the older hands' rests were nearly straight)
       else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
@@ -2598,6 +2627,10 @@ export class HeroRig {
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, 1.5, sq) : wr; }
+      // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
+      // — the cheap way up — rather than curling)
+      // (a finger with no target at all — a held pose's: one the Pianist hovers keeps its playing neighbours' weights)
+      if (lv > 0 && !tip) for (let j = 0; j < 3; j++) Q.wr[o + 1 + j] = K.lever.w[j];
       // (laid flat along what it presses: its middle and end joints straight)
       const lay = goal.lay?.[f] ?? 0;
       Q.lay[f] = lay;
@@ -2607,9 +2640,19 @@ export class HeroRig {
     // (real pianists' hands: a prior on the whole hand's numbers; the fingers' own rests loosened under it)
     const pr = keys && built && goal.prior ? clamp(goal.prior, 0, 1) * goalW : 0;
     Q.wp = pr * K.wPrior; Q.priorMu = KEYS_PRIOR.mu; Q.priorP = KEYS_PRIOR.P;
+    // (an idle finger held as a lever: the prior lets its bends go — real hands' postures were fitted from above, where a
+    // finger's bend can't be split between its joints — and its lever rests hold it; the other fingers keep the prior)
+    if (pr > 0 && this.lever[hi].some((v) => v > 0)) {
+      const PP = this.priorBuf[hi];
+      PP.set(KEYS_PRIOR.P);
+      for (let f = 1; f <= 4; f++) priorLetGo(PP, f, this.lever[hi][f] * K.lever.letGo);
+      Q.priorP = PP;
+    }
     if (pr > 0) for (let f = 0; f < 5; f++) {
-      const o = hpOf(f), kk = lerp(1, Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5) ? K.restIdle : K.restPlay, pr);
-      for (let j = 0; j < 4; j++) Q.wr[o + j] *= kk;
+      const idle = Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5), o = hpOf(f), kk = lerp(1, idle ? K.restIdle * (f === 0 ? K.restThumb : 1) : K.restPlay, pr);
+      // (a lever's bends keep their own weights: the prior has let them go)
+      const lv = f > 0 && !goal.tips[f] ? this.lever[hi][f] : 0;
+      for (let j = 0; j < 4; j++) Q.wr[o + j] *= j > 0 ? lerp(kk, 1, lv) : kk;
       if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
     }
     Q.clear = 0;
@@ -2624,6 +2667,33 @@ export class HeroRig {
     }
   }
   private fl = new Float64Array(3); private fl2 = new Float64Array(3);
+  /** each finger's lever (0 playing .. 1 idle at the keys) this frame, and the prior's precision with the idle fingers let go */
+  private lever = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]];
+  private priorBuf = [new Float64Array(KEYS_PRIOR.P.length), new Float64Array(KEYS_PRIOR.P.length)];
+  /** a lever finger found curled far past its rest (its middle joint more than lever.hook rad over it: a hook the
+   *  keys' floor holds it in — straightening it would sink its tip, so the solve stays) starts again from its rest: the
+   *  lever is the other valley, and the one a pianist's finger is in */
+  private unhook(hi: number) {
+    const L = HeroRig.keysHand.lever, Q = this.handQ[hi], x = this.handS[hi].x;
+    for (let f = 1; f <= 4; f++) {
+      if (this.lever[hi][f] < 0.5) continue;
+      const o = hpOf(f);
+      if (x[o + 2] - Q.rest[o + 2] > L.hook) for (let j = 1; j <= 3; j++) x[o + j] = Q.rest[o + j];
+    }
+  }
+  /** an idle finger's lever rest at the keys (joint j: 0 knuckle, 1 middle, 2 end): its playing neighbours' bends as last
+   *  solved (the fingers the goal holds at full weight; none, the keys' playing rests), the knuckle extended and the
+   *  middle joint eased by keysHand.lever, the end joint with the middle (its tendon) */
+  private leverRest(hi: number, goal: HandGoal, j: number): number {
+    const K = HeroRig.keysHand, L = K.lever, x = this.handS[hi].x;
+    let n = 0, m = 0, p = 0;
+    for (let f = 1; f <= 4; f++) if (goal.tips[f] && (goal.tipW?.[f] ?? 1) >= 0.5 && this.handS[hi].ready) { const o = hpOf(f); m += x[o + 1]; p += x[o + 2]; n++; }
+    // (no finger playing — the hand resting over the keys — the lever's own rest, L.rest)
+    if (!n) return j === 0 ? L.rest[0] : j === 1 ? L.rest[1] : L.rest[1] * L.dip;
+    const mcp = m / n, pip = p / n;
+    const pp = clamp(pip - L.pip, L.band[0], L.band[1]);
+    return j === 0 ? clamp(mcp - L.mcp, L.mcpBand[0], L.mcpBand[1]) : j === 1 ? pp : pp * L.dip;
+  }
 
   /** the palm and fingers solved together for a goal whose palm is free (HandGoal.palmFree): the goal handed back with
    *  the palm moved and turned as solved, for the arm to take (the fingers are solved again on the hand as the arm put
@@ -2644,6 +2714,7 @@ export class HeroRig {
     void dt;
     Q.free = clamp(goal.palmFree ?? 0, 0, 1) * goalW;
     S.x.set(this.palmX[i], 0);
+    this.unhook(i);
     solveHand(M, S, Q, HeroRig.handIters[0]);
     this.palmX[i].set(S.x.subarray(0, 6));
     this.palmMiss[i].set(S.miss);
@@ -2675,7 +2746,7 @@ export class HeroRig {
     const E = this.palmAt[hi], wb2 = this.skinPoint(M.hb, M.wrist), hx = this.skinDir(M.hb, X), pz = this.skinDir(M.hb, Z);
     const there = E[9] === 1 && Math.hypot(wb2[0] - E[0], wb2[1] - E[1], wb2[2] - E[2]) < 1e-4 && hx[0] * E[3] + hx[1] * E[4] + hx[2] * E[5] > 0.9999995 && pz[0] * E[6] + pz[1] * E[7] + pz[2] * E[8] > 0.9999995;
     E[9] = 0;
-    if (!there) solveHand(M, S, Q, HeroRig.handIters[1]);
+    if (!there) { this.unhook(hi); solveHand(M, S, Q, HeroRig.handIters[1]); }
     const P = new Float64Array(12), U = new Float64Array(9), K = new Float64Array(3), Zf = new Float64Array(3);
     const hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {
