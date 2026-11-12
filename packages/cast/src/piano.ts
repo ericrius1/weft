@@ -99,7 +99,7 @@ const SPREAD = [-0.05, -0.024, 0, 0.0235, 0.046];
  *  finger's hover over its place counts against the playing ones (HandGoal.tipW) */
 const SLOTS = [-0.05, -0.0245, 0, 0.0235, 0.046];
 const HOVER = 0.014, FALL = 0.1, REACH = 0.2, LIFT = 0.075, TRAVEL_END = 0.08, TRAVEL_MAX = 0.3, SPAN = 0.19, PAD = 0.004, LAND = 0.004;
-const THUMB_IN = 0.012, REST_W = 0.15;
+const THUMB_IN = 0.012, DEEP = 0.015, REST_W = 0.15;
 /** finger choices for a chord of n notes (thumb first): every rising run of n of the five */
 const RUNS: number[][][] = [0, 1, 2, 3, 4, 5].map((n) => {
   const out: number[][] = [];
@@ -468,7 +468,7 @@ export class Pianist {
           ord.forEach((o, i) => { stretch += Math.max(0, Math.abs(o.x - SLOTS[run[i]] * side - from) - 0.006); });
           // (and the thumb and the little finger, the short ones, kept off the black keys if they can be)
           let short = 0;
-          ord.forEach((o, i) => { if ((run[i] === 0 || run[i] === 4) && this.black(o.n.note)) short += 0.012; });
+          ord.forEach((o, i) => { if ((run[i] === 0 || run[i] === 4) && this.black(o.n.note)) short += 0.03; });
           const cost = (stay ? 0 : 0.02 + Math.abs(at - cur)) + 2 * stretch + short + (ord.length === 1 && (run[0] === 0 || run[0] === 4) ? 0.004 : 0);
           if (cost < best) { best = cost; fs = run; x = stay ? cur : at; }
         }
@@ -537,6 +537,9 @@ export class Pianist {
       const tips: (V3 | null)[] = [null, null, null, null, null], tipW = [1, 1, 1, 1, 1];
       // (the palm as high over the keyboard as the highest key its fingers are on: a black key's top stands over a
       // white's, and a finger can only lift so far over its palm)
+      // (a hand with a black key under it plays its white keys further in, between the black ones, as a pianist's does)
+      let deep = false;
+      for (let f = 0; f < 5; f++) { const st = this.stroke(h, f, s).st; if (st && this.black(st.note)) deep = true; }
       for (let f = 0; f < 5; f++) {
         const { st, dy, from, u, w } = this.stroke(h, f, s);
         this.active[h][f] = !!st;
@@ -544,8 +547,9 @@ export class Pianist {
         // keys' tops and comes up through them)
         const key = (n: number) => {
           const q = I.notePoint(n)!;
-          // (the thumb, the short finger, plays a white key nearer its front)
-          return f === 0 && dot(sub(q, mid), A.up) < 0.004 ? add(q, scale(A.toward, THUMB_IN)) : q;
+          // (the thumb, the short finger, plays a white key nearer its front — unless the hand's in among the black keys)
+          if (dot(sub(q, mid), A.up) >= 0.004) return q;
+          return add(q, scale(A.toward, deep ? -DEEP : f === 0 ? THUMB_IN : 0));
         };
         let p = st ? key(st.note) : add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along)));
         if (st && from && from.note !== st.note) { const q = key(from.note); p = [q[0] + (p[0] - q[0]) * u, q[1] + (p[1] - q[1]) * u, q[2] + (p[2] - q[2]) * u]; }
