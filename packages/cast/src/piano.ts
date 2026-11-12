@@ -150,10 +150,14 @@ export class Pianist {
    *  reach in front of where the fingertips press and a little over the keys, as real players' hands sit (fits of our
    *  hand to tracked footage of pianists, World's tools/hands/fit.mjs: from above the fingers lie long, the knuckles
    *  well back from the black keys) — for a built hand (HeroHeader.hand); bodies without one keep the default */
-  forHand(len: number) { this.reach = [0.4 * len, 0.3 * len]; this.pitch = 0.2; this.idleHover = 0.004; this.hover = 0.008; this.fingerIn = [0, 0.014, 0.024, 0.026, -0.01]; this.idleW = 0.04; return this; }
+  forHand(len: number) { this.reach = [0.4 * len, 0.3 * len]; this.pitch = 0.36; this.idleHover = 0.004; this.hover = 0.008; this.fingerIn = [0, 0.014, 0.024, 0.026, -0.01]; this.idleW = 0.04; this.idleLift = [0.02, 0, 0, 0, 0]; return this; }
   /** how high a finger with nothing to play rides over the white keys' tops (m; real players' idle fingers stay low,
    *  within about a centimetre of the keys, and move with their neighbours) */
   idleHover = HOVER;
+  /** each idle finger's place over its neighbours' (m, thumb first, added to idleHover): real players' idle thumbs and
+   *  little fingers ride highest, the ring lowest (side views of pianists: idle tips over the hand's lowest, medians
+   *  thumb 38, index 27, middle 20, ring 13, little 27 mm) */
+  idleLift = [0, 0, 0, 0, 0];
   /** how high a finger waits over its next key before it falls (m) */
   hover = HOVER;
   /** how much further in (toward the fallboard) each finger plays a white key than the press line (m, thumb first):
@@ -527,27 +531,28 @@ export class Pianist {
 
   /** a finger's stroke at second s: its note (null: resting) and its tip's height over the key's top (m) */
   private stroke(h: number, f: number, s: number): { st: Struck | null; dy: number; from: Struck | null; u: number; w: number } {
+    const hv = this.hover + this.idleLift[f];
     let st: Struck | null = null, pv: Struck | null = null;
     // (the next stroke takes the finger only once this one's let go: never before it's landed)
     for (const x of this.byFinger[h][f]) { if (x.t0 - FALL - REACH > s || (st && s < st.up)) break; pv = st; st = x; }
-    if (!st) return { st: null, dy: this.idleHover, from: null, u: 1, w: this.idleW };
+    if (!st) return { st: null, dy: this.idleHover + this.idleLift[f], from: null, u: 1, w: this.idleW };
     const D = this.inst!.pressDepth;
     // (it lands LAND before the note's second: a rig's fingertip follows its goal about a frame behind)
     const t0 = st.t0 - LAND;
     if (s >= t0) {
       if (s < st.up) return { st, dy: -D * Math.min(1, (s - t0) / 0.012), from: null, u: 1, w: 1 };
       const u = clamp((s - st.up) / LIFT, 0, 1);
-      return { st: s - st.up > 0.6 ? null : st, dy: -D + (D + this.hover) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w: 1 };
+      return { st: s - st.up > 0.6 ? null : st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * u), from: null, u: 1, w: 1 };
     }
     // before it lands: from its last key (let go) up, over to this one, a wait at its hover, the fall — each part
     // shortened alike when the notes come too quickly for all of it, never out of order (a finger crossing the keys
     // low, or still on its way over as it falls, is seen on the wrong key)
-    const fall = (k: number) => { const u = clamp((t0 - s) / (FALL * k), 0, 1); return this.hover * (1 - (1 - u) ** 3); };
+    const fall = (k: number) => { const u = clamp((t0 - s) / (FALL * k), 0, 1); return hv * (1 - (1 - u) ** 3); };
     if (!pv || s < pv.up) return { st, dy: fall(1), from: null, u: 1, w: 1 };
     const lift = LIFT * (pv.note === st.note ? 0.6 : 1), k = Math.min(1, (t0 - pv.up) / (FALL + lift));
     const a = s - pv.up, rise = lift * 0.5 * k, over = lift * 0.5 * k;
-    if (a < rise) return { st, dy: -D + (D + this.hover) * Math.sin((Math.PI / 2) * (a / rise)), from: pv, u: 0, w: 1 };
-    if (a < rise + over) { const v = (a - rise) / over; return { st, dy: this.hover, from: pv, u: v * v * (3 - 2 * v), w: 1 }; }
+    if (a < rise) return { st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * (a / rise)), from: pv, u: 0, w: 1 };
+    if (a < rise + over) { const v = (a - rise) / over; return { st, dy: hv, from: pv, u: v * v * (3 - 2 * v), w: 1 }; }
     return { st, dy: fall(k), from: null, u: 1, w: 1 };
   }
 

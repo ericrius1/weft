@@ -841,10 +841,10 @@ export class HeroRig {
     // (the thumb as a pianist's: its saddle turned out from the index as far as it goes and a little out of the palm, its
     // MCP and IP bent so the tip comes down onto the key's side and it reads shorter from above — real thumbs' plan
     // extension 0.79 playing, 0.82 idle, fanned ~24° from the index; straight from the saddle (the old rests) it was 0.97)
-    thumbIdle: [-0.44, -0.35, 0.7, 0.4], thumbTip: [-0.44, -0.35, 0.7, 0.4],
+    thumbIdle: [-0.44, -0.35, 0.7, 0.4], thumbTip: [-0.44, -0.35, 0.7, 0.4], thumbHigh: [-0.28, -0.31, 0.23, 0.1],
     /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
      *  per mm, so these shape the hand, not where the tips land) */
-    wTip: 3, wThumb: 12,
+    wTip: 3, wThumb: 6,
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2533,7 +2533,9 @@ export class HeroRig {
       Q.resting[f] = tip ? 0 : 1;
       if (f === 0) {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
-        const rt = keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2];
+        // (on a key standing over the surface — a black key — the thumb reaches in flatter, as a pianist's does)
+        const F = goal.floor, up = tip && F ? (tip[0] - F.at[0]) * F.n[0] + (tip[1] - F.at[1]) * F.n[1] + (tip[2] - F.at[2]) * F.n[2] : 0;
+        const rt = keys ? (up > 0.006 ? K.thumbHigh : K.thumbTip) : [0.25, 0.1, 0.35, 0.2];
         const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         // (a target let go: its rests the hand's own again, as far as it's let go)
