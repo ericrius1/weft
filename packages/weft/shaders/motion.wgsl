@@ -37,3 +37,12 @@ fn motionOf(cur: vec4f, prev: vec4f) -> vec4f {
 /** the same for a point that doesn't move by itself (a static draw that must still write the target: one drawn over a
  *  moving one with the same depth, a decal) — the camera's motion at it */
 fn motionStill(cur: vec4f, worldPos: vec3f) -> vec4f { return motionOf(cur, prevClipAt(worldPos)); }
+
+/** motionOf with this frame's position taken from the fragment's own @builtin(position) (framebuffer pixels and its
+ *  depth) — one varying (last frame's clip position) where a draw has no room for two. A perspective camera with
+ *  weft's reversed-Z, infinite far plane (Camera.far Infinity) only */
+fn motionAt(fragPos: vec4f, prev: vec4f) -> vec4f {
+  let w = linearDepth(fragPos.z);
+  let ndc = vec2f(fragPos.x * frame.invRes.x * 2.0 - 1.0, 1.0 - fragPos.y * frame.invRes.y * 2.0);
+  return motionOf(vec4f(ndc * w, fragPos.z * w, w), prev);
+}
