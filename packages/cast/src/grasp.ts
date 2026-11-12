@@ -343,8 +343,8 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       const f = fingers([0.7, 0.9, 0.6], [4, 5, 6], kind === 'wrap' ? [0.03, 0, -0.03, -0.08] : [0, 0, -0.02, -0.05]);
       // (the thumb round the other way: its pad on the far side, across from the fingers)
       // (the thumb's pad on the near side of the thing from the wrist, over the index: round a glass the thumb lies up its
-      // side, the fingers round its front; round a handle it comes over to the fingers. Our thumb's saddle turns its pad
-      // less than a person's — PRON_F/PRON_A in fingers.ts — so it can't curl flat round a wide thing as theirs can)
+      // side, the fingers round its front; round a handle it comes over to the fingers. Since a built hand's saddle turns
+      // its pad as a person's does (fingers.ts PRON), the solve brings it on round a wide glass's front by itself)
       const R = r + PAD[0][2] * sc, phi = r > 0.025 ? 2.0 : 2.6;
       const far = add(held.c, scale([-Math.sin(phi), 0, -Math.cos(phi)], R));
       const th: FSpec = { rest: [0.35, 0.25, 0.35, 0.3], restW: 0.06, on: [6], tgt: add(far, scale(a, (r > 0.025 ? 0.06 : 0.022) * sc)), tgtW: 0.35, at: 3 };
