@@ -827,6 +827,16 @@ export class HeroRig {
   /** the most iterations a hand's solve takes a frame: the palm's with its fingers, then the fingers' on the hand as
    *  the arm put it (each stops once its fingertips are within 0.2 mm) */
   static handIters: [number, number] = [8, 6];
+  /** a hand at keys (fingertip targets, nothing held): each finger's rest (index..little: MCP, PIP, DIP, rad) idle and
+   *  playing, the spreads, the thumb's (saddle flexion, abduction, MCP, IP) idle and playing — set so the hand's plan
+   *  extension (a fingertip's distance from its knuckle seen from above, over the finger's length), the fan and the
+   *  idle fingers' hover match real pianists' (World tools/hands/planstats.mjs against tracked footage) */
+  static keysHand = {
+    idle: [[0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.4, 0.35, 0.2], [0.55, 0.45, 0.25]],
+    tip: [[0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.6, 0.4, 0.2], [0.7, 0.5, 0.3]],
+    fan: [0.08, 0.03, 0, -0.08],
+    thumbIdle: [0.35, 0.2, 0.4, 0.3], thumbTip: [0.25, 0.25, 0.45, 0.35],
+  };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
   private handQ: HandAsk[] = [handAsk(), handAsk()];
@@ -2484,9 +2494,10 @@ export class HeroRig {
    *  lightly toward a relaxed curl */
   private askHand(hi: number, c: number, grip: number, holds: boolean, goal: HandGoal, goalW: number, dt: number, toC: (w: V3, o: Float64Array, i: number) => void) {
     const Q = this.handQ[hi], tw = this.tipsW[hi];
-    const FAN = [0.1, 0.03, -0.05, -0.12], CASCADE = [0, 0.04, 0.1, 0.16], REL = [-0.14, -0.02, 0.1, 0.2];
+    const CASCADE = [0, 0.04, 0.1, 0.16], REL = [-0.14, -0.02, 0.1, 0.2];
     const rc = Math.max(0, c) * (1 - grip);
-    const keys = !holds && !goal.loose;
+    const keys = !holds && !goal.loose, K = HeroRig.keysHand;
+    const FAN = keys ? K.fan : [0.06, 0.02, -0.03, -0.08];
     for (let f = 0; f < 5; f++) {
       const tip = goal.tips[f] ?? null;
       tw[f] = damp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
@@ -2497,7 +2508,7 @@ export class HeroRig {
       Q.resting[f] = tip ? 0 : 1;
       if (f === 0) {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
-        const r = tip ? [0.25, 0.1, 0.35, 0.2] : keys ? [0.35, -0.05, 0.2, 0.1] : holds ? [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip]
+        const r = tip ? (keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2]) : keys ? K.thumbIdle : holds ? [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip]
           : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         for (let j = 0; j < 4; j++) { Q.rest[o + j] = r[j]; Q.wr[o + j] = tip ? 0.6 : wr; }
         continue;
@@ -2506,11 +2517,11 @@ export class HeroRig {
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      if (tip) { ab = FAN[g]; ang = [0.75, 0.5, 0.25]; }
+      if (tip) { ab = FAN[g]; ang = keys ? K.tip[g] : [0.4, 0.6, 0.42]; }
       // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
       // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
       // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
-      else if (keys) ang = ang.map((a, j) => lerp(a, [0.55, 0.45, 0.25][j], goalW));
+      else if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = wr; }
