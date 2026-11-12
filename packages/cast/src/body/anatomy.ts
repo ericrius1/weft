@@ -70,7 +70,31 @@ export const JOINTS = {
   mcp: { flex: dof(-25, 92, -10, 60, -45, 95, 0.1, 0.2), abd: dof(-22, 22, -10, 10, undefined, undefined, 0.1, 0.2) },
   pip: { flex: dof(-8, 110, -2, 70, undefined, undefined, 0.1, 0.2) },
   dip: { flex: dof(-10, 80, 0, 50, undefined, undefined, 0.1, 0.2) },
+  // the thumb's saddle (CMC, the trapeziometacarpal joint), measured from the cast's bind thumb (which stands about half a
+  // right angle out from the index, both in the palm's plane and out of it): flexion across the palm toward the little
+  // finger and extension back out radially, ~53° all told; abduction out of the palm's plane (palmar) and adduction
+  // back into it, ~42° (Cooney et al. 1981); the metacarpal's own turn (pronation, the pad coming round to face the
+  // fingers: opposition) is coupled to both (fingers.ts), ~17° of it the joint's own and the rest the saddle's shape.
+  // The thumb's MCP: ~56° of flexion, a few degrees back; its IP: ~80° of flexion, ~20° back (Hume et al. 1990)
+  cmc: { flex: dof(-25, 45, -10, 25, undefined, undefined, 0.1, 0.2), abd: dof(-20, 32, -8, 18, undefined, undefined, 0.1, 0.2) },
+  thumbMcp: { flex: dof(-10, 56, 0, 35, undefined, undefined, 0.1, 0.2) },
+  thumbIp: { flex: dof(-20, 80, -5, 45, undefined, undefined, 0.1, 0.2) },
 } as const;
+
+/** how far each finger's knuckle spreads (MCP abduction, + toward the thumb; radians, from the bind's straight fingers,
+ *  index to little): the index and the little finger have their own abductors and spread furthest, the middle least;
+ *  and how far two neighbours can part (their spreads' difference: the web between them — index–middle ~30°,
+ *  middle–ring ~20°, ring–little ~30°) — a hand spread wide is ~75° index to little (AAOS; Kapandji, The Physiology of
+ *  the Joints I) */
+export const SPREAD = {
+  abd: [[-14, 24], [-14, 14], [-20, 10], [-32, 10]].map(([a, b]) => [a * D, b * D]) as [number, number][],
+  web: [30 * D, 20 * D, 30 * D],
+};
+/** the fingers' enslaving (Zatsiorsky, Li & Latash 2000; Häger-Ross & Schieber 2000): one finger's knuckle bending
+ *  drags its neighbours some way (the ring finger most: it shares the middle's and the little's tendons), and how far
+ *  apart in bend two neighbours can be held (rad: index–middle, middle–ring, ring–little) — the ring finger lifts
+ *  ~30° clear of its neighbours held down, not more */
+export const ENSLAVE = { drag: [0.25, 0.45, 0.5], apart: [70 * D, 32 * D, 42 * D] };
 export type JointName = keyof typeof JOINTS;
 
 /** where a humerus can point (on the thorax, the body's left side; x out, y up, z forward): within 140° of this axis —
