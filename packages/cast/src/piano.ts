@@ -150,7 +150,7 @@ export class Pianist {
    *  reach in front of where the fingertips press and a little over the keys, as real players' hands sit (fits of our
    *  hand to tracked footage of pianists, World's tools/hands/fit.mjs: from above the fingers lie long, the knuckles
    *  well back from the black keys) — for a built hand (HeroHeader.hand); bodies without one keep the default */
-  forHand(len: number) { this.reach = [0.4 * len, 0.3 * len]; this.pitch = 0.36; this.idleHover = 0.004; this.hover = 0.008; this.fingerIn = [0, 0.014, 0.024, 0.026, 0]; return this; }
+  forHand(len: number) { this.reach = [0.4 * len, 0.3 * len]; this.pitch = 0.36; this.idleHover = 0.004; this.hover = 0.008; this.fingerIn = [0, 0.014, 0.024, 0.026, 0]; this.idleW = 0.04; return this; }
   /** how high a finger with nothing to play rides over the white keys' tops (m; real players' idle fingers stay low,
    *  within about a centimetre of the keys, and move with their neighbours) */
   idleHover = HOVER;
@@ -160,6 +160,9 @@ export class Pianist {
    *  the long fingers reach further in than the thumb, so they needn't curl under to land on its line (real players'
    *  fingers lie long across the keys: World tools/hands/planstats.mjs) */
   fingerIn = [0, 0, 0, 0, 0];
+  /** how much an idle finger's place over the keys counts against its own relaxed shape (a share of a playing
+   *  finger's): low, and an idle finger rests as the hand holds it rather than being dragged into a hook */
+  idleW = REST_W;
   /** the hand's way from the wrist to the knuckles, up from level (as a slope: -0.18, a little down, the default; a
    *  built hand's rises, the knuckles over the wrist as a pianist's arched hand is) */
   pitch = -0.18;
@@ -527,7 +530,7 @@ export class Pianist {
     let st: Struck | null = null, pv: Struck | null = null;
     // (the next stroke takes the finger only once this one's let go: never before it's landed)
     for (const x of this.byFinger[h][f]) { if (x.t0 - FALL - REACH > s || (st && s < st.up)) break; pv = st; st = x; }
-    if (!st) return { st: null, dy: this.idleHover, from: null, u: 1, w: REST_W };
+    if (!st) return { st: null, dy: this.idleHover, from: null, u: 1, w: this.idleW };
     const D = this.inst!.pressDepth;
     // (it lands LAND before the note's second: a rig's fingertip follows its goal about a frame behind)
     const t0 = st.t0 - LAND;
@@ -571,7 +574,9 @@ export class Pianist {
           if (dot(sub(q, mid), A.up) >= 0.004) return q;
           return add(q, scale(A.toward, deep ? -Math.max(DEEP, this.fingerIn[f]) : (f === 0 ? THUMB_IN : 0) - this.fingerIn[f]));
         };
-        let p = st ? key(st.note) : add(add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along))), scale(A.toward, -this.fingerIn[f]));
+        // (an idle finger over its place; in among the black keys, as far in as the hand has gone)
+        const inIdle = deep && this.fingerIn[f] > 0 ? Math.max(DEEP, this.fingerIn[f]) + this.fingerIn[f] * 0.6 : this.fingerIn[f];
+        let p = st ? key(st.note) : add(add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along))), scale(A.toward, -inIdle));
         if (st && from && from.note !== st.note) { const q = key(from.note); p = [q[0] + (p[0] - q[0]) * u, q[1] + (p[1] - q[1]) * u, q[2] + (p[2] - q[2]) * u]; }
         tips[f] = add(p, scale(A.up, PAD + dy));
         tipW[f] = w;
