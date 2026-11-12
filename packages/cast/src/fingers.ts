@@ -774,7 +774,11 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
  *  returns the cost. The palm's numbers are held at 0 unless the ask frees it */
 export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): number {
   const N = HAND_N, x = S.x, lo = M.lo, hi = M.hi, palm = Q.free > 0 ? 0 : 6;
-  if (!S.ready) { x.set(Q.rest); for (let k = 0; k < 6; k++) x[k] = 0; S.ready = true; S.lam = 1e-3; }
+  // (a state that isn't finite — a malformed ask got into it — started again from the rests, the bad ones at the joint's
+  // middle, so a hand never stays broken)
+  for (let k = 0; k < N; k++) if (!Number.isFinite(Q.rest[k]) || !Number.isFinite(Q.wr[k])) { Q.rest[k] = (lo[k] + hi[k]) / 2; Q.wr[k] = 0; }
+  if (S.ready && !(Number.isFinite(S.lam) && x.every(Number.isFinite))) S.ready = false;
+  if (!S.ready) { for (let k = 0; k < N; k++) x[k] = Number.isFinite(Q.rest[k]) ? Q.rest[k] : (lo[k] + hi[k]) / 2; for (let k = 0; k < 6; k++) x[k] = 0; S.ready = true; S.lam = 1e-3; }
   // (the damping carried from the last frame, but never more than LAM0: one frame whose every trial step failed — a
   // target that jumped across a string — left it at its ceiling, and the next frames' steps were too small to move the
   // finger for a tenth of a second). A built hand's only: the older bodies' fingers kept exactly as their projects have

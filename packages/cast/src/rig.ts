@@ -2670,7 +2670,7 @@ export class HeroRig {
       // (coming down square on its tip, as a guitarist's or a violinist's stopping finger does: the middle joint well
       // bent, the end joint with it, drawn there firmly; the tip still lands where it's asked)
       const sq = rf > 0 ? goal.square?.[f] ?? 0 : 0;
-      if (sq > 0) ang = ang.map((a, j) => lerp(a, (goal.stopRest?.[f] ?? HeroRig.SQUARE)[j], sq));
+      if (sq > 0) { const sr = goal.stopRest?.[f]; ang = ang.map((a, j) => { const r = sr?.[j]; return lerp(a, r !== undefined && Number.isFinite(r) ? r : HeroRig.SQUARE[j], sq); }); }
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, goal.stopW ?? 1.5, sq) : wr; }
@@ -2707,7 +2707,8 @@ export class HeroRig {
     const RF = goal.ref;
     if (RF && built) {
       const w = (RF.w ?? 6) * goalW;
-      for (let i = 6; i < HAND_N; i++) { Q.rest[i] = lerp(Q.rest[i], RF.x[i], goalW); Q.wr[i] = Math.max(Q.wr[i] * (1 - goalW), w); }
+      // (a number missing or not finite is left out: the pose's others still hold)
+      for (let i = 6; i < HAND_N; i++) { const v = RF.x[i]; if (!Number.isFinite(v)) continue; Q.rest[i] = lerp(Q.rest[i], v, goalW); Q.wr[i] = Math.max(Q.wr[i] * (1 - goalW), w); }
     }
     Q.clear = 0;
     const F = goal.floor;
@@ -2845,9 +2846,12 @@ export class HeroRig {
     const M = this.handM[hi]!, S = this.handS[hi], Q = this.handQ[hi], x = S.x;
     this.askHand(hi, c, grip, holds, goal ?? HeroRig.NO_TIPS, goal ? goalW : 0, dt, () => { /* no targets */ });
     for (let i = 0; i < 6; i++) x[i] = 0;
-    for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
-    x[HP_ARCH] = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1));
-    if (goal?.pose && goalW > 0.001) { const g = goal.pose; for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], x[i] + (g[i] - x[i]) * goalW)); }
+    // (a rest that isn't a number — a malformed ask upstream — taken as the joint's middle: never into the saved state)
+    for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Number.isFinite(Q.rest[i]) ? Q.rest[i] : (M.lo[i] + M.hi[i]) / 2));
+    // (the arch with the grip — unless a reference pose gives its own)
+    const archG = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1)), archR = goal?.ref?.x[HP_ARCH];
+    x[HP_ARCH] = archR !== undefined && Number.isFinite(archR) ? Math.min(M.hi[HP_ARCH], Math.max(M.lo[HP_ARCH], lerp(archG, archR, goalW))) : archG;
+    if (goal?.pose && goalW > 0.001) { const g = goal.pose; for (let i = 6; i < x.length; i++) { const v = g[i]; if (v !== undefined && Number.isFinite(v)) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], x[i] + (v - x[i]) * goalW)); } }
     else if (holds && goal?.around && goalW > 0.001) this.closeAround(hi, c, goal, goalW, dt);
     S.ready = true;
     const P = this.fkP, U = this.fkU, K = this.fkK, Zf = this.fkZ, hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
