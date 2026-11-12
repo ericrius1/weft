@@ -57,3 +57,36 @@ test('near the origin, prevViewProjRel · (p − eye) is prevViewProj · p of th
   });
   assert.ok(worst < 0.01, `${worst} px`);
 });
+
+// An independent reference, sharing no code with the camera: the pinhole's projection in doubles from the camera's
+// definition (yaw 0 looks down -z, positive yaw turns left; right = (cos yaw, 0, -sin yaw), forward = (-sin yaw cos
+// pitch, sin pitch, -cos yaw cos pitch), up = right x forward; x_ndc = f/aspect * right.d / forward.d).
+const pinhole = (eye, yaw, pitch, fovY, p) => {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const f = [-sy * cp, sp, -cy * cp], r = [cy, 0, -sy];
+  const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+  const d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const k = 1 / Math.tan(fovY / 2), z = dot(d, f);
+  return [((k / (W / H)) * dot(d, r) / z) * W / 2, (k * dot(d, u) / z) * H / 2];
+};
+
+test('against a double-precision pinhole that shares no code with the camera: this and last frame, walking, at the origin, 1,000 and 6,000 km', () => {
+  for (const [name, o] of [['origin', [0, 0, 0]], ['1,000 km', [1e6, 120, -7.3e5]], ['6,000 km', [6e6, 2500, -4.1e6]]]) {
+    const c = new Camera(); c.fovY = 1; c.near = 0.1;
+    let worst = { now: 0, prev: 0 }, last = null;
+    for (const [dx, dy, dz, yaw, pitch] of path.slice(0, 4)) {
+      const eye = [o[0] + dx, o[1] + dy, o[2] + dz];
+      c.position = eye; c.yaw = yaw; c.pitch = pitch; c.update(W, H);
+      for (const [x, y, z] of points) {
+        const p = [eye[0] + x, eye[1] + y, eye[2] + z];
+        worst.now = Math.max(worst.now, far(px(c.viewProjRel, x, y, z), pinhole(eye, yaw, pitch, 1, p)));
+        const ref = last ? pinhole(last.eye, last.yaw, last.pitch, 1, p) : pinhole(eye, yaw, pitch, 1, p);
+        worst.prev = Math.max(worst.prev, far(px(c.prevViewProjRel, x, y, z), ref));
+      }
+      last = { eye, yaw, pitch };
+    }
+    console.log(`  ${name.padEnd(9)} against the pinhole: this frame ${worst.now.toExponential(2)} px, last frame ${worst.prev.toExponential(2)} px (4K)`);
+    assert.ok(worst.now < 0.01 && worst.prev < 0.01, `${name}: ${worst.now} / ${worst.prev} px`);
+  }
+});
