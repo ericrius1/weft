@@ -2480,13 +2480,13 @@ export class HeroRig {
       const k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0;
       Q.w[f] = k;
       if (tip) toC(tip, Q.tgt, f * 3);
-      const o = hpOf(f), wr = 0.3 + 2.7 * (1 - Math.min(1, k));
+      const o = hpOf(f), wr = 0.3 + 0.9 * (1 - Math.min(1, k));
       Q.resting[f] = tip ? 0 : 1;
       if (f === 0) {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
-        const r = tip ? [0.2, 0.05, 0.15, 0.1] : keys ? [0.35, -0.05, 0.2, 0.1] : holds ? [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip]
+        const r = tip ? [0.25, 0.1, 0.35, 0.2] : keys ? [0.35, -0.05, 0.2, 0.1] : holds ? [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip]
           : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
-        for (let j = 0; j < 4; j++) { Q.rest[o + j] = r[j]; Q.wr[o + j] = wr; }
+        for (let j = 0; j < 4; j++) { Q.rest[o + j] = r[j]; Q.wr[o + j] = tip ? 0.6 : wr; }
         continue;
       }
       const g = f - 1;
@@ -2495,7 +2495,8 @@ export class HeroRig {
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
       if (tip) { ab = FAN[g]; ang = [0.4, 0.6, 0.42]; }
       else if (keys) ang = ang.map((a, j) => lerp(a, [0.32, 0.55, 0.32][j], goalW));
-      Q.rest[o] = ab; Q.wr[o] = wr * 1.5;
+      // (a spread held is an effort: drawn back harder than a bend)
+      Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = wr; }
     }
     Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;

@@ -277,7 +277,7 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
 
 /** the weights: a fingertip's miss (per mm), the end joint's tendon, the webs and the enslaving bands (hinges past
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
-const W_FLOOR = 1, W_DIP = 1.2, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.3;
+const W_FLOOR = 1, W_DIP = 1.2, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
 /** the fingertips kept this far apart (a share of the knuckles' width) */
 const GAP = 0.26;
 
@@ -488,7 +488,7 @@ export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): nu
     for (let f = 0; f < 5; f++) if (Q.w[f] > 0) worst = Math.max(worst, Math.hypot(S.T[f * 3] - Q.tgt[f * 3], S.T[f * 3 + 1] - Q.tgt[f * 3 + 1], S.T[f * 3 + 2] - Q.tgt[f * 3 + 2]));
     let gm = 0;
     for (let i = 0; i < N; i++) if (!held(i)) gm = Math.max(gm, Math.abs(S.g[i]));
-    if (worst < 0.0002 && gm < 0.05) break;
+    if (worst < 0.0002 && gm < 0.004) break;
     let ok = false;
     for (let t = 0; t < 5 && !ok; t++) {
       const A = S.A;
