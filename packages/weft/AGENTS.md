@@ -399,28 +399,51 @@ whole piece is planned once, and the hands are posed from the clock's second alo
 puts a finger on the wrong key. `p.struck` lists every stroke (hand, finger, `t0`, `up`) to schedule the sound ahead,
 and `p.simplified` names any note it had to stretch for. `p.stopScore()` stops it and takes the hands off the clock.
 
-The hand as a hand (`@ericrius1/cast/fingers`): `HandModel.of(asset, 'L' | 'R')` reads a body's bind hand (null unless
-every finger and the thumb are three bones each), and `solveHand(model, solve, ask)` places several fingertips at once
-with each joint inside a person's range (`body/anatomy.ts`: knuckle spread and the webs, the thumb's opposing saddle, the
-palm's arch, enslaved neighbours). The rig uses it by itself for any `HandGoal` with fingertip targets (`tips`); a goal
-without them poses the hand exactly as before. Four `HandGoal` options steer it:
+The hand as a hand (`@ericrius1/cast/fingers`, cast 0.3.0): `HandModel.of(asset, 'L' | 'R')` reads a body's bind hand
+(null unless every finger and the thumb are three bones each), and `solveHand(model, solve, ask)` places several
+fingertips at once with each joint inside a person's range (`body/anatomy.ts`: knuckle spread and the webs, the thumb's
+opposing saddle, the palm's arch, enslaved neighbours). You rarely call it yourself. The rig uses it for every
+`HandGoal` with fingertip targets (`tips`), on any body with three-bone fingers. A goal without targets poses an older
+body's fingers exactly as before. A target more than about a finger's length from its knuckle fades out (by 1.5
+lengths it's let go) and the finger keeps its own rest, so a hand still on its way to a flute's holes doesn't reach
+for them straight-fingered. Five `HandGoal` options steer the solve:
 
 - `palmFree` (0..1, default 0): how far the palm may move and turn from the goal's `palm`/`fwd`/`down` to reach its
-  fingertips (1: within the wrist's and arm's ease, a few cm and tens of degrees). Use it for a hand that places itself
-  on its notes (keys, a fingerboard); leave it 0 for a hand held to something (a flute's holes). Ignored with `exact`.
+  fingertips (1: within the wrist's and arm's ease, a few cm and tens of degrees). The palm and fingers are solved
+  together and the arm is handed the palm as solved. Use it for a hand that places itself on its notes (keys, a
+  fingerboard). Leave it 0 for a hand held to something (a flute's holes). Ignored with `exact`.
 - `tipW` (per finger, thumb first, default 1): how much each target counts. Lower it for a finger that only hovers
   over its place, so it gives way to the fingers that are playing.
+- `square` (per finger, 0..1): how square a finger comes down on its target (1: its middle joint well bent and its end
+  joint with it, the tip meeting the string end-on), as a guitarist's or violinist's stopping finger does.
+- `lay` (per finger, 0..1): how flat a finger lies along what it presses (1: its middle and end joints straight and held
+  down along the surface too). Use it for a barre, the index laid across every string.
 - `floor` (`{ at, n, clear }`, world): a surface the fingertips without a target keep `clear` metres above (the keys'
   tops, a fingerboard), so a resting finger never sinks into it.
-- `lay` (per finger, 0..1): how flat a finger lies along what it presses (1: its middle and end joints straight). Use
-  it for a barre, the index laid across every string.
 
-A fretting or stopping hand (a guitar, a violin): give the fingertip targets on the strings (null for a finger not
-stopping), `palmFree: 1`, `turn: 0`, the fingerboard as `floor` (a point on it, its normal toward the hand, `clear`
-~0.006), `lay` for a barre, and a starting frame the solve moves from: `palm` near where the hand sits under the neck
-(the knuckles by the board's edge), `fwd` along the hand across the neck, `down` its palm toward the board. The solve
-starts there each frame (warm from the last), so a frame a few cm off still lands; one on the wrong side of the neck
-does not. `rig.handMiss(i)` gives each fingertip's miss after the solve (m) for checking.
+A fretting or stopping hand (a guitar, a violin) gets its goal from the instrument each frame: the fingertip targets
+on the strings at their frets or stops (null for a finger not stopping), `palmFree: 1`, `turn: 0`, `square` for the
+stopping fingers, `lay` for a barre, the fingerboard as `floor` (a point on it, its normal toward the hand, `clear`
+~0.006), and a starting frame the solve moves from. Put `palm` near where the hand sits under the neck (the knuckles
+by the board's edge), `fwd` along the hand across the neck, and `down` with the palm toward the board. The solve starts
+there each frame (warm from the last), so a frame a few cm off still lands. One on the wrong side of the neck does not.
+`rig.handMiss(i)` gives each fingertip's miss after the solve (m) for checking. `HeroRig.handIters` (default `[8, 6]`)
+caps the iterations a frame, and `HeroRig.keysHand` holds a hand's rests at the keys.
+
+The pianist uses the same solve: on a clock it fingers each chord with the run of fingers that fits it (thumb and
+little finger too, up to an octave and a white key a hand), the palm free, and the long fingers playing further in
+than the thumb (`p.fingerIn`). For a body with a built hand, call `p.forHand(asset.header.hand.len)` before `sit()`.
+It places the palm where real players hold theirs (knuckles back and over the wrist) and sets `reach`, `pitch`,
+`hover`, `idleHover`, `fingerIn` and `idleW` for a hand of that length. Bodies without one keep the defaults.
+
+A body file can carry its own hand: `header.hand` (`{ source, len, breadth }`: where the modelled hand came from, its
+wrist-to-middle-fingertip length in m, its breadth against the source's) says the hand is grafted on and weighted to
+its own bones. With it, `fitHands` leaves the weights alone, and with nothing to reach the fingers rest through the
+hand model (each about its own knuckle's axis, a relaxed hand's curls) instead of the older bodies' one-axis curl.
+cast only checks that `header.hand` is there. World's graft also writes `v: 2` for a hand with anatomically placed
+joints and metacarpals, which cast doesn't read. The two optional bones `ring0L/R` and `pinky0L/R` (the ring and
+little metacarpals, parents of `ring1`/`pinky1`) are found by name and turn with the palm's arch. Without them a
+built hand still works, with no arch in the skin. A file without `header.hand` loads and poses as before.
 
 ## Where to look in the source
 
