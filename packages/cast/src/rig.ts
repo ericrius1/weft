@@ -2501,8 +2501,10 @@ export class HeroRig {
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      if (tip) { ab = FAN[g]; ang = [0.4, 0.6, 0.42]; }
-      else if (keys) ang = ang.map((a, j) => lerp(a, [0.32, 0.55, 0.32][j], goalW));
+      if (tip) { ab = FAN[g]; ang = [0.5, 0.7, 0.45]; }
+      // (resting over the keys: curved as real pianists' resting fingers are — MediaPipe on photographs of hands at rest on
+      // the keys, the median of 7: MCP ~30-48°, PIP ~32-40°, DIP ~25-32°; docs/hands.md in World)
+      else if (keys) ang = ang.map((a, j) => lerp(a, [0.6, 0.62, 0.45][j], goalW));
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = wr; }
