@@ -8,8 +8,9 @@
   fields (`viewProjRel, invViewProjRel, prevViewProjRel, camLo`): nothing that was there moves, and a shader that
   doesn't read them is given the same code as before. `weft/frame` gains `fromEye(p)` (`(p − camPos) − camLo`),
   `clipAt(p)` (a world position's clip position through the relative matrix: as `viewProj * p`, without the eye's
-  large translation rounded into the product), `clipRel(r)` (a position already relative to the eye) and
-  `prevClipAt(p)`.
+  large translation rounded into the product), `clipRel(r)` (a position already relative to the eye), `prevClipAt(p)`
+  and `prevClipRel(r)` (last frame's clip position, for motion vectors) and `relFromDepth(uv, d)` (`worldFromDepth`
+  relative to the eye). A draw through them is as sharp 6,000 km from the origin as at it (`test/camera.test.mjs`).
 - **`AGENTS.md`'s cast section** covers cast 0.6.0: a reference pose for a built hand (`HandGoal.ref`), `neck.restAt`,
   `stopRest`/`stopW`, the bow grasp drawn in.
 - **`AGENTS.md`'s cast section** covers cast 0.5.0: a neck held in the hand (`HandGoal.neck`) for a fretting or
