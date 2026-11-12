@@ -30,6 +30,19 @@ export class Camera {
   readonly invProj = mat4();
   readonly invView = mat4();
   readonly prevViewProj = mat4();
+  /** camera-relative matrices: the same view with the eye at the origin, for positions given as `p − position` (the
+   *  difference taken in doubles on the CPU, or as `(p − camPos) − camLo` on the GPU: shaders/frame.wgsl `fromEye`). Only
+   *  differences reach the GPU, so a draw is as sharp a thousand kilometres from the world's origin as beside it. */
+  readonly viewRel = mat4();
+  readonly viewProjRel = mat4();
+  readonly invViewProjRel = mat4();
+  /** last frame's viewProj taken about this frame's eye (motion vectors for camera-relative positions) */
+  readonly prevViewProjRel = mat4();
+  /** what float32 loses of `position`: position − fround(position), per axis (Frame.camPos + Frame.camLo is the eye to
+   *  a float's precision of the lost part: under a nanometre at 1,000 km) */
+  readonly camLo: V3 = [0, 0, 0];
+  private prevRot = mat4();
+  private prevPos: V3 = [0, 0, 0];
   readonly planes = new Float32Array(24);
   forward: V3 = [0, 0, -1];
   right: V3 = [1, 0, 0];
@@ -49,7 +62,7 @@ export class Camera {
   /** recompute matrices for a viewport (width, height in pixels) */
   update(width: number, height: number) {
     this.aspect = width / Math.max(1, height);
-    if (!this.first) this.prevViewProj.set(this.viewProj);
+    if (!this.first) { this.prevViewProj.set(this.viewProj); this.prevRot.set(this.viewProjRel); this.prevPos = [...this.position] as V3; }
     if (this.viewOverride) {
       this.view.set(this.viewOverride);
       mat4Invert(this.view, this.invView);
@@ -92,7 +105,18 @@ export class Camera {
     mat4Invert(this.viewProj, this.invViewProj);
     mat4Invert(this.proj, this.invProj);
     frustumPlanes(this.viewProj, this.planes);
-    if (this.first) { this.prevViewProj.set(this.viewProj); this.first = false; }
+    // (camera-relative: the view's rotation alone. A lookAt's translation is −R·eye and nothing else, and an override's
+    // eye is read back from its inverse just above, so zeroing it leaves the rotation exact)
+    this.viewRel.set(this.view); this.viewRel[12] = this.viewRel[13] = this.viewRel[14] = 0;
+    mat4Mul(this.proj, this.viewRel, this.viewProjRel);
+    mat4Invert(this.viewProjRel, this.invViewProjRel);
+    const p = this.position;
+    for (let i = 0; i < 3; i++) this.camLo[i] = p[i] - Math.fround(p[i]);
+    if (this.first) { this.prevViewProj.set(this.viewProj); this.prevRot.set(this.viewProjRel); this.prevPos = [p[0], p[1], p[2]]; this.first = false; }
+    // last frame's rotation-only matrix times a translation by (last eye − this eye), the difference in doubles
+    const m = this.prevRot, o = this.prevViewProjRel, d0 = p[0] - this.prevPos[0], d1 = p[1] - this.prevPos[1], d2 = p[2] - this.prevPos[2];
+    o.set(m);
+    for (let r = 0; r < 4; r++) o[12 + r] = m[12 + r] - (m[r] * d0 + m[4 + r] * d1 + m[8 + r] * d2);
   }
 
   /** forget motion history (after a cut, so motion vectors don't smear; a Taau drops its history too) */
