@@ -129,7 +129,10 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  the wood, and the hand is a player's on a neck rather than a pianist's at the keys: its thumb's rests a thumb's
    *  wrapped round behind a neck (its tip's target is the caller's: on the neck's back, or over its edge), the fingers'
    *  without a target lifted from the knuckle, hovering */
-  neck?: { at: V3; axis: V3; up: V3; half: number; depth: number; air?: number; w?: number } }
+  neck?: { at: V3; axis: V3; up: V3; half: number; depth: number; air?: number; w?: number;
+    /** how firmly the index's base is drawn onto the neck (0..1, default 0): a player's neck lies in the web between the
+     *  thumb and the index, the index's base against the board's edge */
+    rest?: number } }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -2691,7 +2694,7 @@ export class HeroRig {
     // (a neck held: its line, ways and measures into hand space)
     const NG = goal.neck;
     if (NG) {
-      const NQ = (Q.neck ??= new Float64Array(17)), a = this.fl, b = this.fl2;
+      const NQ = (Q.neck ??= new Float64Array(18)), a = this.fl, b = this.fl2;
       toC(NG.at, a, 0); NQ.set(a, 0);
       toC(add(NG.at, NG.axis), b, 0);
       let l = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) || 1;
@@ -2705,7 +2708,7 @@ export class HeroRig {
       NQ[6] = u0 / l; NQ[7] = u1 / l; NQ[8] = u2 / l;
       NQ[9] = NQ[7] * NQ[5] - NQ[8] * NQ[4]; NQ[10] = NQ[8] * NQ[3] - NQ[6] * NQ[5]; NQ[11] = NQ[6] * NQ[4] - NQ[7] * NQ[3];
       const M = this.handM[hi], k = M ? M.width / 0.048 : 1;
-      NQ[12] = NG.half; NQ[13] = NG.depth; NQ[14] = NG.air ?? HeroRig.neckHand.air; NQ[15] = HeroRig.neckHand.joint * k; NQ[16] = (NG.w ?? 1) * goalW;
+      NQ[12] = NG.half; NQ[13] = NG.depth; NQ[14] = NG.air ?? HeroRig.neckHand.air; NQ[15] = HeroRig.neckHand.joint * k; NQ[16] = (NG.w ?? 1) * goalW; NQ[17] = NG.rest ?? 0;
     } else if (Q.neck) Q.neck[16] = 0;
   }
   private fl = new Float64Array(3); private fl2 = new Float64Array(3);

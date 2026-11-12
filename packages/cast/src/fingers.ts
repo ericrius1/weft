@@ -321,7 +321,8 @@ export interface HandAsk {
   /** a neck held in the hand (a guitar's, a violin's; HandGoal.neck), hand space: a point on the fingerboard's surface
    *  over the neck's middle (0-2), the neck's way (3-5), out of the fingerboard (6-8), across it (9-11), the board's half
    *  width (12), the neck's depth under it (13), the air the palm's skin keeps from the wood (14), the clearance of the
-   *  knuckles' and joints' centres (15: a finger's half thickness, so the skin just touches), its weight (16; 0: none).
+   *  knuckles' and joints' centres (15: a finger's half thickness, so the skin just touches), its weight (16; 0: none),
+   *  how firmly the index's knuckle is drawn onto the wood (17: the neck in the web between thumb and index).
    *  The palm's skin, the knuckles and the fingers' and thumb's joints are kept off the wood (optional: absent, none) */
   neck?: Float64Array;
 }
@@ -683,16 +684,22 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
           return sdAt(xx[0] + RR[0] * l0 + RR[1] * l1 + RR[2] * l2, xx[1] + RR[3] * l0 + RR[4] * l1 + RR[5] * l2, xx[2] + RR[6] * l0 + RR[7] * l1 + RR[8] * l2);
         };
         const s = at(P, pb, R, x);
-        if (s >= NK[15]) continue;
-        const r = wN * (NK[15] - s);
+        // (the index's knuckle rests against the wood â€” the neck in the web between the thumb and the index â€” as far as
+        // NK[17] asks; every other joint only kept off it)
+        const rest = f === 1 && jj === 0 ? NK[17] : 0, rs = NK[15] + 0.003;
+        // (a finger laid flat â€” a barre â€” lies on the strings by its joints: only its knuckle is kept off the wood)
+        if (jj > 0 && Q.lay[f] > 0.5) continue;
+        if (s >= NK[15] && !(rest > 0 && s > rs)) continue;
+        const r = s < NK[15] ? wN * (NK[15] - s) : -wN * rest * (s - rs);
         cost += r * r;
         if (!jac) continue;
+        const gk = s < NK[15] ? -wN : -wN * rest;
         for (let a = 0; a < C.length; a++) {
           const c = C[a];
           xt.set(x); xt[c] += 1e-5;
           M.fk(xt, f, fq, null, S.fK, S.fZ);
           rotM(xt[3], xt[4], xt[5], Rq);
-          GR[c] = -wN * (at(fq, 0, Rq, xt) - s) / 1e-5;
+          GR[c] = gk * (at(fq, 0, Rq, xt) - s) / 1e-5;
         }
         accRow(H, g, r, C);
       }
