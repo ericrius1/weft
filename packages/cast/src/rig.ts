@@ -878,8 +878,8 @@ export class HeroRig {
     /** a built hand's idle finger held as a lever (see askHand): how much less bent than its playing neighbours its
      *  knuckle and middle joint are (rad), the end joint's share of the middle's, the bands they're kept in (rad), and the
      *  goal weight (tipW) at which it's wholly idle, how much the prior lets its bends go, and the knuckle and middle joint
-     *  of a hand with no finger playing (rad) */
-    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [-0.25, 0.6], at: 0.1, letGo: 1, rest: [0.2, 0.25] },
+     *  of a hand with no finger playing (rad), and how firmly its knuckle, middle and end joints are held there */
+    lever: { mcp: 0.15, pip: 0.35, dip: 0.5, band: [0.05, 0.5], mcpBand: [-0.25, 0.6], at: 0.1, letGo: 1, rest: [0.2, 0.25], w: [1, 4, 4] },
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2613,6 +2613,10 @@ export class HeroRig {
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : sq > 0 ? lerp(wr, 1.5, sq) : wr; }
+      // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
+      // — the cheap way up — rather than curling)
+      // (a finger with no target at all — a held pose's: one the Pianist hovers keeps its playing neighbours' weights)
+      if (lv > 0 && !tip) for (let j = 0; j < 3; j++) Q.wr[o + 1 + j] = K.lever.w[j];
       // (laid flat along what it presses: its middle and end joints straight)
       const lay = goal.lay?.[f] ?? 0;
       Q.lay[f] = lay;
@@ -2632,7 +2636,9 @@ export class HeroRig {
     }
     if (pr > 0) for (let f = 0; f < 5; f++) {
       const idle = Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5), o = hpOf(f), kk = lerp(1, idle ? K.restIdle * (f === 0 ? K.restThumb : 1) : K.restPlay, pr);
-      for (let j = 0; j < 4; j++) Q.wr[o + j] *= kk;
+      // (a lever's bends keep their own weights: the prior has let them go)
+      const lv = f > 0 && !goal.tips[f] ? this.lever[hi][f] : 0;
+      for (let j = 0; j < 4; j++) Q.wr[o + j] *= j > 0 ? lerp(kk, 1, lv) : kk;
       if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
     }
     Q.clear = 0;
