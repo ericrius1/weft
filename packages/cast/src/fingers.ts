@@ -170,6 +170,10 @@ export class HandModel {
       const d = Math.PI / 180, S = (i: number, r: number[]) => set(i, r[0] * d, r[1] * d, r[2] * d, r[3] * d);
       S(23, CMC_OLD.flex); S(24, CMC_OLD.abd); S(25, TMCP_OLD);
     }
+    // (a built hand's thumb reaches the little finger's base: Kapandji's 9th step needs the column's flexion to ~62° and
+    // the MCP's to ~75° — within real thumbs' active ranges (Hume et al. 1990: MCP to the mid 70s in many); the
+    // comfortable bands stay where they were)
+    if (this.built) { this.hi[23] = 62 * Math.PI / 180; this.hi[25] = 75 * Math.PI / 180; }
     this.pron = this.built ? PRON : PRON_OLD;
   }
 
