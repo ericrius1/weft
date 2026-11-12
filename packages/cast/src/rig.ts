@@ -32,7 +32,7 @@
 // whose constraints can't fling them: MAX_KICK). See MIGRATION.md for what each project's copy differs by.)
 import { type V3, add, sub, scale, norm, cross, dot, len, clamp, lerp, lerp3, smoothstep, rotateAxis, damp, drotateAxis, ddamp, q30, angDiff, ease, minJerk, rej, cdSpring, Spring3, bump } from './math.js';
 import type { HeroAsset } from './asset.js';
-import { MAX_BONES } from './asset.js';
+import { MAX_BONES, isOwnBody } from './asset.js';
 import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose, BodyModel, BodyState } from './body/solve.js';
@@ -1009,6 +1009,7 @@ export class HeroRig {
   get faceState(): { gaze: V3; blink: number; face: Readonly<FaceExpr>; s: FaceState } { return { gaze: this.gaze, blink: this.blink, face: this.fx, s: this.face.state }; }
 
   constructor(public asset: HeroAsset) {
+    if (isOwnBody(asset.header)) throw new Error(`HeroRig: ${asset.header.char} is a ${asset.header.kind}, not a person (pose it through its own rig)`);
     this.B = asset.bones;
     this.bi = asset.index;
     this.female = asset.header.char === 'hero';
