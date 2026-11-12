@@ -159,7 +159,12 @@ export class Pianist {
     // the keyboard; scaled by the hand's length from Katara's 17.8 cm)
     const k = len / 0.178;
     this.prior = 1; this.idleRelease = true; this.reach = [0.25 * len, 0.25 * len]; this.pitch = 0.12; this.idleHover = 0.004; this.hover = 0.008;
-    this.fingerIn = [0.025, 0.045, 0.06, 0.055, 0.02].map((v) => v * k); this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; return this; }
+    this.fingerIn = [0.025, 0.045, 0.06, 0.055, 0.02].map((v) => v * k); this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
+  /** how far over the white keys' tops a finger with nothing to play is held clear (m: the hand's solve's floor). A built
+   *  hand's (forHand) 18 mm: its idle fingers lie long as levers now, and at 6 mm their tips sank into the black keys'
+   *  fronts, so from above they read as stubs; side clips of pianists: idle tips 23 mm over the hand's lowest (median),
+   *  World tools/hands/idlejoints.mjs, Checkpoint J */
+  idleClear = 0.006;
   /** how high a finger with nothing to play rides over the white keys' tops (m; real players' idle fingers stay low,
    *  within about a centimetre of the keys, and move with their neighbours) */
   idleHover = HOVER;
@@ -612,7 +617,7 @@ export class Pianist {
       this.palms[h] = palm;
       // (the hand's own solve places the palm with its fingers, a resting finger keeping clear of the keys' tops)
       goals.push({ palm, fwd: norm(add(scale(A.toward, -1), scale(A.up, this.pitch))), down: scale(A.up, -1), tips, turn: 0, palmFree: 1, tipW,
-        floor: { at: mid, n: A.up, clear: 0.006 }, prior: this.prior });
+        floor: { at: mid, n: A.up, clear: this.idleClear }, prior: this.prior });
     }
     return [goals[0], goals[1]];
   }
