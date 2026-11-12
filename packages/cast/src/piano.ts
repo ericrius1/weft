@@ -221,6 +221,9 @@ export class Pianist {
     for (let n = 21; n <= 108; n++) this.noteOff?.(n);
     this.pedalSet?.(false);
     this.score = null;
+    // (and off the clock: the hands back on the frames' dt, not miming the rest of the piece unheard)
+    this.clock = null;
+    this.struck = [];
   }
   get playingScore() { return !!this.score; }
 

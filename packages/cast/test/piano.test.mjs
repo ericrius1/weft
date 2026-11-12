@@ -88,3 +88,16 @@ test('on the frames\' dt with no pedal callback, a score with pedalling plays to
   for (let i = 0; i < 60 * 8; i++) P.update(1 / 60, 0);
   assert.equal(P.playingScore, false);
 });
+
+test('on a clock, stopScore() takes the hands off it: the clock no longer read, nothing left to strike', () => {
+  let s = 1.5, reads = 0;
+  const { P } = seated(() => { reads++; return s; });
+  P.update(1 / 60, 0);
+  assert.ok(reads > 0);
+  P.stopScore();
+  reads = 0;
+  for (let i = 0; i < 30; i++) { s += 1 / 60; P.update(1 / 60, 0); }
+  assert.equal(reads, 0);
+  assert.equal(P.struck.length, 0);
+  assert.equal(P.playingScore, false);
+});
