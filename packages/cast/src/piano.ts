@@ -99,7 +99,7 @@ const SPREAD = [-0.05, -0.024, 0, 0.0235, 0.046];
  *  finger's hover over its place counts against the playing ones (HandGoal.tipW) */
 const SLOTS = [-0.05, -0.0245, 0, 0.0235, 0.046];
 const HOVER = 0.014, FALL = 0.1, REACH = 0.2, LIFT = 0.075, TRAVEL_END = 0.08, TRAVEL_MAX = 0.3, SPAN = 0.19, PAD = 0.004, LAND = 0.004;
-const THUMB_IN = 0.012, DEEP = 0.015, REST_W = 0.15;
+const THUMB_IN = 0.012, DEEP = 0.015, REST_W = 0.15, DEEP_EASE = 0.25;
 /** how long a finger's last key keeps it after the key's let go (s): its lift, a little more */
 const HOLD_UP = LIFT + 0.22;
 /** the longest a finger's rise from a key, or its way over to the next, is stretched to with time to spare (s) */
@@ -163,7 +163,13 @@ export class Pianist {
     // the keyboard; scaled by the hand's length from Katara's 17.8 cm)
     const k = len / 0.178;
     this.prior = 1; this.idleRelease = true; this.reach = [0.25 * len, 0.25 * len]; this.pitch = 0.12; this.idleHover = 0.004; this.hover = 0.008;
-    this.fingerIn = [0.025, 0.045, 0.06, 0.055, 0.02].map((v) => v * k); this.blackIn = 0.03 * k; this.blackExtra = [0, 0, 0, 0.012 * k, 0]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
+    // (Checkpoint V: where real fingertips land on a white key, measured from overhead footage through each frame's
+    // keyboard — World tools/hands/abovekeys.py, 59 frames of 4 players: thumb 10, index 49, middle 63, ring 53, little 35 mm in from the white
+    // keys' front edge, just short of the black keys' fronts; the thumb near the front, on its side. Ours had them
+    // 80 / 95 / 90 / 55 mm in, the long fingers wedged between the black keys: from above, a claw. Among the black keys
+    // (deepIn) the white keys are played further in, as before; on the black keys themselves, as before (blackAlong).)
+    this.fingerIn = [-0.007, 0.014, 0.028, 0.018, 0].map((v) => v * k); this.deepIn = [0.025, 0.045, 0.06, 0.055, 0.045].map((v) => v * k);
+    this.blackAlong = [0, 0.02, 0.03, 0.03, 0].map((v) => v * k); this.blackIn = 0.03 * k; this.blackExtra = [0, 0, 0, 0.012 * k, 0]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
   /** how far over the white keys' tops a finger with nothing to play is held clear (m: the hand's solve's floor). A built
    *  hand's (forHand) 18 mm: its idle fingers lie long as levers now, and at 6 mm their tips sank into the black keys'
    *  fronts, so from above they read as stubs; side clips of pianists: idle tips 23 mm over the hand's lowest (median),
@@ -191,6 +197,11 @@ export class Pianist {
   fingerIn = [0, 0, 0, 0, 0];
   /** how much further along a black key a built hand's long fingers land than its short ones, at most (m; forHand) */
   blackIn = 0;
+  /** a built hand's: how far in (m, from the press line) each finger plays a white key while the hand is among the black
+   *  keys (eased in and out over DEEP_EASE around each black key's stroke), and how far along a black key each lands
+   *  (forHand; null: the older rule from fingerIn) */
+  deepIn: number[] | null = null;
+  blackAlong: number[] | null = null;
   /** a built hand's fingers further still along a black key, each (m; forHand): the ring finger, shorter than the middle
    *  but landing level with it, came out bent at its middle joint in a black chord (Checkpoint Q: 13.43 s, PIP 45 deg
    *  against the others' 15-33) */
@@ -480,6 +491,20 @@ export class Pianist {
 
   private along(n: number): number { return dot(this.inst!.notePoint(n)!, this.inst!.axes.along); }
   /** a key that stands over the others (a black key: its touch point higher than middle C's) */
+  /** how far a hand is among the black keys at s (0..1): 1 from DEEP_EASE before a black key's finger is taken until it's
+   *  let go, easing in and out over DEEP_EASE on the clock (the same at every frame rate) */
+  private deepness(h: number, s: number): number {
+    let k = 0;
+    for (let f = 0; f < 5; f++) for (const x of this.byFinger[h][f]) {
+      const a = x.t0 - FALL - REACH - this.approachOf(h, f, x);
+      if (a - DEEP_EASE > s) break;
+      if (!this.black(x.note) || s > x.up + DEEP_EASE) continue;
+      const v = s < a ? (s - (a - DEEP_EASE)) / DEEP_EASE : s <= x.up ? 1 : 1 - (s - x.up) / DEEP_EASE;
+      if (v > k) k = v;
+    }
+    k = clamp(k, 0, 1);
+    return k * k * (3 - 2 * k);
+  }
   private black(n: number): boolean { const I = this.inst!, m = I.notePoint(60)!, p = I.notePoint(n); return !!p && dot(sub(p, m), I.axes.up) > 0.004; }
 
   /** the whole piece planned: hands, fingers, strokes, each hand's places */
@@ -645,6 +670,9 @@ export class Pianist {
       // (a hand with a black key under it plays its white keys further in, between the black ones, as a pianist's does)
       let deep = false;
       for (let f = 0; f < 5; f++) { const st = this.stroke(h, f, s).st; if (st && this.black(st.note)) deep = true; }
+      // (a built hand: how far among the black keys, 0..1, eased by the clock around each of its black keys' strokes —
+      // a boolean moved every white finger 20-40 mm in one frame as a black key came and went)
+      const dk = this.deepIn ? this.deepness(h, s) : deep ? 1 : 0;
       for (let f = 0; f < 5; f++) {
         const { st, dy: dy0, from, u, w, idle = 0 } = this.stroke(h, f, s);
         this.active[h][f] = !!st;
@@ -655,11 +683,12 @@ export class Pianist {
           // (the thumb, the short finger, plays a white key nearer its front — unless the hand's in among the black keys)
           // (a black key: a built hand's long fingers further along it than the thumb and little finger, as they are
           // longer — flatter, not hooked onto its front; Checkpoint L: the five-note black chord was a claw)
-          if (dot(sub(q, mid), A.up) >= 0.004) return this.blackIn > 0 ? add(q, scale(A.toward, -(Math.min(this.blackIn, Math.max(0, this.fingerIn[f] - this.fingerIn[0])) + (this.blackExtra[f] ?? 0)))) : q;
+          if (dot(sub(q, mid), A.up) >= 0.004) return this.blackAlong ? add(q, scale(A.toward, -(this.blackAlong[f] + (this.blackExtra[f] ?? 0)))) : this.blackIn > 0 ? add(q, scale(A.toward, -(Math.min(this.blackIn, Math.max(0, this.fingerIn[f] - this.fingerIn[0])) + (this.blackExtra[f] ?? 0)))) : q;
+          if (this.deepIn) return add(q, scale(A.toward, lerp((f === 0 ? THUMB_IN : 0) - this.fingerIn[f], -(this.deepIn[f] + (this.blackExtra[f] ?? 0)), dk)));
           return add(q, scale(A.toward, deep ? -(Math.max(DEEP, this.fingerIn[f]) + (this.blackExtra[f] ?? 0)) : (f === 0 ? THUMB_IN : 0) - this.fingerIn[f]));
         };
         // (an idle finger over its place; in among the black keys, as far in as the hand has gone)
-        const inIdle = deep && this.fingerIn[f] > 0 ? Math.max(DEEP, this.fingerIn[f]) + this.fingerIn[f] * 0.6 : this.fingerIn[f];
+        const inIdle = this.deepIn ? lerp(this.fingerIn[f], Math.max(DEEP, this.deepIn[f]) + this.deepIn[f] * 0.6, dk) : deep && this.fingerIn[f] > 0 ? Math.max(DEEP, this.fingerIn[f]) + this.fingerIn[f] * 0.6 : this.fingerIn[f];
         const idleAt = add(add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along))), scale(A.toward, -inIdle));
         let p = st ? key(st.note) : idleAt, dy = dy0;
         if (st && from && from.note !== st.note) { const q = key(from.note); p = [q[0] + (p[0] - q[0]) * u, q[1] + (p[1] - q[1]) * u, q[2] + (p[2] - q[2]) * u]; }

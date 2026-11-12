@@ -768,6 +768,16 @@ interface PhysChain { name: string; parent: number; bind: V3[]; b0: number; ch: 
  *  facing, pitch (toe up +, heel up -) and the ground's slope under it */
 interface Foot { p: V3; planted: boolean; from: V3; to: V3; t: number; dur: number; yaw: number; yaw0: number; lift: number; air: boolean; pitch: number; pitch0: number; slope: number; settle: boolean }
 
+/** the keys path's rules that are the pianist's alone (a built hand WITH the real hands' prior, HandGoal.prior) and
+ *  everything else's (0.6.1's, unchanged: pointing, plain tips, a Pianist without forHand). Pure, so a test pins them:
+ *  a playing finger's rests (knuckle, middle, end), their least weight, and the thumb's raised share by its key's top or
+ *  its target's height over the floor (0..1; eased for the pianist, switched at 6 mm for the rest) */
+export function keysTipRest(K: { tip: number[][]; tipBuilt: number[][]; tipBuiltPrior: number[][] }, built: boolean, prior: boolean, g: number): number[] { return (built ? (prior ? K.tipBuiltPrior : K.tipBuilt) : K.tip)[g]; }
+export function keysTipW(K: { wTip: number; wTipBuilt: number }, built: boolean, prior: boolean): number { return built && prior ? K.wTipBuilt : K.wTip; }
+export function thumbRaised(eased: boolean, up: number, keyTop?: number | null): number {
+  return eased ? smoothstep(0.003, 0.009, keyTop !== undefined && keyTop !== null && Number.isFinite(keyTop) ? keyTop : up) : up > 0.006 ? 1 : 0;
+}
+
 export class HeroRig {
   bones = new Float32Array(MAX_BONES * 16);
   dq = new Float32Array(MAX_BONES * 8);
@@ -909,7 +919,12 @@ export class HeroRig {
     // camera beside the hand sees it: index 33, middle 34, ring 22, little 3 deg) and drawn there harder (wTipBuilt): under
     // the real hands' prior — fitted from above, it can't tell a knuckle's bend from a middle joint's — every playing
     // knuckle came out 30-37, the ring's and the little finger's most wrong (32 and 30). Now 36/26/23/18)
-    tipBuilt: [[0.45, 0.45, 0.2], [0.45, 0.5, 0.22], [0.2, 0.45, 0.2], [-0.2, 0.25, 0.1]],
+    tipBuiltPrior: [[0.45, 0.45, 0.2], [0.45, 0.5, 0.22], [0.2, 0.45, 0.2], [-0.2, 0.25, 0.1]],
+    /** a built hand's playing rests on the keys path WITHOUT the prior (any tips goal that isn't a hold, loose or a neck:
+     *  pointing, plain tips, a Pianist without forHand): 0.6.1's, unchanged — the per-finger side-clip rests above are
+     *  the pianist's own (with goal.prior); applied to every built hand they moved World's pointing and tips goals
+     *  (the 0.6.2 release check) */
+    tipBuilt: [[0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.15, 0.55, 0.25], [0.2, 0.55, 0.25]],
     idleBuilt: [[0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.1, 0.45, 0.2], [0.15, 0.45, 0.2]],
     // (and its idle thumb out from the index, less bent: from above the real idle thumb lies out to the side of the hand;
     // its points' miss from above 5.7 -> 4.3 % of the hand's length, the fan to the index 9 -> 13° (real 19), its plan
@@ -2654,8 +2669,10 @@ export class HeroRig {
         const tw0 = tipWOf(goal, 0), idle = keys && tw0 < 0.5, eased = keys && built && !!goal.prior;
         const NH = HeroRig.neckHand;
         // (raised: by its key's top when the goal says it, else by the target's height; eased across, never a swap in a frame)
-        const kt = goal.keyTop?.[0], raised = smoothstep(0.003, 0.009, kt !== undefined && kt !== null && Number.isFinite(kt) ? kt : up);
-        const play = K.thumbTip.map((v, j) => lerp(v, K.thumbHigh[j], raised)), idleR = built ? K.thumbIdleBuilt : K.thumbIdle;
+        // (only for the pianist's built hand with the prior; any other floor goal switches at 6 mm as 0.6.1 did — eased for
+        // every floor it moved a Pianist without forHand's hand 15-52 deg: the 0.6.2 release check)
+        const raised = thumbRaised(eased, up, goal.keyTop?.[0]);
+        const play = eased ? K.thumbTip.map((v, j) => lerp(v, K.thumbHigh[j], raised)) : raised ? K.thumbHigh : K.thumbTip, idleR = built ? K.thumbIdleBuilt : K.thumbIdle;
         const pk = smoothstep(0, 1, clamp((tw0 - 0.04) / 0.96, 0, 1));
         const rt = keys ? (eased ? idleR.map((v, j) => lerp(v, play[j], pk)) : idle ? idleR : play) : neck ? NH.thumb : [0.25, 0.1, 0.35, 0.2];
         const ease0 = built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
@@ -2673,7 +2690,7 @@ export class HeroRig {
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      let tipAng = keys ? (built ? K.tipBuilt : K.tip)[g] : [0.4, 0.6, 0.42];
+      let tipAng = keys ? keysTipRest(K, built, !!goal.prior, g) : [0.4, 0.6, 0.42];
       // (a built hand's finger the Pianist holds lightly — nothing to play — is held off its key as a pianist's is: lifted
       // at the knuckle, not curled. Its middle and end joints as its playing neighbours have them (a little straighter),
       // its knuckle extended from theirs, so the whole finger rises like a lever and its tip hovers ahead over its key,
@@ -2709,7 +2726,7 @@ export class HeroRig {
       if (sq > 0) { const sr = goal.stopRest?.[f]; ang = ang.map((a, j) => { const r = sr?.[j]; return lerp(a, r !== undefined && Number.isFinite(r) ? r : HeroRig.SQUARE[j], sq); }); }
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
-      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, built ? K.wTipBuilt : K.wTip) : sq > 0 ? lerp(wr, goal.stopW ?? 1.5, sq) : wr; }
+      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, keysTipW(K, built, !!goal.prior)) : sq > 0 ? lerp(wr, goal.stopW ?? 1.5, sq) : wr; }
       // (a lever's middle and end joints held firmly, its knuckle lightly: kept clear of the keys, it rises at the knuckle
       // — the cheap way up — rather than curling)
       // (a finger with no target at all — a held pose's: one the Pianist hovers keeps its playing neighbours' weights)
