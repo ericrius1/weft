@@ -31,7 +31,7 @@ export class Camera {
   readonly invView = mat4();
   readonly prevViewProj = mat4();
   /** camera-relative matrices: the same view with the eye at the origin, for positions given as `p − position` (the
-   *  difference taken in doubles on the CPU, or as `(p − camPos) − camLo` on the GPU: shaders/frame.wgsl `rel`). Only
+   *  difference taken in doubles on the CPU, or as `(p − camPos) − camLo` on the GPU: shaders/frame.wgsl `fromEye`). Only
    *  differences reach the GPU, so a draw is as sharp a thousand kilometres from the world's origin as beside it. */
   readonly viewRel = mat4();
   readonly viewProjRel = mat4();

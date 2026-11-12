@@ -32,14 +32,14 @@ struct Frame {
 
 // a world position relative to the eye: the difference of two nearby floats is exact (or rounded once, at the size of
 // the difference, not of the coordinates), and the eye's low bits that a float32 camPos lost are taken off after
-fn rel(p: vec3f) -> vec3f { return (p - frame.camPos) - frame.camLo; }
+fn fromEye(p: vec3f) -> vec3f { return (p - frame.camPos) - frame.camLo; }
 // clip position of a world position, through the camera-relative matrix (as viewProj * p, without a large translation
 // rounded into the product)
-fn clipAt(p: vec3f) -> vec4f { return frame.viewProjRel * vec4f(rel(p), 1.0); }
+fn clipAt(p: vec3f) -> vec4f { return frame.viewProjRel * vec4f(fromEye(p), 1.0); }
 // clip position of a position already relative to the eye (an origin − camera from the CPU in doubles, plus local)
 fn clipRel(r: vec3f) -> vec4f { return frame.viewProjRel * vec4f(r, 1.0); }
 // last frame's clip position of a world position (motion vectors)
-fn prevClipAt(p: vec3f) -> vec4f { return frame.prevViewProjRel * vec4f(rel(p), 1.0); }
+fn prevClipAt(p: vec3f) -> vec4f { return frame.prevViewProjRel * vec4f(fromEye(p), 1.0); }
 
 // reversed-Z, infinite far plane: view distance along the view axis from a depth-buffer value
 fn linearDepth(d: f32) -> f32 { return frame.near / max(d, 1e-7); }
