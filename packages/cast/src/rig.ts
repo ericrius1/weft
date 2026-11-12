@@ -2419,6 +2419,10 @@ export class HeroRig {
     if (this.bi['index1' + t] === undefined) return;
     // (fingertips with targets: the hand solved as a hand — fingers.ts)
     if (goal && goalW > 0.001 && this.handM[hi] && goal.tips.some((x) => x)) { this.chordFingers(hi, side, c, grip, holds, goal, goalW, dt); return; }
+    // (a built hand — its file's own hand, header.hand — with no fingertip to place: its fingers at their rests through
+    // the hand model, each finger bending about its own knuckle's axis; the older path below turns every finger about
+    // the hand's one axis, which a modelled hand's curved, fanned fingers don't survive)
+    if (this.asset.header.hand && this.handM[hi]) { this.restFingers(hi, c, grip, holds, goal, goalW, dt); return; }
     // per-joint fingers: a relaxed hand cascades (the index curls least, the pinky most), the end joints fairly
     // straight; at an instrument each finger with a target reaches it — its curl solved so the tip lands there (the
     // middle and end joints coupled as a hand's are), its spread turned toward it
@@ -2500,7 +2504,7 @@ export class HeroRig {
     const Q = this.handQ[hi], tw = this.tipsW[hi];
     const CASCADE = [0, 0.04, 0.1, 0.16], REL = [-0.14, -0.02, 0.1, 0.2];
     const rc = Math.max(0, c) * (1 - grip);
-    const keys = !holds && !goal.loose, K = HeroRig.keysHand;
+    const keys = !holds && !goal.loose, K = HeroRig.keysHand, built = !!this.asset.header.hand;
     const FAN = keys ? K.fan : [0.06, 0.02, -0.03, -0.08];
     for (let f = 0; f < 5; f++) {
       const tip = goal.tips[f] ?? null;
@@ -2512,8 +2516,8 @@ export class HeroRig {
       Q.resting[f] = tip ? 0 : 1;
       if (f === 0) {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
-        const r = tip ? (keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2]) : keys ? K.thumbIdle : holds ? [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip]
-          : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
+        const r = tip ? (keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2]) : keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+          : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
         for (let j = 0; j < 4; j++) { Q.rest[o + j] = r[j]; Q.wr[o + j] = tip ? (keys ? K.wThumb : 0.6) : wr; }
         continue;
       }
@@ -2526,6 +2530,9 @@ export class HeroRig {
       // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
       // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
       else if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
+      // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
+      // toward the little finger — where the older hands' rests were nearly straight)
+      else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
       // (a spread held is an effort: drawn back harder than a bend)
       Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = tip && keys ? Math.max(wr, K.wTip) : wr; }
@@ -2615,6 +2622,32 @@ export class HeroRig {
     }
   }
   private mcq = new Float64Array(9);
+  private static NO_TIPS: HandGoal = { palm: [0, 0, 0], fwd: [0, 0, 1], down: [0, -1, 0], tips: [null, null, null, null, null], loose: true };
+  /** a built hand's fingers with nothing to reach: every number at its rest (askHand's: the curl's cascade, a grip's
+   *  wrap, the keys'), within its limits, no solve; the arch with the grip (a fist's palm cups) */
+  private restFingers(hi: number, c: number, grip: number, holds: boolean, goal: HandGoal | null, goalW: number, dt: number) {
+    const M = this.handM[hi]!, S = this.handS[hi], Q = this.handQ[hi], x = S.x;
+    this.askHand(hi, c, grip, holds, goal ?? HeroRig.NO_TIPS, goal ? goalW : 0, dt, () => { /* no targets */ });
+    for (let i = 0; i < 6; i++) x[i] = 0;
+    for (let i = 6; i < x.length; i++) x[i] = Math.min(M.hi[i], Math.max(M.lo[i], Q.rest[i]));
+    x[HP_ARCH] = Math.min(M.hi[HP_ARCH], 0.15 + 0.5 * clamp(grip, 0, 1) + 0.15 * clamp(c, 0, 1));
+    S.ready = true;
+    const P = this.fkP, U = this.fkU, K = this.fkK, Zf = this.fkZ, hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
+    for (let f = 0; f < 5; f++) {
+      M.fk(x, f, P, U, K, Zf);
+      for (let j = 0; j < 3; j++) {
+        M.bindOf(P, j * 3, hp); M.bindOf(P, j * 3 + 3, tp); M.bindOf(U, j * 3, up, true);
+        this.setBone(M.bones[f][j], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
+      }
+      if (M.mc[f] >= 0) {
+        const q = this.mcq;
+        M.mcPose(x, f, q);
+        M.bindOf(q, 0, hp); M.bindOf(q, 3, tp); M.bindOf(q, 6, up, true);
+        this.setBone(M.mc[f], this.skinPoint(M.hb, hp), this.skinPoint(M.hb, tp), this.skinDir(M.hb, up));
+      }
+    }
+  }
+  private fkP = new Float64Array(12); private fkU = new Float64Array(9); private fkK = new Float64Array(3); private fkZ = new Float64Array(3);
 
   /** a finger's spread and joint angles (bind-space, about the hand's own axes) that put its tip on a world point: the
    *  spread turns it toward the point; the curl (end joints coupled to the middle one, 2/3) is solved for the reach by
