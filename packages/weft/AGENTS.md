@@ -158,7 +158,9 @@ true` with `kit.step(dt)`. Use `kit.maxFps` to cap the rate.
 `lookAt(eye, target)`, `ortho`, `viewOverride`, `cut()`, `sees(center, r)`, `ray(px, py, w, h)`). For a second
 viewpoint (a shadow cascade, a mirror, a probe), use `kit.view(camera, size)`, and pass that view to the passes and
 computes that draw from it (`view: v`). Each view has its own `Frame` uniform and a `user: vec4` slot. A yaw of 0 looks
-down −z, and positive yaw turns left.
+down −z, and positive yaw turns left. A view can bind its own copy of the app's globals in place of the kit's (`v.globals =
+kit.uniforms(sameStruct)`: a second world in one frame, a place mounted in another's frame with its own sun); null binds
+the kit's.
 
 ## WGSL side
 
