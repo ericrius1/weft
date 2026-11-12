@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`AGENTS.md`'s cast section** covers cast 0.5.0: a neck held in the hand (`HandGoal.neck`) for a fretting or
+  stopping hand, the bow hold and the pick as grasps, `elbowW` of 100 or more, `Pianist.blackIn`.
 - **`AGENTS.md`'s cast section** covers cast 0.4.0: grasps (`grasp`, `graspGoal`, `HandGoal.pose`), `HandGoal.around`,
   the built hand's thumb, real pianists' hands as a prior (`HandGoal.prior`, `Pianist.forHand`), the hand's solve the
   same in every engine, a modelled face (`header.faceRig`) and lip timing from a recording (`lineFromWords`).
