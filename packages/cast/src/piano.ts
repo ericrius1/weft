@@ -415,6 +415,8 @@ export class Pianist {
   // ---------------------------------------------------------------- on a score's clock
 
   private along(n: number): number { return dot(this.inst!.notePoint(n)!, this.inst!.axes.along); }
+  /** a key that stands over the others (a black key: its touch point higher than middle C's) */
+  private black(n: number): boolean { const I = this.inst!, m = I.notePoint(60)!, p = I.notePoint(n); return !!p && dot(sub(p, m), I.axes.up) > 0.004; }
 
   /** the whole piece planned: hands, fingers, strokes, each hand's places */
   private planScore(score: Score) {
@@ -459,11 +461,15 @@ export class Pianist {
         for (const run of RUNS[Math.min(5, ord.length)]) {
           // (where the hand would sit for this run: each finger's place over its note, on average)
           const at = ord.reduce((m, o, i) => m + o.x - SLOTS[run[i]] * side, 0) / ord.length;
-          let spread = 0;
-          ord.forEach((o, i) => { spread += (o.x - SLOTS[run[i]] * side - at) ** 2; });
           // (staying put if every finger's within 1.5 cm of its note from here; else the move counts)
-          const stay = ord.every((o, i) => Math.abs(cur + SLOTS[run[i]] * side - o.x) < 0.015);
-          const cost = (stay ? 0 : 0.02 + Math.abs(at - cur)) + 4 * spread + (ord.length === 1 && (run[0] === 0 || run[0] === 4) ? 0.004 : 0);
+          const stay = ord.every((o, i) => Math.abs(cur + SLOTS[run[i]] * side - o.x) < 0.015), from = stay ? cur : at;
+          // (each finger's stretch from its resting place to its note: a little free, then dearer than moving the hand)
+          let stretch = 0;
+          ord.forEach((o, i) => { stretch += Math.max(0, Math.abs(o.x - SLOTS[run[i]] * side - from) - 0.006); });
+          // (and the thumb and the little finger, the short ones, kept off the black keys if they can be)
+          let short = 0;
+          ord.forEach((o, i) => { if ((run[i] === 0 || run[i] === 4) && this.black(o.n.note)) short += 0.012; });
+          const cost = (stay ? 0 : 0.02 + Math.abs(at - cur)) + 2 * stretch + short + (ord.length === 1 && (run[0] === 0 || run[0] === 4) ? 0.004 : 0);
           if (cost < best) { best = cost; fs = run; x = stay ? cur : at; }
         }
         if (side < 0) fs = [...fs].reverse();
@@ -477,7 +483,8 @@ export class Pianist {
     for (const st of struck.sort((a, b) => a.t0 - b.t0)) this.byFinger[st.hand][st.finger].push(st);
     for (const H of this.byFinger) for (const F of H) for (let i = 0; i + 1 < F.length; i++) {
       const a = F[i], b = F[i + 1];
-      a.up = Math.max(a.t0 + 0.03, Math.min(a.t1, b.t0 - FALL - LIFT * 0.6));
+      // (to another key, a whole lift's time to go over; the same key again, most of one)
+      a.up = Math.max(a.t0 + 0.03, Math.min(a.t1, b.t0 - FALL - LIFT * (a.note === b.note ? 0.6 : 1)));
     }
     this.struck = struck;
   }
@@ -496,18 +503,25 @@ export class Pianist {
   }
 
   /** a finger's stroke at second s: its note (null: resting) and its tip's height over the key's top (m) */
-  private stroke(h: number, f: number, s: number): { st: Struck | null; dy: number } {
-    let st: Struck | null = null;
+  private stroke(h: number, f: number, s: number): { st: Struck | null; dy: number; from: Struck | null; u: number } {
+    let st: Struck | null = null, pv: Struck | null = null;
     // (the next stroke takes the finger only once this one's let go: never before it's landed)
-    for (const x of this.byFinger[h][f]) { if (x.t0 - FALL - REACH > s || (st && s < st.up)) break; st = x; }
-    if (!st) return { st: null, dy: HOVER };
+    for (const x of this.byFinger[h][f]) { if (x.t0 - FALL - REACH > s || (st && s < st.up)) break; pv = st; st = x; }
+    if (!st) return { st: null, dy: HOVER, from: null, u: 1 };
     const D = this.inst!.pressDepth;
+    // (just let go of its last key for this one: it lifts as it goes over, never across the keys low)
+    const lift = LIFT * (pv && pv.note === st.note ? 0.6 : 1);
+    if (pv && s >= pv.up && s < pv.up + lift && s < st.t0 - LAND - FALL) {
+      // (up first, then over: across from a third of the way)
+      const u = clamp((s - pv.up) / lift, 0, 1), v = clamp((u - 0.3) / 0.7, 0, 1);
+      return { st, dy: -D + (D + HOVER) * Math.sin((Math.PI / 2) * Math.min(1, u * 1.4)), from: pv, u: v * v * (3 - 2 * v) };
+    }
     // (it lands LAND before the note's second: a rig's fingertip follows its goal about a frame behind)
     const t0 = st.t0 - LAND;
-    if (s < t0) { const u = clamp((t0 - s) / FALL, 0, 1); return { st, dy: HOVER * (1 - (1 - u) ** 3) }; }
-    if (s < st.up) return { st, dy: -D * Math.min(1, (s - t0) / 0.012) };
+    if (s < t0) { const u = clamp((t0 - s) / FALL, 0, 1); return { st, dy: HOVER * (1 - (1 - u) ** 3), from: null, u: 1 }; }
+    if (s < st.up) return { st, dy: -D * Math.min(1, (s - t0) / 0.012), from: null, u: 1 };
     const u = clamp((s - st.up) / LIFT, 0, 1);
-    return { st: s - st.up > 0.6 ? null : st, dy: -D + (D + HOVER) * Math.sin((Math.PI / 2) * u) };
+    return { st: s - st.up > 0.6 ? null : st, dy: -D + (D + HOVER) * Math.sin((Math.PI / 2) * u), from: null, u: 1 };
   }
 
   /** the hands' goals at the clock's second s */
@@ -519,21 +533,24 @@ export class Pianist {
       const tips: (V3 | null)[] = [null, null, null, null, null], tipW = [1, 1, 1, 1, 1];
       // (the palm as high over the keyboard as the highest key its fingers are on: a black key's top stands over a
       // white's, and a finger can only lift so far over its palm)
-      let high = 0;
       for (let f = 0; f < 5; f++) {
-        const { st, dy } = this.stroke(h, f, s);
+        const { st, dy, from, u } = this.stroke(h, f, s);
         this.active[h][f] = !!st;
-        if (st) high = Math.max(high, dot(sub(I.notePoint(st.note)!, mid), A.up));
         // (a finger with nothing to play rests over its place at a hover: left to the rig's curl it sinks below the
         // keys' tops and comes up through them)
-        let p = st ? I.notePoint(st.note)! : add(add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along))), scale(A.toward, -0.03));
-        // (the thumb, the short finger, plays a white key nearer its front)
-        if (st && f === 0 && dot(sub(p, mid), A.up) < 0.004) p = add(p, scale(A.toward, THUMB_IN));
+        const key = (n: number) => {
+          const q = I.notePoint(n)!;
+          // (the thumb, the short finger, plays a white key nearer its front)
+          return f === 0 && dot(sub(q, mid), A.up) < 0.004 ? add(q, scale(A.toward, THUMB_IN)) : q;
+        };
+        let p = st ? key(st.note) : add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along)));
+        if (st && from && from.note !== st.note) { const q = key(from.note); p = [q[0] + (p[0] - q[0]) * u, q[1] + (p[1] - q[1]) * u, q[2] + (p[2] - q[2]) * u]; }
         tips[f] = add(p, scale(A.up, PAD + dy));
         tipW[f] = st ? 1 : REST_W;
       }
       const base = add(add(mid, scale(A.along, x - dot(mid, A.along))), scale(A.toward, this.reach[0]));
-      const palm = add(add(base, scale(A.up, this.reach[1] + high)), this.fix[h]);
+      // (the palm where the pianist would hold it; the hand's solve moves it to its fingers — a black key's height too)
+      const palm = add(add(base, scale(A.up, this.reach[1])), this.fix[h]);
       this.planned[h] = tips;
       this.palms[h] = palm;
       // (the hand's own solve places the palm with its fingers, a resting finger keeping clear of the keys' tops)
