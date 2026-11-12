@@ -2509,7 +2509,7 @@ export class HeroRig {
     for (let f = 0; f < 5; f++) {
       const tip = goal.tips[f] ?? null;
       tw[f] = damp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
-      let k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0;
+      let k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0, rf = tip ? 1 : 0;
       if (tip) {
         toC(tip, Q.tgt, f * 3);
         // (a target the finger can't get to from where the hand is — a flute's hole while the flute is still coming up
@@ -2519,7 +2519,8 @@ export class HeroRig {
         if (M && !goal.palmFree) {
           const b0 = Q.tgt[f * 3] - M.base[f * 3], b1 = Q.tgt[f * 3 + 1] - M.base[f * 3 + 1], b2 = Q.tgt[f * 3 + 2] - M.base[f * 3 + 2];
           const d = Math.sqrt(b0 * b0 + b1 * b1 + b2 * b2), L = M.lens[f];
-          k *= 1 - smoothstep(1.05 * L, 1.5 * L, d);
+          rf = 1 - smoothstep(1.05 * L, 1.5 * L, d);
+          k *= rf;
         }
       }
       Q.w[f] = k;
@@ -2527,26 +2528,29 @@ export class HeroRig {
       Q.resting[f] = tip ? 0 : 1;
       if (f === 0) {
         // (the thumb: along the keys under the hand; round what's held; else loosely by the curl)
-        const r = tip ? (keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2]) : keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
+        const rt = keys ? K.thumbTip : [0.25, 0.1, 0.35, 0.2];
+        const r0 = keys ? K.thumbIdle : holds ? (built ? [0.3 - 0.28 * grip, -0.1 - 0.25 * grip, 0.2 + 0.35 * grip, 0.1 + 0.9 * grip] : [0.3 + 0.4 * grip, 0.2 * grip, 0.2 + 0.5 * grip, 0.1 + 0.45 * grip])
           : built ? [0.25 * clamp(c, 0, 1), -0.3, 0.15 + 0.2 * c, 0.1 + 0.16 * c] : [0.25 * clamp(c, 0, 1), 0, 0.1 + 0.2 * c, 0.06 + 0.16 * c];
-        for (let j = 0; j < 4; j++) { Q.rest[o + j] = r[j]; Q.wr[o + j] = tip ? (keys ? K.wThumb : 0.6) : wr; }
+        // (a target let go: its rests the hand's own again, as far as it's let go)
+        for (let j = 0; j < 4; j++) { Q.rest[o + j] = lerp(r0[j], rt[j], rf); Q.wr[o + j] = lerp(wr, keys ? K.wThumb : 0.6, rf); }
         continue;
       }
       const g = f - 1;
       let ab = FAN[g] * (1 - grip) * (c < 0 ? 2.5 : 1);
       let ang = [c * 0.45 + grip * (1.25 + CASCADE[g]) + REL[g] * rc * 1.1, -0.05 + c * 0.33 + grip * (1.22 + CASCADE[g]) + REL[g] * rc,
         -0.12 + c * 0.1 + grip * 0.87 + REL[g] * rc * 0.4];
-      if (tip) { ab = FAN[g]; ang = keys ? K.tip[g] : [0.4, 0.6, 0.42]; }
+      const tipAng = keys ? K.tip[g] : [0.4, 0.6, 0.42];
       // (resting over the keys: curved as real pianists' are — our hand fitted by position to tracked overhead footage
       // (World tools/hands/fit.mjs): from above the fingers lie long: the knuckle bent most (~30-50° in chords), the middle
       // joint ~20-35°, the end ~10-20°; docs/hands.md in World)
-      else if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
+      if (keys) ang = ang.map((a, j) => lerp(a, K.idle[g][j], goalW));
       // (a built hand at ease: a real relaxed hand's fingers curve — ~20-30° at the knuckle, 30-40° in the middle, more
       // toward the little finger — where the older hands' rests were nearly straight)
       else if (built) ang = ang.map((a, j) => a + [0.35, 0.5, 0.2][j] * (1 + 0.15 * g) * (1 - grip));
+      if (rf > 0) { ab = lerp(ab, FAN[g], rf); ang = ang.map((a, j) => lerp(a, tipAng[j], rf)); }
       // (a spread held is an effort: drawn back harder than a bend)
-      Q.rest[o] = ab; Q.wr[o] = tip ? 1.2 : wr * 1.5;
-      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = tip && keys ? Math.max(wr, K.wTip) : wr; }
+      Q.rest[o] = ab; Q.wr[o] = lerp(wr * 1.5, 1.2, rf);
+      for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = rf > 0 && keys ? Math.max(wr, K.wTip) : wr; }
       // (laid flat along what it presses: its middle and end joints straight)
       const lay = goal.lay?.[f] ?? 0;
       if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
