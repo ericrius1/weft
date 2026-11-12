@@ -2729,7 +2729,14 @@ export class HeroRig {
       toC(F.at, a, 0); toC(add(F.at, F.n), b, 0);
       const n0 = b[0] - a[0], n1 = b[1] - a[1], n2 = b[2] - a[2], l = Math.hypot(n0, n1, n2) || 1;
       Q.floor[0] = n0 / l; Q.floor[1] = n1 / l; Q.floor[2] = n2 / l; Q.floor[3] = (n0 * a[0] + n1 * a[1] + n2 * a[2]) / l;
-      Q.clear = F.clear;
+      // (only a hand over the surface keeps its fingertips clear of it: with the knuckles under it — the hands still
+      // coming up from the lap to the keys as she sits — the clearance can't be had, and asked for it the fingers
+      // flailed from a fist to bent back (92 to -25 deg in a frame, the duet's count-in). Faded in as the middle
+      // knuckle rises from the surface to 3 cm over it)
+      const M = this.handM[hi], kb = M ? 3 * 2 : -1;
+      const hk = M ? Q.floor[0] * M.base[kb] + Q.floor[1] * M.base[kb + 1] + Q.floor[2] * M.base[kb + 2] - Q.floor[3] : 1;
+      const fade = clamp(hk / 0.03, 0, 1);
+      Q.clear = F.clear * fade * fade * (3 - 2 * fade);
     }
     // (a neck held: its line, ways and measures into hand space)
     const NG = goal.neck;

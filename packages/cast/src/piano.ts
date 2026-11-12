@@ -102,6 +102,8 @@ const HOVER = 0.014, FALL = 0.1, REACH = 0.2, LIFT = 0.075, TRAVEL_END = 0.08, T
 const THUMB_IN = 0.012, DEEP = 0.015, REST_W = 0.15;
 /** how long a finger's last key keeps it after the key's let go (s): its lift, a little more */
 const HOLD_UP = LIFT + 0.125;
+/** a finger taken from rest comes over from its idle place to its key's hover first, this long (s) before its reach */
+const APPROACH = 0.12;
 /** finger choices for a chord of n notes (thumb first): every rising run of n of the five */
 const RUNS: number[][][] = [0, 1, 2, 3, 4, 5].map((n) => {
   const out: number[][] = [];
@@ -555,11 +557,11 @@ export class Pianist {
   }
 
   /** a finger's stroke at second s: its note (null: resting) and its tip's height over the key's top (m) */
-  private stroke(h: number, f: number, s: number): { st: Struck | null; dy: number; from: Struck | null; u: number; w: number } {
+  private stroke(h: number, f: number, s: number): { st: Struck | null; dy: number; from: Struck | null; u: number; w: number; idle?: number } {
     const hv = this.hover + this.idleLift[f];
     let st: Struck | null = null, pv: Struck | null = null;
     // (the next stroke takes the finger only once this one's let go: never before it's landed)
-    for (const x of this.byFinger[h][f]) { if (x.t0 - FALL - REACH > s || (st && s < st.up)) break; pv = st; st = x; }
+    for (const x of this.byFinger[h][f]) { const early = !st || x.t0 - FALL - REACH - st.up >= HOLD_UP ? APPROACH : 0; if (x.t0 - FALL - REACH - early > s || (st && s < st.up)) break; pv = st; st = x; }
     if (!st) return { st: null, dy: this.idleHover + this.idleLift[f], from: null, u: 1, w: this.idleW };
     const D = this.inst!.pressDepth;
     // (it lands LAND before the note's second: a rig's fingertip follows its goal about a frame behind)
@@ -578,7 +580,17 @@ export class Pianist {
     // shortened alike when the notes come too quickly for all of it, never out of order (a finger crossing the keys
     // low, or still on its way over as it falls, is seen on the wrong key)
     const fall = (k: number) => { const u = clamp((t0 - s) / (FALL * k), 0, 1); return hv * (1 - (1 - u) ** 3); };
-    if (!pv || s < pv.up) return { st, dy: fall(1), from: null, u: 1, w: 1 };
+    // (a finger taken from rest — its first note, or the last one let go long since — comes over from its idle place to
+    // the key and its pull from an idle finger's to a playing one's, over most of its reach: it had jumped there in a
+    // frame, the target and its weight both, and the finger with them — 62 deg at its middle joint in one frame)
+    const take = st.t0 - FALL - REACH;
+    if (!pv || take - pv.up >= HOLD_UP) {
+      if (f === 0 && s < take) return { st: null, dy: this.idleHover + this.idleLift[f], from: null, u: 1, w: this.idleW };
+      if (f === 0) return { st, dy: fall(1), from: null, u: 1, w: 1 };
+      const e0 = clamp((s - take + APPROACH) / APPROACH, 0, 1), e = e0 * e0 * (3 - 2 * e0), ew = Math.min(1, 2 * e);
+      return { st, dy: fall(1), from: null, u: 1, w: this.idleW + (1 - this.idleW) * ew, idle: 1 - e };
+    }
+    if (s < pv.up) return { st, dy: fall(1), from: null, u: 1, w: 1 };
     const lift = LIFT * (pv.note === st.note ? 0.6 : 1), k = Math.min(1, (t0 - pv.up) / (FALL + lift));
     const a = s - pv.up, rise = lift * 0.5 * k, over = lift * 0.5 * k;
     if (a < rise) return { st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * (a / rise)), from: pv, u: 0, w: 1 };
@@ -599,7 +611,7 @@ export class Pianist {
       let deep = false;
       for (let f = 0; f < 5; f++) { const st = this.stroke(h, f, s).st; if (st && this.black(st.note)) deep = true; }
       for (let f = 0; f < 5; f++) {
-        const { st, dy, from, u, w } = this.stroke(h, f, s);
+        const { st, dy: dy0, from, u, w, idle = 0 } = this.stroke(h, f, s);
         this.active[h][f] = !!st;
         // (a finger with nothing to play rests over its place at a hover: left to the rig's curl it sinks below the
         // keys' tops and comes up through them)
@@ -613,8 +625,10 @@ export class Pianist {
         };
         // (an idle finger over its place; in among the black keys, as far in as the hand has gone)
         const inIdle = deep && this.fingerIn[f] > 0 ? Math.max(DEEP, this.fingerIn[f]) + this.fingerIn[f] * 0.6 : this.fingerIn[f];
-        let p = st ? key(st.note) : add(add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along))), scale(A.toward, -inIdle));
+        const idleAt = add(add(mid, scale(A.along, x + SLOTS[f] * side - dot(mid, A.along))), scale(A.toward, -inIdle));
+        let p = st ? key(st.note) : idleAt, dy = dy0;
         if (st && from && from.note !== st.note) { const q = key(from.note); p = [q[0] + (p[0] - q[0]) * u, q[1] + (p[1] - q[1]) * u, q[2] + (p[2] - q[2]) * u]; }
+        if (st && idle > 0) { p = [p[0] + (idleAt[0] - p[0]) * idle, p[1] + (idleAt[1] - p[1]) * idle, p[2] + (idleAt[2] - p[2]) * idle]; dy += (this.idleHover + this.idleLift[f] - dy) * idle; }
         tips[f] = add(p, scale(A.up, PAD + dy));
         tipW[f] = w;
       }
