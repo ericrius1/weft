@@ -459,6 +459,7 @@ function accRow(H: Float64Array, g: Float64Array, r: number, C: Int32Array) {
  *  fingertips' misses, each number's rest, the end joints' tendon, the webs, the enslaving, the tips' gaps, a surface,
  *  the palm */
 function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: boolean): number {
+  if (TERMW && jac) { TERMS.prev = null; TERMS.cur = {}; }
   const P = S.P, K = S.K, Zf = S.Zf, T = S.T, R = S.R, J = S.J, H = S.H, g = S.g, N = HAND_N, fP = S.fP;
   const W_BAND = HAND_W.band, W_DIP = HAND_W.dip, W_WEB = HAND_W.web, W_APART = HAND_W.apart, W_GAP = HAND_W.gap;
   rotM(x[3], x[4], x[5], R);
@@ -515,6 +516,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       }
     }
   }
+  if (TERMW && jac) termMark(g, 'tips');
   // the fingertips' misses (per mm)
   for (let f = 0; f < 5; f++) {
     const w = Q.w[f];
@@ -529,6 +531,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       accRow(H, g, r, C);
     }
   }
+  if (TERMW && jac) termMark(g, 'rest');
   // each number's rest (a resting finger's knuckle dragged by its neighbours' bend from their rests)
   for (let i = 6; i < N; i++) {
     const w = Q.wr[i];
@@ -551,6 +554,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     cost += r * r;
     if (jac) acc1(H, g, r, i, w);
   }
+  if (TERMW && jac) termMark(g, 'prior');
   // real hands' posture (a Gaussian prior on the hand's own numbers: cost wp^2 d'P d, d the numbers from the mean)
   if (Q.wp > 0 && Q.priorP && Q.priorMu) {
     const Pm = Q.priorP, mu = Q.priorMu, w2 = Q.wp * Q.wp;
@@ -564,6 +568,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       for (let j = 0; j < PRN; j++) H[oh + j] += w2 * Pm[o + j];
     }
   }
+  if (TERMW && jac) termMark(g, 'band');
   // past each joint's comfortable band: a pose held there is an effort (the house's discomfort, anatomy.ts)
   for (let i = 6; i < N; i++) {
     const v = x[i], e = v > M.okHi[i] ? v - M.okHi[i] : v < M.okLo[i] ? v - M.okLo[i] : 0;
@@ -572,12 +577,14 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     cost += r * r;
     if (jac) acc1(H, g, r, i, W_BAND);
   }
+  if (TERMW && jac) termMark(g, 'tendon');
   // the end joints with the middle ones (the tendon)
   for (let f = 1; f <= 4; f++) {
     const o = hpOf(f), r = W_DIP * (x[o + 3] - DIP_K * x[o + 2]);
     cost += r * r;
     if (jac) acc2(H, g, r, o + 3, W_DIP, o + 2, -W_DIP * DIP_K);
   }
+  if (TERMW && jac) termMark(g, 'webs');
   // the webs: two neighbours' spreads no further apart than the web between them lets them, nor crossed; their bends
   // no further apart than the enslaving lets them
   for (let f = 1; f < 4; f++) {
@@ -588,6 +595,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     const e2 = ee > ap ? ee - ap : ee < -ap ? ee + ap : 0;
     if (e2 !== 0) { const r = W_APART * e2; cost += r * r; if (jac) acc2(H, g, r, ka, W_APART, kb, -W_APART); }
   }
+  if (TERMW && jac) termMark(g, 'gap');
   // the fingertips a finger's breadth apart (neighbours)
   const gap = GAP * M.width;
   for (let f = 1; f < 4; f++) {
@@ -603,6 +611,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     }
     accRow(H, g, r, C);
   }
+  if (TERMW && jac) termMark(g, 'floor');
   // a surface: the fingertips without a target clear of it
   if (Q.clear > 0) {
     const F = Q.floor;
@@ -619,6 +628,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       accRow(H, g, r, C);
     }
   }
+  if (TERMW && jac) termMark(g, 'lay');
   // a laid finger (a barre): its middle and end joints down on the surface as well as its tip, so the whole finger
   // lies along it (by differences: only for a laid finger)
   if (Q.clear > 0) {
@@ -647,6 +657,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       }
     }
   }
+  if (TERMW && jac) termMark(g, 'neck');
   // a neck held: the palm's skin, the knuckles and the fingers' and thumb's joints off its wood (a residual per point
   // inside its clearance, along the wood's normal; the palm's points move with the palm alone, the joints with their
   // finger's numbers too, by differences)
@@ -734,6 +745,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       }
     }
   }
+  if (TERMW && jac) termMark(g, 'palm');
   // the palm: its move and turn from where the goal put it
   if (free) {
     const wm = W_PALM / (PALM_M * Q.free), wr = W_PALM / (PALM_R * Q.free);
@@ -743,6 +755,7 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
       if (jac) { acc1(H, g, a, k, wm); acc1(H, g, b, 3 + k, wr); }
     }
   }
+  if (TERMW && jac) termMark(g, 'end');
   return cost;
 }
 
@@ -770,6 +783,17 @@ function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number)
   return true;
 }
 
+/** each term's share of the gradient on chosen numbers at the last Jacobian pass (a diagnostic: setTermWatch([indices])
+ *  then read termPulls(); off — and free — by default) */
+let TERMW: number[] | null = null;
+const TERMS: { prev: number[] | null; last: string; cur: Record<string, number[]> } = { prev: null, last: '', cur: {} };
+function termMark(g: Float64Array, name: string) {
+  const now = TERMW!.map((i) => g[i]);
+  if (TERMS.prev) TERMS.cur[TERMS.last] = now.map((v, k) => v - TERMS.prev![k]);
+  TERMS.prev = now; TERMS.last = name;
+}
+export function setTermWatch(ix: number[] | null) { TERMW = ix; }
+export function termPulls(): Record<string, number[]> { return TERMS.cur; }
 /** the hand solved for what's asked: S.x updated in place (warm: from last frame's), at most `iters` iterations;
  *  returns the cost. The palm's numbers are held at 0 unless the ask frees it */
 export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): number {
