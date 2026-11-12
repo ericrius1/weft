@@ -72,6 +72,9 @@ export class HandModel {
   /** each number's range */
   readonly lo = new Float64Array(HAND_N);
   readonly hi = new Float64Array(HAND_N);
+  /** each number's comfortable band (past it, a held pose quickly costs: anatomy.ts's okLo/okHi) */
+  readonly okLo = new Float64Array(HAND_N);
+  readonly okHi = new Float64Array(HAND_N);
   /** the bind's finger lengths (m: thumb from its saddle, the others from the knuckle) */
   readonly lens = new Float64Array(5);
 
@@ -113,21 +116,17 @@ export class HandModel {
     this.kAb.set(norm(cross(t0, [0, 0, 1])));
     // the ranges
     const k = this.width / 0.048;
-    const set = (i: number, lo: number, hi: number) => { this.lo[i] = lo; this.hi[i] = hi; };
+    const set = (i: number, lo: number, hi: number, okLo = lo * 0.6, okHi = hi * 0.6) => { this.lo[i] = lo; this.hi[i] = hi; this.okLo[i] = okLo; this.okHi[i] = okHi; };
+    const J = (d: { lo: number; hi: number; okLo: number; okHi: number }, i: number) => set(i, d.lo, d.hi, d.okLo, d.okHi);
     for (let c = 0; c < 3; c++) set(c, -0.06 * k, 0.06 * k);
     set(3, -0.55, 0.55); set(4, -0.55, 0.55); set(5, -0.5, 0.5);
-    set(HP_ARCH, -0.25, 0.8);
+    set(HP_ARCH, -0.25, 0.8, -0.1, 0.5);
     for (let f = 1; f <= 4; f++) {
       const o = hpOf(f);
       set(o, SPREAD.abd[f - 1][0], SPREAD.abd[f - 1][1]);
-      set(o + 1, JOINTS.mcp.flex.lo, JOINTS.mcp.flex.hi);
-      set(o + 2, JOINTS.pip.flex.lo, JOINTS.pip.flex.hi);
-      set(o + 3, JOINTS.dip.flex.lo, JOINTS.dip.flex.hi);
+      J(JOINTS.mcp.flex, o + 1); J(JOINTS.pip.flex, o + 2); J(JOINTS.dip.flex, o + 3);
     }
-    set(23, JOINTS.cmc.flex.lo, JOINTS.cmc.flex.hi);
-    set(24, JOINTS.cmc.abd.lo, JOINTS.cmc.abd.hi);
-    set(25, JOINTS.thumbMcp.flex.lo, JOINTS.thumbMcp.flex.hi);
-    set(26, JOINTS.thumbIp.flex.lo, JOINTS.thumbIp.flex.hi);
+    J(JOINTS.cmc.flex, 23); J(JOINTS.cmc.abd, 24); J(JOINTS.thumbMcp.flex, 25); J(JOINTS.thumbIp.flex, 26);
   }
 
   /** a body's hand ('L' her left), or null if its fingers aren't each three bones */
@@ -262,7 +261,7 @@ export class HandSolve {
   readonly A = new Float64Array(HAND_N * HAND_N); readonly dx = new Float64Array(HAND_N); readonly xn = new Float64Array(HAND_N);
   readonly R = new Float64Array(9); readonly Rd = new Float64Array(27);
   readonly fP = new Float64Array(12); readonly fK = new Float64Array(3); readonly fZ = new Float64Array(3);
-  readonly xt = new Float64Array(HAND_N); readonly b = new Float64Array(HAND_N);
+  readonly xt = new Float64Array(HAND_N); readonly b = new Float64Array(HAND_N); readonly at = new Uint8Array(HAND_N);
 }
 
 /** the rotation vector w as a matrix (row-major) */
@@ -277,7 +276,7 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
 
 /** the weights: a fingertip's miss (per mm), the end joint's tendon, the webs and the enslaving bands (hinges past
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
-const W_FLOOR = 1, W_DIP = 1.2, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
+const W_FLOOR = 1, W_BAND = 6, W_DIP = 4, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
 /** the fingertips kept this far apart (a share of the knuckles' width) */
 const GAP = 0.26;
 
@@ -403,6 +402,12 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     }
     one(w * (x[i] - Q.rest[i]), i, w);
   }
+  // past each joint's comfortable band: a pose held there is an effort (the house's discomfort, anatomy.ts)
+  for (let i = 6; i < N; i++) {
+    const v = x[i];
+    if (v > M.okHi[i]) one(W_BAND * (v - M.okHi[i]), i, W_BAND);
+    else if (v < M.okLo[i]) one(W_BAND * (v - M.okLo[i]), i, W_BAND);
+  }
   // the end joints with the middle ones (the tendon)
   for (let f = 1; f <= 4; f++) { const o = hpOf(f); two(W_DIP * (x[o + 3] - DIP_K * x[o + 2]), o + 3, W_DIP, o + 2, -W_DIP * DIP_K); }
   // the webs: two neighbours' spreads no further apart than the web between them lets them, nor crossed
@@ -454,6 +459,9 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
   return cost;
 }
 
+/** how many solves have run and their iterations (all; and those with the palm free): for tools */
+export const SOLVES = { n: 0, iters: 0, n1: 0, iters1: 0 };
+
 /** A x = b, A symmetric positive definite (n x n, row-major; Cholesky in place over A): false if it isn't */
 function cholSolve(A: Float64Array, b: Float64Array, x: Float64Array, n: number): boolean {
   for (let j = 0; j < n; j++) {
@@ -489,14 +497,18 @@ export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): nu
     let gm = 0;
     for (let i = 0; i < N; i++) if (!held(i)) gm = Math.max(gm, Math.abs(S.g[i]));
     if (worst < 0.0002 && gm < 0.004) break;
-    let ok = false;
+    let ok = false, gain = 0;
+    // (a number at its limit and pulled past it is held there this step: the rest solved without it — projecting a
+    // step that wanted it further would turn the step off its way and stall the fit)
+    const at = S.at;
+    for (let i = 0; i < N; i++) at[i] = held(i) || (x[i] <= lo[i] + 1e-9 && S.g[i] > 0) || (x[i] >= hi[i] - 1e-9 && S.g[i] < 0) ? 1 : 0;
     for (let t = 0; t < 5 && !ok; t++) {
       const A = S.A;
       for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
         const h = S.H[i * N + j];
-        A[i * N + j] = held(i) || held(j) ? (i === j ? 1 : 0) : i === j ? h + S.lam * (h + 1e-3) : h;
+        A[i * N + j] = at[i] || at[j] ? (i === j ? 1 : 0) : i === j ? h + S.lam * (h + 1e-3) : h;
       }
-      for (let i = 0; i < N; i++) S.dx[i] = held(i) ? 0 : -S.g[i];
+      for (let i = 0; i < N; i++) S.dx[i] = at[i] ? 0 : -S.g[i];
       S.b.set(S.dx);
       if (!cholSolve(A, S.b, S.dx, N)) { S.lam *= 10; continue; }
       // (a step no bigger than a quarter radian or two centimetres: it walks to the pose)
@@ -505,13 +517,16 @@ export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): nu
       const k = big > 1 ? 1 / big : 1;
       for (let i = 0; i < N; i++) S.xn[i] = held(i) ? 0 : Math.min(hi[i], Math.max(lo[i], x[i] + S.dx[i] * k));
       const cn = pass(M, S, Q, S.xn, false);
-      if (cn < c) { x.set(S.xn); c = cn; ok = true; S.lam = Math.max(1e-6, S.lam / 4); }
+      if (cn < c) { gain = (c - cn) / Math.max(c, 1e-9); x.set(S.xn); c = cn; ok = true; S.lam = Math.max(1e-6, S.lam / 4); }
       else S.lam = Math.min(1e6, S.lam * 6);
     }
     if (!ok) break;
+    // (settled: the last step bought less than a hundredth of the cost — what's left is the targets' own compromise)
+    if (gain < 0.01) { n++; break; }
     c = pass(M, S, Q, x, true);
   }
   S.iters = n;
+  SOLVES.n++; SOLVES.iters += n; if (Q.free > 0) { SOLVES.n1++; SOLVES.iters1 += n; }
   // (the misses where it ended: a rejected trial left its own tips in S.T)
   pass(M, S, Q, x, false);
   for (let f = 0; f < 5; f++) S.miss[f] = Math.hypot(S.T[f * 3] - Q.tgt[f * 3], S.T[f * 3 + 1] - Q.tgt[f * 3 + 1], S.T[f * 3 + 2] - Q.tgt[f * 3 + 2]);

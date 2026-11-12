@@ -821,6 +821,9 @@ export class HeroRig {
   private tipsW: number[][] = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]];
   /** the hands as hands (fingers.ts: null for a body whose fingers aren't three bones each), their solves carried frame
    *  to frame, what's asked of them, the palm's move as last solved */
+  /** the most iterations a hand's solve takes a frame: the palm's with its fingers, then the fingers' on the hand as
+   *  the arm put it (each stops once its fingertips are within 0.2 mm) */
+  static handIters: [number, number] = [8, 6];
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
   private handQ: HandAsk[] = [handAsk(), handAsk()];
@@ -2531,7 +2534,7 @@ export class HeroRig {
     void dt;
     Q.free = clamp(goal.palmFree ?? 0, 0, 1) * goalW;
     S.x.set(this.palmX[i], 0);
-    solveHand(M, S, Q, 4);
+    solveHand(M, S, Q, HeroRig.handIters[0]);
     this.palmX[i].set(S.x.subarray(0, 6));
     this.palmMiss[i].set(S.miss);
     const x = S.x, a = Math.hypot(x[3], x[4], x[5]);
@@ -2555,7 +2558,7 @@ export class HeroRig {
     });
     Q.free = 0;
     for (let j = 0; j < 6; j++) S.x[j] = 0;
-    solveHand(M, S, Q, 3);
+    solveHand(M, S, Q, HeroRig.handIters[1]);
     const P = new Float64Array(12), U = new Float64Array(9), K = new Float64Array(3), Zf = new Float64Array(3);
     const hp: V3 = [0, 0, 0], tp: V3 = [0, 0, 0], up: V3 = [0, 0, 0];
     for (let f = 0; f < 5; f++) {
