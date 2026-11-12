@@ -28,11 +28,15 @@ test('a bird: no human bone, its parents read, no garments fitted', async () => 
   assert.equal(a.bones.length, 6, 'nothing added (a person gets its hanging frame bones)');
   assert.equal(a.index.ulnaL, 5);
   assert.throws(() => new HeroRig(a), /bird, not a person/);
+  // (parents by name, the root's null: as the bird's Blender export writes them)
+  const named = bones.map((b, i) => ({ ...b, parent: i === 0 ? null : bones[b.parent].name }));
+  assert.deepEqual(Array.from((await parseHero(bird(named), 'bird')).parents), [-1, 0, 1, 2, 1, 4]);
 });
 
 test('a bird file refused for a bad hierarchy: a missing or later parent, two roots', async () => {
   await assert.rejects(parseHero(bird([bone('root', -1, 0), { ...bone('a', 0, 0), parent: undefined }]), 'x'), /parent/);
   await assert.rejects(parseHero(bird([bone('root', -1, 0), bone('a', 2, 0), bone('b', 0, 0)]), 'x'), /parent/);
+  await assert.rejects(parseHero(bird([bone('root', -1, 0), { ...bone('a', 0, 0), parent: 'nobody' }]), 'x'), /parent/);
   await assert.rejects(parseHero(bird([bone('root', -1, 0), bone('a', -1, 0)]), 'x'), /2 roots/);
 });
 

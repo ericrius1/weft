@@ -13,10 +13,10 @@ export interface BoneDef { name: string; head: V3; tail: V3; up: V3 }
 export interface HeroHeader {
   char: string; version: number; height: number; scale: number;
   /** what body it is: absent (or 'human') a person, rigged by HeroRig, with the CORE bones; anything else ('bird',
-   *  'dog', …) a body of its own: no bone is required by name, each bone names its parent (its index, -1 the root's,
-   *  parents before children), and posing it is the caller's (skin matrices through matToDQ, as HeroRig does) */
+   *  'dog', …) a body of its own: no bone is required by name, each bone names its parent (an earlier bone's name or
+   *  index; null or -1 the root's), and posing it is the caller's (skin matrices through matToDQ, as HeroRig does) */
   kind?: string;
-  bones: { name: string; head: number[]; tail: number[]; up: number[]; parent?: number }[];
+  bones: { name: string; head: number[]; tail: number[]; up: number[]; parent?: number | string | null }[];
   chains: Record<string, number[][]>;
   chainParents?: Record<string, string>;
   eye: { x: number; y: number; z: number; r: number };
@@ -95,8 +95,8 @@ export async function parseHero(bytes: ArrayBuffer, name = 'hero', maxBones = MA
     // (a body of its own: every bone's parent given, before it; one root)
     parents = new Int16Array(bones.length);
     header.bones.forEach((b, i) => {
-      const p = b.parent;
-      if (typeof p !== 'number' || !Number.isInteger(p) || p < -1 || p >= i) throw new Error(`${name}: bone ${b.name}'s parent ${p} (each bone names an earlier one, or -1)`);
+      const p = b.parent === null || b.parent === -1 ? -1 : typeof b.parent === 'string' ? (index[b.parent] ?? NaN) : b.parent;
+      if (typeof p !== 'number' || !Number.isInteger(p) || p < -1 || p >= i) throw new Error(`${name}: bone ${b.name}'s parent ${b.parent} (each bone names an earlier one, or null)`);
       parents[i] = p;
     });
     if (parents.filter((p) => p < 0).length !== 1) throw new Error(`${name}: ${parents.filter((p) => p < 0).length} roots`);
