@@ -16,7 +16,7 @@ const SIZES = { wrap: [{ r: 0.026 }, { r: 0.032 }, { r: 0.043 }], power: [{ r: 0
 /** the pads (fingers, then thumb) that may sit off what they should touch, mm: the little and ring fingers round a wide
  *  glass reach less far than they're asked (the solve keeps them in their comfortable range), a clasp's index rides on
  *  the other hand's knuckles */
-const SLACK = { wrap: [1.5, 2, 2, 3, 4], clasp: [1.5, 5, 3, 2, 2] };
+const SLACK = { wrap: [1.5, 2, 2, 3, 4], clasp: [1.5, 5, 3, 2, 2], rim: [2, 2.5, 2.5, 3, 3] };
 const PAD_TIP = [0.0075, 0.0062, 0.0065, 0.0062, 0.0054];
 
 function tips(M, x) {
@@ -47,9 +47,16 @@ test('every grasp holds its shape: no fingertip inside, the pads that should tou
 });
 
 test('the thumb opposes the fingers round a glass, a handle, a stick, a pen, another hand', () => {
-  for (const [kind, size] of [['wrap', { r: 0.032 }], ['power', { r: 0.016 }], ['stick', {}], ['tripod', {}], ['clasp', {}]]) {
+  for (const [kind, size] of [['wrap', { r: 0.032 }], ['power', { r: 0.016 }], ['stick', {}], ['clasp', {}]]) {
     const g = grasp(R, kind, size);
     assert.ok(g.opp < -0.5, `${kind}: the thumb's pad only ${(Math.acos(Math.max(-1, Math.min(1, g.opp))) * 180 / Math.PI).toFixed(0)}° round from the fingers'`);
+  }
+  // (a pen: the thumb's pad and the index's on different sides of it, more than a right angle apart round it)
+  {
+    const g = grasp(R, 'tripod'), t = tips(R, g.x), A = g.held.a;
+    const round = (p) => { const d = [p[0] - g.held.c[0], p[1] - g.held.c[1], p[2] - g.held.c[2]], k = d[0] * A[0] + d[1] * A[1] + d[2] * A[2]; const v = [d[0] - A[0] * k, d[1] - A[1] * k, d[2] - A[2] * k], l = Math.hypot(...v); return v.map((c) => c / l); };
+    const u = round(t[0]), v = round(t[1]), c = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    assert.ok(c < 0, `tripod: thumb and index only ${(Math.acos(c) * 180 / Math.PI).toFixed(0)}° apart round the pen`);
   }
   // (a pick: the thumb's pad and the index's side press it from its two faces)
   const p = grasp(R, 'pinch');

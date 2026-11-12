@@ -79,6 +79,8 @@ interface Plan { held: Held; arch: number; f: FSpec[]; /** the thumb opposes thi
   /** the way the shape is moved off the palm until the thumb's base clears it */
   lift?: V3 }
 
+/** where along each bone its skin is sampled besides its middle (no thin thing slips between samples) */
+const FR = [0.125, 0.25, 0.375, 0.625, 0.75, 0.875], NPT = 25;
 const W_PEN = 4, W_ON = 3, W_REST = 6, W_DIP = 10;
 
 /** solve one grasp: the hand's numbers that hold `kind` of `size` (hand M) */
@@ -131,9 +133,9 @@ export function grasp(M: HandModel, kind: GraspKind, size: GraspSize = {}): Gras
   for (let f = 0; f < 5; f++) {
     const q = S.pts(x, f), F = P.f[f];
     touch.push(F.on ?? []);
-    for (let i = 0; i < 13; i++) {
+    for (let i = 0; i < NPT; i++) {
       const p = [q[i * 3], q[i * 3 + 1], q[i * 3 + 2]], s = heldSd(P.held, p) - S.pad(f, i);
-      if (!(i === 0 || (f === 0 && (i === 4 || i === 7 || i === 8)))) into = Math.max(into, -s);
+      if (!(i === 0 || (f === 0 && (i === 4 || (i >= 7 && i < 13))))) into = Math.max(into, -s);
       if (F.on?.includes(i)) miss[f] = Math.max(miss[f], Math.abs(s - (F.gap ?? 0)));
       if (S.palmTest(f, i)) palmInto = Math.max(palmInto, -(S.palmSd(p) - S.pad(f, i)));
     }
@@ -164,20 +166,21 @@ function setRest(M: HandModel, x: Float64Array, f: number, F: FSpec) {
 /** a finger's points and the residuals of its ask; a small Levenberg–Marquardt over its own numbers */
 class Ctx {
   private Pk = new Float64Array(12); private K = new Float64Array(3); private Zf = new Float64Array(3);
-  private q = new Float64Array(39);
+  private q = new Float64Array(75);
   private palmX: number;
   constructor(readonly M: HandModel, readonly P: Plan, readonly sc: number) {
     this.palmX = Math.min(M.base[3], M.base[6], M.base[9], M.base[12]) - 0.004 * sc;
   }
-  pad(f: number, i: number) { const r = PAD[f]; return (i < 4 ? (i === 0 ? r[0] : i === 3 ? r[2] * 0.85 : Math.min(r[i - 1], r[i])) : i < 7 ? r[i - 4] : r[(i - 7) >> 1]) * this.sc; }
-  /** finger f's points under x (hand space): 0-3 its joints, 4-6 its bones' middles, 7-12 their quarters */
+  pad(f: number, i: number) { const r = PAD[f]; return (i < 4 ? (i === 0 ? r[0] : i === 3 ? r[2] * 0.85 : Math.min(r[i - 1], r[i])) : i < 7 ? r[i - 4] : r[((i - 7) / 6) | 0]) * this.sc; }
+  /** finger f's points under x (hand space): 0-3 its joints, 4-6 its bones' middles, 7-24 six more along each bone */
   pts(x: ArrayLike<number>, f: number): Float64Array {
     const Pk = this.Pk, q = this.q;
     this.M.fk(x, f, Pk, null, this.K, this.Zf);
     q.set(Pk, 0);
     for (let j = 0; j < 3; j++) for (let c = 0; c < 3; c++) {
       const a = Pk[j * 3 + c], b = Pk[j * 3 + 3 + c];
-      q[12 + j * 3 + c] = (a + b) / 2; q[21 + j * 6 + c] = a * 0.75 + b * 0.25; q[24 + j * 6 + c] = a * 0.25 + b * 0.75;
+      q[12 + j * 3 + c] = (a + b) / 2;
+      for (let k = 0; k < 6; k++) { const t = FR[k]; q[21 + (j * 6 + k) * 3 + c] = a * (1 - t) + b * t; }
     }
     return q;
   }
@@ -197,9 +200,9 @@ class Ctx {
     out.length = 0;
     const T = (t: string) => { if (tag) while (tag.length < out.length) tag.push(t); };
     const F = this.P.f[f], H = this.P.held, q = this.pts(x, f), mm = 1000;
-    for (let i = 0; i < 13; i++) {
+    for (let i = 0; i < NPT; i++) {
       if (f > 0 && i === 0) continue;
-      if (f === 0 && (i === 0 || i === 4 || i === 7 || i === 8)) continue;
+      if (f === 0 && (i === 0 || i === 4 || (i >= 7 && i < 13))) continue;
       const p = [q[i * 3], q[i * 3 + 1], q[i * 3 + 2]], pd = this.pad(f, i);
       const s = heldSd(H, p) - pd;
       if (F.on?.includes(i)) out.push(W_ON * (s - (F.gap ?? 0)) * mm);
@@ -224,7 +227,9 @@ class Ctx {
       for (let j = 0; j < 3; j++) out.push(rw * (x[o + 1 + j] - F.rest[j]));
       out.push(W_DIP * (x[o + 3] - 0.7 * x[o + 2]));
       // (past the comfortable band, a held bend costs)
-      for (let j = 1; j <= 3; j++) { const v = x[o + j], hi = this.M.okHi[o + j] * 1.5; out.push(v > hi ? 8 * (v - hi) : 0); }
+      for (let j = 1; j <= 3; j++) { const v = x[o + j], hi = this.M.okHi[o + j] * 1.15; out.push(v > hi ? 8 * (v - hi) : 0); }
+      // (a holding finger's knuckle not bent backward)
+      out.push(x[o + 1] < -0.1 ? 80 * (x[o + 1] + 0.1) : 0);
     }
   }
   /** the best few of a coarse grid over the thumb's four numbers (its saddle swings far: a local solve alone can stay
@@ -405,7 +410,7 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
         const q = restPts(M, 2, md, 0.1), bf = boneFrame(q, 2);
         const side = dot(bf.side, [0, 1, 0]) > 0 ? bf.side : scale(bf.side, -1);
         const c = add(pt(q, 6), scale(side, PAD[2][2] * sc + r));
-        const web: V3 = add(K(1), [-0.012 * sc, 0.012 * sc, -0.016 * sc]);
+        const web: V3 = add(K(1), [-0.016 * sc, 0.024 * sc, -0.012 * sc]);
         const a = norm(sub(web, c));
         const held: Held = { c, a, r, h: (len ?? 0.14) / 2 };
         const curl: FSpec = { rest: [0.9, 1.1, 0.55], restW: 0.3 };
@@ -433,10 +438,15 @@ function plan(M: HandModel, kind: GraspKind, size: GraspSize, sc: number): Plan 
       const lq = restPts(M, 4, { rest: [0.15, 0.1, 0.05] }, 0), web: V3 = add(K(1), [-0.022 * sc, 0.016 * sc, 0]);
       const lp = pt(lq, 2), e = norm([lp[0] - web[0], lp[1] - web[1], 0]), n: V3 = [-e[1], e[0], 0];
       const nOut: V3 = n[0] > 0 ? n : scale(n, -1);
-      const z0 = 0.009 * sc + h, mid: V3 = [(web[0] + lp[0]) / 2, (web[1] + lp[1]) / 2, z0];
+      // (its underside just on the fingers' pads as they lie)
+      let zt = 0;
+      for (let g = 1; g <= 3; g++) { const q = restPts(M, g, { rest: [0.15, 0.1, 0.05], spread: [0.08, 0.02, -0.04][g - 1] }, 0); for (const i of [3, 5, 6]) zt = Math.max(zt, pt(q, i)[2] + PAD[g][2] * sc * (i === 3 ? 0.85 : 1)); }
+      const z0 = zt + h, mid: V3 = [(web[0] + lp[0]) / 2, (web[1] + lp[1]) / 2, z0];
       const held: Held = { c: add(mid, scale(nOut, r)), a: [0, 0, 1], r, h };
       const f = fingers([0.15, 0.1, 0.05], [6], [0.08, 0.02, -0.04, -0.1]);
       f[3].on = [];
+      // (the index, by the rim's edge, lies flat under it: solved toward the plate it curls over the edge)
+      f[0] = { ...f[0], on: [], solve: false };
       const top = add(add(web, scale(nOut, 0.016 * sc)), [0, 0, z0 + h + PAD[0][2] * sc]);
       const th: FSpec = { rest: [0.0, 0.5, 0.3, 0.2], restW: 0.05, on: [6], tgt: top, tgtW: 0.6, at: 6 };
       return { held, arch: 0, f: [th, ...f] };
