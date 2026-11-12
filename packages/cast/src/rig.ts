@@ -862,8 +862,8 @@ export class HeroRig {
      *  per mm, so these shape the hand, not where the tips land) */
     wTip: 3, wThumb: 6,
     /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
-     *  the idle thumb) and the playing ones keep under it, the thumb's further scaled */
-    wPrior: 1, restIdle: 0.25, restPlay: 1, restThumb: 1,
+     *  the idle thumb: times restThumb — real idle thumbs are bent) and the playing ones keep under it */
+    wPrior: 1, restIdle: 0.25, restPlay: 1, restThumb: 4,
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2595,7 +2595,7 @@ export class HeroRig {
     const pr = keys && built && goal.prior ? clamp(goal.prior, 0, 1) * goalW : 0;
     Q.wp = pr * K.wPrior; Q.priorMu = KEYS_PRIOR.mu; Q.priorP = KEYS_PRIOR.P;
     if (pr > 0) for (let f = 0; f < 5; f++) {
-      const o = hpOf(f), kk = lerp(1, (Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5) ? K.restIdle : K.restPlay) * (f === 0 ? K.restThumb : 1), pr);
+      const idle = Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5), o = hpOf(f), kk = lerp(1, idle ? K.restIdle * (f === 0 ? K.restThumb : 1) : K.restPlay, pr);
       for (let j = 0; j < 4; j++) Q.wr[o + j] *= kk;
       if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
     }
