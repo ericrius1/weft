@@ -621,13 +621,16 @@ export class Pianist {
     }
     if (s < pv.up) return { st, dy: fall(1), from: null, u: 1, w: 1 };
     const lift = LIFT * (pv.note === st.note ? 0.6 : 1), k = Math.min(1, (t0 - pv.up) / (FALL + lift));
-    // (with time to spare before its fall, the rise and the way over take most of it — a thumb went up 32 mm in two frames
-    // and over two white keys in two more, then waited)
-    const spare = Math.max(0, t0 - pv.up - FALL - lift), st2 = Math.min(spare * 0.4, RISE_MAX - lift * 0.5);
-    const a = s - pv.up, rise = lift * 0.5 * k + st2, over = lift * 0.5 * k + st2;
-    if (a < rise) return { st, dy: -D + (D + hv) * Math.sin((Math.PI / 2) * (a / rise)), from: pv, u: 0, w: 1 };
-    if (a < rise + over) { const v = (a - rise) / over; return { st, dy: hv, from: pv, u: v * v * (3 - 2 * v), w: 1 }; }
-    return { st, dy: fall(k), from: null, u: 1, w: 1 };
+    // (the whole time to its fall used: up from the key over most of it, and over to the next key from once it's clear of
+    // the keys' tops to the fall, the two together as a finger moves — one after the other, each in its own short share,
+    // a thumb went up 32 mm in two frames and over to its next key in two more, then waited)
+    const T = Math.max(lift * k, t0 - pv.up - FALL * k), rise = Math.max(lift * 0.5 * k, Math.min(0.6 * T, RISE_MAX));
+    const o0 = 0.35 * rise, a = s - pv.up;
+    if (a >= T) return { st, dy: fall(k), from: null, u: 1, w: 1 };
+    // (and over a little before its fall: the finger follows its target a frame behind, and still on its way over as it
+    // fell a note at 60 fps landed 20 ms late)
+    const o1 = T - Math.min(0.04, 0.3 * T), v = clamp((a - o0) / Math.max(1e-3, o1 - o0), 0, 1);
+    return { st, dy: a < rise ? -D + (D + hv) * Math.sin((Math.PI / 2) * (a / rise)) : hv, from: pv, u: v * v * (3 - 2 * v), w: 1 };
   }
 
   /** the hands' goals at the clock's second s */

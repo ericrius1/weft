@@ -834,7 +834,9 @@ export function solveHand(M: HandModel, S: HandSolve, Q: HandAsk, iters = 4): nu
     let m = 0;
     for (let i = palm; i < N; i++) if (!((x[i] <= lo[i] + 1e-9 && g[i] > 0) || (x[i] >= hi[i] - 1e-9 && g[i] < 0))) act[m++] = i;
     let ok = false, gain = 0;
-    for (let t = 0; t < 5 && !ok; t++) {
+    // (a hand under the real hands' prior — the Pianist's — tries more dampings before it gives up a frame: with five a
+    // ring finger's every trial failed once as it fell, it stayed 8 mm over its key and its note landed 20 ms late)
+    for (let t = 0, tries = Q.wp > 0 ? 8 : 5; t < tries && !ok; t++) {
       for (let a = 0; a < m; a++) {
         const ia = act[a] * N;
         for (let q = 0; q < m; q++) A[a * m + q] = H[ia + act[q]];
