@@ -37,6 +37,7 @@ import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank, type FaceState } from './face.js';
 import type { BodyGoal, BodyPose, BodyModel, BodyState } from './body/solve.js';
 import { HandModel, HandSolve, handAsk, solveHand, hpOf, HP_ARCH, HAND_N, type HandAsk } from './fingers.js';
+import { KEYS_PRIOR } from './body/handprior.js';
 
 type Fr = { o: V3; x: V3; y: V3; z: V3 };
 const frW = (f: Fr, l: V3): V3 => [f.o[0] + f.x[0] * l[0] + f.y[0] * l[1] + f.z[0] * l[2], f.o[1] + f.x[1] * l[0] + f.y[1] * l[1] + f.z[1] * l[2], f.o[2] + f.x[2] * l[0] + f.y[2] * l[1] + f.z[2] * l[2]];
@@ -115,7 +116,12 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   lay?: number[];
   /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
    *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
-  floor?: { at: V3; n: V3; clear: number } }
+  floor?: { at: V3; n: V3; clear: number };
+  /** how much real pianists' hands shape a built hand at the keys (0..1; body/handprior.ts): the fingertips with targets
+   *  land on them, and the rest of the hand — the idle fingers, the thumb, the arch, how the playing fingers bend to
+   *  their keys — takes the posture real hands have with those fingers down, rather than each finger's own rest
+   *  (the Pianist sets it for a built hand: piano.ts forHand) */
+  prior?: number }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -855,6 +861,9 @@ export class HeroRig {
     /** how hard a playing finger's joints and the playing thumb are drawn to those rests (the fingertip's target is
      *  per mm, so these shape the hand, not where the tips land) */
     wTip: 3, wThumb: 6,
+    /** with HandGoal.prior: the real hands' prior's weight, and how much of their own rests' pull the idle fingers (and
+     *  the idle thumb) and the playing ones keep under it */
+    wPrior: 1, restIdle: 0.25, restPlay: 1,
   };
   private handM: (HandModel | null)[] = [null, null];
   private handS = [new HandSolve(), new HandSolve()];
@@ -2582,6 +2591,14 @@ export class HeroRig {
       if (lay > 0) for (const j of [2, 3]) { Q.rest[o + j] = lerp(Q.rest[o + j], 0, lay); Q.wr[o + j] = lerp(Q.wr[o + j], 6, lay); }
     }
     Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;
+    // (real pianists' hands: a prior on the whole hand's numbers; the fingers' own rests loosened under it)
+    const pr = keys && built && goal.prior ? clamp(goal.prior, 0, 1) * goalW : 0;
+    Q.wp = pr * K.wPrior; Q.priorMu = KEYS_PRIOR.mu; Q.priorP = KEYS_PRIOR.P;
+    if (pr > 0) for (let f = 0; f < 5; f++) {
+      const o = hpOf(f), kk = lerp(1, Q.resting[f] || (f === 0 && (goal.tipW?.[0] ?? 1) < 0.5) ? K.restIdle : K.restPlay, pr);
+      for (let j = 0; j < 4; j++) Q.wr[o + j] *= kk;
+      if (f === 4) Q.wr[HP_ARCH] *= lerp(1, K.restIdle, pr);
+    }
     Q.clear = 0;
     const F = goal.floor;
     if (F && F.clear > 0) {

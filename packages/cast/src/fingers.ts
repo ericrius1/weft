@@ -301,9 +301,16 @@ export interface HandAsk {
   /** a surface under the hand (the keys' tops, a fingerboard): its normal and offset (n·p = d on it, hand space) and how
    *  far clear of it a fingertip without a target keeps (m; 0: no surface) */
   floor: Float64Array; clear: number;
+  /** a prior on the hand's own numbers (HAND_N from the arch on: 21) — real hands' mean and precision (body/handprior.ts:
+   *  pianists' at the keys) — and how much it counts (0: none). With fingertips held on their targets, the rest of the
+   *  hand takes the posture real hands have with those fingers there (the Gaussian's conditional mean) */
+  priorMu: Float64Array | null; priorP: Float64Array | null; wp: number;
 }
 export const handAsk = (): HandAsk => ({ lay: new Float64Array(5), tgt: new Float64Array(15), w: new Float64Array(5), rest: new Float64Array(HAND_N), wr: new Float64Array(HAND_N), free: 0, resting: new Uint8Array(5),
-  floor: new Float64Array(4), clear: 0 });
+  floor: new Float64Array(4), clear: 0, priorMu: null, priorP: null, wp: 0 });
+/** the prior's numbers: HAND_N from the arch (6) on */
+const PR0 = HP_ARCH, PRN = HAND_N - HP_ARCH;
+const PRD = new Float64Array(PRN), PRPd = new Float64Array(PRN);
 
 /** a hand's solve carried frame to frame: its numbers, the damping, each fingertip's miss after (m) */
 export class HandSolve {
@@ -336,7 +343,10 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
 
 /** the weights: a fingertip's miss (per mm), the end joint's tendon, the webs and the enslaving bands (hinges past
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
-const W_LAY = 0.6, W_FLOOR = 1, W_BAND = 6, W_DIP = 4, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
+const W_LAY = 0.6, W_FLOOR = 1, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.45;
+/** the couplings' weights (read each solve; for tools that take one out to see what it does): the comfortable band,
+ *  the end joint's tendon, the webs, the enslaving bands, the fingertips' gaps */
+export const HAND_W = { band: 6, dip: 4, web: 15, apart: 12, gap: 0.6 };
 /** the fingertips kept this far apart (a share of the knuckles' width) */
 const GAP = 0.26;
 
@@ -380,6 +390,7 @@ function accRow(H: Float64Array, g: Float64Array, r: number, C: Int32Array) {
  *  the palm */
 function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: boolean): number {
   const P = S.P, K = S.K, Zf = S.Zf, T = S.T, R = S.R, J = S.J, H = S.H, g = S.g, N = HAND_N, fP = S.fP;
+  const W_BAND = HAND_W.band, W_DIP = HAND_W.dip, W_WEB = HAND_W.web, W_APART = HAND_W.apart, W_GAP = HAND_W.gap;
   rotM(x[3], x[4], x[5], R);
   for (let f = 0; f < 5; f++) {
     M.fk(x, f, fP, null, S.fK, S.fZ);
@@ -469,6 +480,19 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     const r = w * (x[i] - Q.rest[i]);
     cost += r * r;
     if (jac) acc1(H, g, r, i, w);
+  }
+  // real hands' posture (a Gaussian prior on the hand's own numbers: cost wp^2 d'P d, d the numbers from the mean)
+  if (Q.wp > 0 && Q.priorP && Q.priorMu) {
+    const Pm = Q.priorP, mu = Q.priorMu, w2 = Q.wp * Q.wp;
+    for (let i = 0; i < PRN; i++) PRD[i] = x[PR0 + i] - mu[i];
+    let c2 = 0;
+    for (let i = 0; i < PRN; i++) { let t = 0; const o = i * PRN; for (let j = 0; j < PRN; j++) t += Pm[o + j] * PRD[j]; PRPd[i] = t; c2 += t * PRD[i]; }
+    cost += w2 * c2;
+    if (jac) for (let i = 0; i < PRN; i++) {
+      g[PR0 + i] += w2 * PRPd[i];
+      const o = i * PRN, oh = (PR0 + i) * N + PR0;
+      for (let j = 0; j < PRN; j++) H[oh + j] += w2 * Pm[o + j];
+    }
   }
   // past each joint's comfortable band: a pose held there is an effort (the house's discomfort, anatomy.ts)
   for (let i = 6; i < N; i++) {
