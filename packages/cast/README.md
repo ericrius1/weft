@@ -29,13 +29,13 @@ them at once.
 
 | entry | what's in it |
 | --- | --- |
-| `rig` | `HeroRig` (`update(RigInput)` each frame, then `bones` / `dq` / `nBones`, `faceState`, `skinPoint`, `joint`, `handFrame`, `placeProp`, `carry`), the poses it takes (`HandGoal`, `SeatPose`, `HoldPose`, `BendPose`, `Groove`), `matToDQ`, `MAX_KICK`, `NECK`, `carryUp`, `legUps` |
+| `rig` | `HeroRig` (`update(RigInput)` each frame, then `bones` / `dq` / `nBones`, `faceState`, `skinPoint`, `joint`, `handFrame`, `placeProp`, `carry`), the poses it takes (`HandGoal`, `SeatPose`, `HoldPose`, `BendPose`, `Groove`; a `HandGoal`'s `neck` gives a fretting or stopping hand a guitar's or violin's neck to keep off, `elbowW` how firmly its `elbow` way holds, 100 or more as given), `HeroRig.neckHand`, `HeroRig.keysHand`, `matToDQ`, `MAX_KICK`, `NECK`, `carryUp`, `legUps` |
 | `math` | weft's vector maths, `rotateAxis`, `damp`, `ease`, `minJerk`, `cdSpring`, `Spring3`; `dsin`, `dcos`, `dexp`, `datan`, `datan2`, `drotateAxis`, `ddamp`, `q30`: the same bits in every JavaScript engine (the hand's solve uses them) |
 | `asset` | `HeroAsset` and the DNC1 reader: `loadHero(url, { fetch, maxBones })`, `parseHero(bytes)`, `MAX_BONES`, `VBYTES`, `CORE` |
 | `garment` | the hips' hanging frame for skirts and tunic panels (`fitGarments`, `poseHang`, `hang`), `sleeveFit` |
 | `hands` | `fitHands` (a hand's skin given to its finger bones so a grip shows; a file whose header has `hand`, a hand built and weighted as one, is left as it is), `mirrorChinRest` |
 | `fingers` | the hand as a hand: `HandModel` (a body's bind hand, its joints' ranges; `built` for a hand built into the file, with the opposing thumb), `solveHand`, `HandSolve`, `handAsk`: several fingertips placed at once with the palm free, optionally under a prior on the hand's posture; the rig uses it for every `HandGoal` with fingertip targets |
-| `grasp` | grasps: `grasp(model, kind, size)` (a glass wrapped, a handle, a drumstick, a bow, a pick, a pen, a stem, a plate, a rim, a clasp, a cloth) solved by contact in the hand's space, `graspGoal` to place it in the world as a `HandGoal` (`pose`), `heldWorld`, `heldSd`, `GRASPS` |
+| `grasp` | grasps: `grasp(model, kind, size)` (a glass wrapped, a handle, a drumstick, a bow, a pick, a pen, a stem, a plate, a rim, a clasp, a cloth) solved by contact in the hand's space, `graspGoal` to place it in the world as a `HandGoal` (`pose`), `heldWorld`, `heldSd`, `GRASPS`; a violin's bow hold is `'bow'`, a guitar pick `'pinch'` |
 | `face`, `speech`, `sip` | `Face`: blinks, saccades, gaze, moods, visemes on a line's clock, a sip; `lineOf` (a line's timeline from its text) and `lineFromWords` (from a recording's word times); a modelled face (`header.faceRig`) moved as far as a real one |
 | `actor` | `Actor`: a body on a stage with its hands' goals eased in and out, fists round handles (`fistGoal`, `fist`) |
 | `groove` | `groove(bar, k, feel)`, `mixGroove`: a one-drop riddim in the body, as the rig's `Groove` |
@@ -43,7 +43,7 @@ them at once.
 | `strike` | `Stroke`, `Strokes`, `gripGoal`: a beater, a mallet, a hammer swung through a whip into contact and out |
 | `track` | `Track`: quintic Hermite keyed tracks (and `hermite5`, `hermite5v`) |
 | `perform` | articulation: `notesAt`, `Heat`, `beatGroove`, `glance`, `splitHands`, `fingersFor`, `stringFor`, `stopAt`, `Bow`, `strum`, `travel`, `SprungFingers`, `reachFinger3`, `mixGoal`, `handSize` |
-| `piano` | `Pianist` (alias `Performer`) and `Playable`: a pianist's mind for a `HeroRig`'s seat |
+| `piano` | `Pianist` (alias `Performer`) and `Playable`: a pianist's mind for a `HeroRig`'s seat; `forHand(len)` for a built hand (`prior`, `reach`, `pitch`, `hover`, `idleHover`, `fingerIn`, `blackIn`, `idleW`, `idleLift`, `idleClear`, `idleRelease`) |
 | `pose` | `AangRig` (alias `PoseRig`): a body posed whole from a `Pose` |
 | `body/solve`, `body/anatomy`, `body/measure`, `body/yoga`, `body/handprior` | the whole-body solver (`HeroRig.bodyKit`), joints' ranges, reading a posed body, yoga's poses as goals, real pianists' hands as a prior (`KEYS_PRIOR`, held with `HandGoal.prior`) |
 

@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.0
+
+- **A neck held in the hand** (`HandGoal.neck`: `{ at, axis, up, half, depth, air?, w?, rest? }`, world): a guitar's or
+  a violin's neck, given as a point on the fingerboard's surface over the neck's middle, the neck's way, the way out of
+  the board toward the strings, the board's half width and the neck's depth under it (m). The hand's solve keeps the
+  palm's skin `air` off the wood (default 12 mm), and the knuckles' and joints' centres a finger's half thickness off
+  it, so the skin just touches. `rest` (0..1) draws the index's base onto the board's edge (the neck in the web between
+  thumb and index), and a laid finger (`lay`, a barre) lies on the strings by its joints. A goal with `neck` is a
+  player's hand, not a pianist's: its thumb rests wrapped round behind the neck (`HeroRig.neckHand.thumb`; the thumb's
+  target is the caller's), and a finger with a light `tipW` (under 0.5) hovers lifted from the knuckle, loosely bent
+  (`neckHand.hover`). For tools: `HandAsk.neck` (optional), `HandModel.palmPts`, `LAM0`.
+- **`HandGoal.elbowW` of 100 or more** keeps the elbow the goal's `elbow` way whatever the arm's ease (a violinist's
+  left elbow under the fiddle). Below 100 it is weighed against the arm's ease as before.
+- **`Pianist.blackIn`** (m, default 0; `forHand` sets 3 cm scaled by the hand's length): on a black key a built hand's
+  long fingers land further along it than its thumb and little finger, flatter rather than hooked onto its front.
+- **A finger no longer freezes after one bad frame** (built hands only): the hand's solve carried its damping from the
+  last frame, and one frame whose every trial step failed left it at its ceiling, so the next frames' steps were too
+  small to move the finger for about a tenth of a second (the fiddle's first stop landed 7 mm across). A built hand's
+  solve now starts each frame from no more than `LAM0` (0.1). The damping goes above that on about half of a pianist's
+  frames, so this reaches every built hand with fingertip targets.
+- **What changes in behaviour**: (1) Callers passing `neck` or `elbowW >= 100`: as above. (2) **A built hand at the
+  keys** (`header.hand`, `forHand`; World's Katara at the duet): the fingertips land as well as before (playing miss
+  median 0.29 → 0.22 mm, p95 1.21 → 1.03 mm, the duet's score at 60 fps), and the contact gate is 109 of 109 at 50,
+  60 and 144 fps, worst 13.1-14.4 ms. The arm moves differently: the elbow up to 7 cm from 0.4.0 at moments and the
+  hand up to 6 cm (median over the song 12 mm), from the damping (6 cm with `blackIn` 0) and from `blackIn`. No
+  finger stuck off its key in 0.4.0's run either (none more than a frame), so at the piano the freeze fix shows as a
+  different, equally accurate arm, not as a cure. (3) Nothing else: no change for bodies without `header.hand`.
+- **Identical**: every bone, fingers included, in all 85 rows of Drake's acts (tools/release-ab against 0.4.0).
+  Old-format bodies (no `header.hand`: Drake's Katara at the duet's piano for the whole score) are bit for bit as
+  0.4.0's, at a piano as well as standing, walking, riding and gripping. The hand's solve is the same in Node 24 and
+  Chrome 157 at the piano (the whole score, 1,458 frames) and for the band's guitarist; the fiddler's hand parts by
+  4e-14 at frame 2,167 and stays about 1e-11 apart in its numbers to 70 s, the joints at most 16 nm: invisible, but a
+  film checked bit for bit against a live run will not match there (the rest of the body already differed in the last
+  bit on some frames). No export was removed or changed in type: the additions are optional fields, new members
+  (`HandModel.palmPts`, `Pianist.blackIn`, `HeroRig.neckHand`) and `LAM0`.
+- **Size**: a bundle with `HeroRig` grows from 121.2 to 124.3 KB minified (50.5 to 51.9 KB gzipped). `fingers` alone
+  grows by 2.0 KB, `piano` by 131 bytes, `grasp` by 65; `speech` and `face` are unchanged.
+- **Cost**: unchanged for bodies without `neck` (the new work runs only with a neck; the damping cap only on built
+  hands). CPU per body per frame with 12 of Drake's bodies (tools/release-ab cost.mjs, 5 alternating rounds, Node 24,
+  the PC shared): walking 89 → 83 µs, running 99 → 81, standing 82 → 79, riding calm 126 → 141, the flute carried
+  141 → 127, playing 180 → 154. Every round-to-round spread is wider than its difference.
+- **To use it**: a fretting or stopping hand's goal from the instrument as in 0.3.0, plus `neck` from the
+  instrument's neck at the hand (`rest` 1 on open shapes, 0 through a barre), the thumb's tip given a target on the
+  neck's back or over its edge, hovering fingers at `tipW` under 0.5. The bow hold and the pick are grasps (0.4.0's
+  `grasp(M, 'bow' | 'pinch', size)` placed with `graspGoal`). All of it needs a built hand.
+
 ## 0.4.0
 
 - **Grasps** (`@ericrius1/cast/grasp`, also in the index): `grasp(model, kind, size)` solves how a built hand holds a
