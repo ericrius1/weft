@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.1
+
+- **Malformed asks no longer break a hand**: a `ref.x`, `pose` or `stopRest` number that is missing or not finite (too
+  short, sparse, NaN, ±Infinity, a string, null) is left out and the others still hold; a non-finite rest or weight is
+  dropped from the solve; a solver state that is not finite starts again from the rests. In 0.6.0 such an entry froze
+  the fingers of a hand with targets and left NaN bones on a hand without. Still unguarded: `ref` with no `x` at all
+  throws (as before), a NaN `curl` leaves the rig's curl NaN for good, a NaN `tipW` holds that finger still.
+- **`HandGoal.neck.restAt` clamped to 0..1** (a non-finite one taken as 0). In range: as before.
+- **`BOW` and `HeroRig.SQUARE` frozen**, typed read-only (`readonly number[]`); assigning to them now throws. New export
+  `BOWREST`, frozen. Their doc comments are back on their declarations.
+- **A term readout** (`fingers.ts` `setTermWatch(indices | null)`, `termPulls()`): each term's share of the gradient on
+  chosen hand numbers at the last pass, for tuning. Off by default; on or off, the solve's results are bit for bit the
+  same. `termPulls()` keeps the last reading after it is turned off, and it is shared by every hand in the process.
+- **What changes in behaviour** (on purpose):
+  1. **The bow grasp** (`grasp(M, 'bow', …)`): its rests from 14 real bow holds; the held hand's knuckles go from 5/19/19/-3
+     to 21/43/44/20° (index..little), numbers by up to 25-31° (the thumb's MCP most), fingertips by up to 30 mm; the held
+     stick turns 10.5° and moves 15-18 mm in the hand's space. A caller that places the palm from the grasp
+     (`graspGoal`) moves the arm: World's fiddler's bow arm hangs differently (the elbow about 38 cm lower in the
+     count-in, the arm 2-8 cm through the song; bow 29/29 as before). Every other grasp is bit for bit as 0.6.0's.
+  2. **The Pianist's built hands** (`forHand`, the only caller of `prior`): a finger at the keys with a weak target
+     (`tipW` below 1, with `prior`) now takes the lever rest's weights too, and the ring finger lands 12 mm further in on a
+     black key and on a white key among black ones (`Pianist.blackExtra`). Idle fingers seen from the side: middle joints
+     31 -> 21° (real 18), end 15 -> 9° (real 8), knuckles 22 -> 25° (real 19); the duet's 13.43 s black chord: left ring
+     middle joint 45 -> 26°. The whole duet differs from 0.6.0 (both changes; arms by up to 5-7 cm); contacts 109/109 at
+     50, 60 and 144 fps as before.
+  3. **A `ref` hand with no fingertip targets** keeps the reference pose's arch (it took the grip's): up to 4° at the arch,
+     2 mm at the fingers.
+  4. Nothing else.
+- **Identical**: every bone, fingers included, in all 85 rows of Drake's acts (tools/release-ab against 0.6.0). World's
+  built bodies (katara, raker) at 30, 60 and 144 fps, bit for bit as 0.6.0's: tips on every finger, `palmFree`, `neck`
+  with `rest`, `restAt`, `square`, `stopRest`, `stopW` and hovering fingers, `square` alone, `ref` with tips, keys with
+  `prior` and every `tipW` 1, a weak `tipW` without `prior`, a weak thumb, a finger with no target, `grip`, no tips, and
+  `pose` from the wrap, power, pinch, tripod, stick and clasp grasps. The band's singer (both hands) and fiddler's left
+  hand bit for bit over the whole song at 30, 60 and 144 fps. Node 22 and Chrome 157 give identical hands for the
+  pianist (1,458 frames) and the band (2,420 frames). No export removed; `BOW` and `HeroRig.SQUARE` narrowed to read-only.
+- **Cost**: unchanged (a warm hand solve 45 µs against 44, within noise; the readout off).
+
 ## 0.6.0
 
 - **A reference pose** (`HandGoal.ref`: `{ x, w? }`, built hands only): `x` is a whole hand's numbers (fingers.ts's,
