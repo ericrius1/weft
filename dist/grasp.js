@@ -15,14 +15,12 @@
 import { HAND_N, HP_ARCH, hpOf } from './fingers.js';
 import { sub, add, scale, dot, cross, norm, rej, q30 } from './math.js';
 export const GRASPS = ['wrap', 'power', 'stick', 'bow', 'pinch', 'tripod', 'stem', 'flat', 'rim', 'clasp', 'cloth'];
-/** a grasp solved: the hand's numbers (fingers.ts, palm's move 0), the held shape in hand space, and how well it holds:
- *  per finger (thumb first) the worst miss of the pads that should touch (m; 0 none asked), the deepest any skin goes
- *  into the shape (m, < 0 clear), the thumb's opposition (cos of the angle about the shape between the thumb's pad and
- *  the fingers' — -1 straight across), iterations spent */
 /** the bow's hold (plan 'bow'): each finger's spread (index..little, rad; + toward the thumb). Drawn in toward the
  *  middle finger (Checkpoint M: real bowing hands' index-little fan ~25 deg, ours was 46 and read as a claw from above;
  *  0.5.0 had [0.12, 0, -0.04, -0.06]) */
-export const BOW = { spread: [-0.04, 0, 0.08, 0.14] };
+export const BOW = Object.freeze({ spread: Object.freeze([-0.04, 0, 0.08, 0.14]) });
+/** the bow hold's rests per finger (index..little: knuckle, middle, end; rad), from real bow holds (plan 'bow') */
+export const BOWREST = Object.freeze([[0.23, 0.92, 0.56], [0.72, 1.2, 0.52], [1.0, 0.98, 0.37], [1.15, 0.7, 0.25]].map((r) => Object.freeze(r)));
 // ------------------------------------------------------------------------------------------------- the hand's skin
 /** the drumstick's matched grip (plan 'stick'), as numbers a tool can try others for: the stick's way in hand space, the
  *  point at the heel of the hand it lies on (m at a 5.38 cm knuckle span; z off the palm's skin) and how far along from
@@ -475,22 +473,27 @@ function plan(M, kind, size, sc) {
             const r = size.r ?? 0.0055;
             // (the stick in the crook of the curled fingers, on the pads of their middle bones, the tips coming round its far
             // side: the hand close over the stick, not hanging from it by its fingertips)
-            const mid = { rest: [0.3, 1.25, 0.75], restW: 0.3, spread: 0, on: [5] };
+            const mid = { rest: [BOWREST[1][0], BOWREST[1][1], BOWREST[1][2]], restW: 0.3, spread: 0, on: [5] };
             const q = restPts(M, 2, mid, 0.15), bf = boneFrame(q, 1);
             const c = add(pt(q, 5), scale(bf.pad, PAD[2][1] * sc + r));
             // (slanted across the fingers toward the tip, as a violinist's hand leans on the stick by the index)
             const a = norm(rej([0.55, 1, 0], bf.pad));
             const held = { c, a, r, h: (len ?? 0.7) / 2 };
             const top = scale(bf.pad, -1);
-            const lq = restPts(M, 4, { rest: [0.35, 0.9, 0.55] }, 0.15);
+            const lq = restPts(M, 4, { rest: [BOWREST[3][0], BOWREST[3][1], BOWREST[3][2]] }, 0.15);
             const lt = add(axisPt(held, pt(lq, 3)), scale(top, r + PAD[4][2] * sc));
+            // (the rests from real bow holds, World's reference set: 14 hands fitted from along the stick, the view that sees
+            // the fingers' bends side on — knuckle, middle, end joints index 13/53/32 deg, middle 41/69/30, ring 58/56/21,
+            // little 66/40/14: the ring and little fingers drape over from knuckles bent far more than the index's, the
+            // little finger curved standing on top; the thumb's end joint bent ~40 deg under the frog. Before (0.6.0): every
+            // knuckle 17-20 deg, the hand hanging off the stick by straight-knuckled fingers)
             const f = [
-                { rest: [0.35, 0.95, 0.5], restW: 0.2, spread: BOW.spread[0], on: [5] },
+                { rest: [BOWREST[0][0], BOWREST[0][1], BOWREST[0][2]], restW: 0.25, spread: BOW.spread[0], on: [5] },
                 { ...mid, spread: BOW.spread[1] },
-                { rest: [0.3, 1.25, 0.75], restW: 0.3, spread: BOW.spread[2], on: [5] },
-                { rest: [0.35, 0.9, 0.55], restW: 0.2, spread: BOW.spread[3], on: [3], tgt: lt, tgtW: 0.5 },
+                { rest: [BOWREST[2][0], BOWREST[2][1], BOWREST[2][2]], restW: 0.3, spread: BOW.spread[2], on: [5] },
+                { rest: [BOWREST[3][0], BOWREST[3][1], BOWREST[3][2]], restW: 0.3, spread: BOW.spread[3], on: [3], tgt: lt, tgtW: 0.5 },
             ];
-            const th = { rest: [0.4, 0.15, 0.55, 0.75], restW: 0.12, on: [3], tgtW: 0.6 };
+            const th = { rest: [0.4, 0.15, 0.55, 0.7], restW: 0.12, on: [3], tgtW: 0.6 };
             return { held, arch: 0.15, f: [th, ...f], oppose: [2, 5] };
         }
         case 'pinch': {

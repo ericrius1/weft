@@ -159,7 +159,7 @@ export class Pianist {
     // the keyboard; scaled by the hand's length from Katara's 17.8 cm)
     const k = len / 0.178;
     this.prior = 1; this.idleRelease = true; this.reach = [0.25 * len, 0.25 * len]; this.pitch = 0.12; this.idleHover = 0.004; this.hover = 0.008;
-    this.fingerIn = [0.025, 0.045, 0.06, 0.055, 0.02].map((v) => v * k); this.blackIn = 0.03 * k; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
+    this.fingerIn = [0.025, 0.045, 0.06, 0.055, 0.02].map((v) => v * k); this.blackIn = 0.03 * k; this.blackExtra = [0, 0, 0, 0.012 * k, 0]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
   /** how far over the white keys' tops a finger with nothing to play is held clear (m: the hand's solve's floor). A built
    *  hand's (forHand) 18 mm: its idle fingers lie long as levers now, and at 6 mm their tips sank into the black keys'
    *  fronts, so from above they read as stubs; side clips of pianists: idle tips 23 mm over the hand's lowest (median),
@@ -185,6 +185,10 @@ export class Pianist {
   fingerIn = [0, 0, 0, 0, 0];
   /** how much further along a black key a built hand's long fingers land than its short ones, at most (m; forHand) */
   blackIn = 0;
+  /** a built hand's fingers further still along a black key, each (m; forHand): the ring finger, shorter than the middle
+   *  but landing level with it, came out bent at its middle joint in a black chord (Checkpoint Q: 13.43 s, PIP 45 deg
+   *  against the others' 15-33) */
+  blackExtra: number[] = [0, 0, 0, 0, 0];
   /** how much an idle finger's place over the keys counts against its own relaxed shape (a share of a playing
    *  finger's): low, and an idle finger rests as the hand holds it rather than being dragged into a hook */
   idleW = REST_W;
@@ -604,8 +608,8 @@ export class Pianist {
           // (the thumb, the short finger, plays a white key nearer its front — unless the hand's in among the black keys)
           // (a black key: a built hand's long fingers further along it than the thumb and little finger, as they are
           // longer — flatter, not hooked onto its front; Checkpoint L: the five-note black chord was a claw)
-          if (dot(sub(q, mid), A.up) >= 0.004) return this.blackIn > 0 ? add(q, scale(A.toward, -Math.min(this.blackIn, Math.max(0, this.fingerIn[f] - this.fingerIn[0])))) : q;
-          return add(q, scale(A.toward, deep ? -Math.max(DEEP, this.fingerIn[f]) : (f === 0 ? THUMB_IN : 0) - this.fingerIn[f]));
+          if (dot(sub(q, mid), A.up) >= 0.004) return this.blackIn > 0 ? add(q, scale(A.toward, -(Math.min(this.blackIn, Math.max(0, this.fingerIn[f] - this.fingerIn[0])) + (this.blackExtra[f] ?? 0)))) : q;
+          return add(q, scale(A.toward, deep ? -(Math.max(DEEP, this.fingerIn[f]) + (this.blackExtra[f] ?? 0)) : (f === 0 ? THUMB_IN : 0) - this.fingerIn[f]));
         };
         // (an idle finger over its place; in among the black keys, as far in as the hand has gone)
         const inIdle = deep && this.fingerIn[f] > 0 ? Math.max(DEEP, this.fingerIn[f]) + this.fingerIn[f] * 0.6 : this.fingerIn[f];

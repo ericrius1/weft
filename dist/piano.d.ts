@@ -145,6 +145,10 @@ export declare class Pianist {
     fingerIn: number[];
     /** how much further along a black key a built hand's long fingers land than its short ones, at most (m; forHand) */
     blackIn: number;
+    /** a built hand's fingers further still along a black key, each (m; forHand): the ring finger, shorter than the middle
+     *  but landing level with it, came out bent at its middle joint in a black chord (Checkpoint Q: 13.43 s, PIP 45 deg
+     *  against the others' 15-33) */
+    blackExtra: number[];
     /** how much an idle finger's place over the keys counts against its own relaxed shape (a share of a playing
      *  finger's): low, and an idle finger rests as the hand holds it rather than being dragged into a hook */
     idleW: number;

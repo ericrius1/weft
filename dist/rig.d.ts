@@ -458,15 +458,17 @@ export declare class HeroRig {
             rest: number[];
             w: number[];
             hook: number;
+            wWeak: number[];
+            weak: number;
         };
     };
+    /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
+    static readonly SQUARE: readonly number[];
     /** a hand on a neck (HandGoal.neck): its thumb's rests when its tip has a target (saddle flexion, abduction, MCP, IP:
      *  wrapped round behind the neck, gently bent — guitarists' and violinists' thumbs, World's reference set, Checkpoint
      *  K) and how firmly it's drawn there; each finger's rests while it hovers (knuckle, middle, end); the palm's air to
      *  the wood (m) and the knuckles' and joints' clearance from it (m at a 48 mm knuckle span: the finger's half
      *  thickness, so the skin just touches — the index's base rests against a neck's edge) */
-    /** a finger coming down square on its tip (HandGoal.square): its rests (knuckle, middle, end; rad) */
-    static SQUARE: number[];
     static neckHand: {
         thumb: number[];
         wThumb: number;
