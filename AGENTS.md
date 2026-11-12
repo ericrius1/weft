@@ -427,6 +427,16 @@ stopping fingers, `lay` for a barre, the fingerboard as `floor` (a point on it, 
 ~0.006), and a starting frame the solve moves from. Put `palm` near where the hand sits under the neck (the knuckles
 by the board's edge), `fwd` along the hand across the neck, and `down` with the palm toward the board. The solve starts
 there each frame (warm from the last), so a frame a few cm off still lands. One on the wrong side of the neck does not.
+On a built hand, give the goal the neck too (cast 0.5.0: `neck: { at, axis, up, half, depth, air?, w?, rest? }`,
+world): `at` a point on the fingerboard's surface over the neck's middle by the hand, `axis` the neck's way, `up` out
+of the board toward the strings, `half` the board's half width and `depth` the neck's depth under it (m). The solve then
+keeps the palm `air` off the wood (default 12 mm) and the knuckles and joints just touching, `rest` (0..1) draws the
+index's base onto the board's edge (1 on open shapes, 0 through a barre), and the hand is a player's: its thumb rests
+wrapped round behind the neck (give the thumb's tip a target on the neck's back or over its edge), and a finger with
+`tipW` under 0.5 hovers lifted from the knuckle (`HeroRig.neckHand`). `elbowW` of 100 or more keeps the elbow the goal's
+`elbow` way whatever the arm's ease (a violinist's left elbow under the fiddle; below 100 it's weighed against the
+arm's ease, default 0.35). The bow hold and the pick are grasps: `grasp(M, 'bow', size)` and `grasp(M, 'pinch', size)`
+solved once, placed each frame with `graspGoal` (below).
 `rig.handMiss(i)` gives each fingertip's miss after the solve (m) for checking. `HeroRig.handIters` (default `[8, 6]`)
 caps the iterations a frame, and `HeroRig.keysHand` holds a hand's rests at the keys.
 
@@ -436,7 +446,8 @@ than the thumb (`p.fingerIn`). For a body with a built hand, call `p.forHand(ass
 It places the palm where real players hold theirs (knuckles back and over the wrist, the hand long across the keys)
 and sets `reach`, `pitch`, `hover`, `idleHover`, `fingerIn`, `idleW`, `idleLift` (idle thumbs and little fingers ride
 highest), `idleClear` (18 mm: how far a finger with nothing to play keeps over the keys), `idleRelease` (a let-go
-finger eases to an idle one's weight) and `prior: 1` for a hand of that length. Bodies without one keep the defaults.
+finger eases to an idle one's weight), `blackIn` (cast 0.5.0: how much further along a black key the long fingers land
+than the thumb and little finger, 3 cm at Katara's 17.8 cm hand) and `prior: 1` for a hand of that length. Bodies without one keep the defaults.
 With `prior` (cast 0.4.0: `HandGoal.prior`, 0..1, built hands at the keys only) real pianists' hands shape the hand:
 the playing fingertips land on their keys, and the idle fingers, the thumb, the arch and how the playing fingers bend
 take the posture real hands have with those fingers down (`body/handprior.ts`, a Gaussian fitted from 431 tracked
