@@ -140,12 +140,14 @@ export function grasp(M: HandModel, kind: GraspKind, size: GraspSize = {}): Gras
       if (S.palmTest(f, i)) palmInto = Math.max(palmInto, -(S.palmSd(p) - S.pad(f, i)));
     }
   }
-  // (the thumb's opposition: about the shape's axis, its pad against the fingers' touching pads)
+  // (the thumb's opposition: about the shape's axis, its pad (the end bone's middle) against the finger point it opposes,
+  // or else the fingers' touching pads)
   let opp = 1;
   {
-    const q0 = S.pts(x, 0), tp: V3 = [q0[15], q0[16], q0[17]];
+    const q0 = S.pts(x, 0), tp: V3 = [q0[18], q0[19], q0[20]];
     let fs: V3 = [0, 0, 0], n = 0;
-    for (let f = 1; f < 5; f++) { const on = P.f[f].on; if (!on?.length) continue; const q = S.pts(x, f); for (const i of on) { fs = add(fs, [q[i * 3], q[i * 3 + 1], q[i * 3 + 2]]); n++; } }
+    if (P.oppose) { const [of, op] = P.oppose, q = S.pts(x, of); fs = [q[op * 3], q[op * 3 + 1], q[op * 3 + 2]]; n = 1; }
+    else for (let f = 1; f < 5; f++) { const on = P.f[f].on; if (!on?.length) continue; const q = S.pts(x, f); for (const i of on) { fs = add(fs, [q[i * 3], q[i * 3 + 1], q[i * 3 + 2]]); n++; } }
     if (n) {
       fs = scale(fs, 1 / n);
       const ap = axisPt(P.held, scale(add(tp, fs), 0.5));
