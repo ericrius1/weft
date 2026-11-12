@@ -97,7 +97,10 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
    *  the hand's solve (fingers.ts) places the palm and the fingers together. Ignored when held `exact` */
   palmFree?: number;
   /** how much each fingertip's target counts (thumb first; default 1 each) */
-  tipW?: number[] }
+  tipW?: number[];
+  /** a surface under the fingers (world: a point on it, its normal out toward the hand) that the fingertips without a
+   *  target keep `clear` (m) of — the keys' tops, a fingerboard — so a resting finger never sinks into it */
+  floor?: { at: V3; n: V3; clear: number } }
 /** sitting at an instrument: the pelvis on the seat, facing it, the feet's places, the hands' goals, where she looks;
  *  w how far she's sat down (0..1) */
 export interface SeatPose { pelvis: V3; yaw: number; feet: [V3, V3]; hands: [HandGoal, HandGoal]; look: V3; lean: number; w: number;
@@ -822,11 +825,15 @@ export class HeroRig {
   private handS = [new HandSolve(), new HandSolve()];
   private handQ: HandAsk[] = [handAsk(), handAsk()];
   private palmX = [new Float64Array(6), new Float64Array(6)];
+  /** each hand's fingertips' misses as the palm's solve left them (before the arm took the palm) */
+  readonly palmMiss = [new Float64Array(5), new Float64Array(5)];
   /** each hand's fingertips' misses after its solve (m; thumb first) and its iterations, for tools and tests */
   handMiss(i: number): Float64Array { return this.handS[i].miss; }
   handIters(i: number): number { return this.handS[i].iters; }
   /** each hand's solved numbers (fingers.ts HAND_N: the palm's move, the arch, the fingers', the thumb's) */
   handX(i: number): Float64Array { return this.handS[i].x; }
+  /** each hand's palm move as last solved (hand space: its move, m, and its turn's rotation vector) */
+  handPalm(i: number): Float64Array { return this.palmX[i]; }
   /** a foot touched down (footsteps), and the pedal under the right foot (0..1, at an instrument) */
   onPlant?: (foot: number, pos: V3, speed: number) => void;
   pedal = 0;
@@ -2492,18 +2499,27 @@ export class HeroRig {
       for (let j = 0; j < 3; j++) { Q.rest[o + 1 + j] = ang[j]; Q.wr[o + 1 + j] = wr; }
     }
     Q.rest[HP_ARCH] = 0.15; Q.wr[HP_ARCH] = 1;
+    Q.clear = 0;
+    const F = goal.floor;
+    if (F && F.clear > 0) {
+      // (the surface into hand space: a point on it and one a metre out along its normal)
+      const a = this.fl, b = this.fl2;
+      toC(F.at, a, 0); toC(add(F.at, F.n), b, 0);
+      const n0 = b[0] - a[0], n1 = b[1] - a[1], n2 = b[2] - a[2], l = Math.hypot(n0, n1, n2) || 1;
+      Q.floor[0] = n0 / l; Q.floor[1] = n1 / l; Q.floor[2] = n2 / l; Q.floor[3] = (n0 * a[0] + n1 * a[1] + n2 * a[2]) / l;
+      Q.clear = F.clear;
+    }
   }
+  private fl = new Float64Array(3); private fl2 = new Float64Array(3);
 
   /** the palm and fingers solved together for a goal whose palm is free (HandGoal.palmFree): the goal handed back with
    *  the palm moved and turned as solved, for the arm to take (the fingers are solved again on the hand as the arm put
    *  it: chordFingers) */
   private chordPalm(i: number, side: number, T: string, goal: HandGoal, goalW: number, dt: number): HandGoal {
     const M = this.handM[i]!, S = this.handS[i], Q = this.handQ[i];
-    const h = norm(goal.fwd);
-    let p = norm(rej(goal.down, h)), t = norm(scale(cross(p, h), side));
-    // (as the arm will turn it about its way: last frame's turn)
-    const psi = goal.turn ? this.psi[i] : 0;
-    if (psi) { p = rotateAxis(p, h, psi); t = rotateAxis(t, h, psi); }
+    // (the goal's own frame: its roll is the solve's to choose now, not the arm's turn — the hand is handed back held
+    // exactly as solved)
+    const h = norm(goal.fwd), p = norm(rej(goal.down, h)), t = norm(scale(cross(p, h), side));
     const hl = this.len[this.bi['hand' + T]], kl = this.knuckleLen(T);
     const wrist = goal.knuckles ? sub(goal.knuckles, scale(goal.fwd, kl)) : sub(goal.palm, scale(goal.fwd, hl * 0.55));
     this.askHand(i, clamp(goal.curl ?? 0.55, -0.3, 1.2), 0, goal.grip !== undefined, goal, goalW, 0, (w, o, j) => {
@@ -2516,14 +2532,13 @@ export class HeroRig {
     S.x.set(this.palmX[i], 0);
     solveHand(M, S, Q, 4);
     this.palmX[i].set(S.x.subarray(0, 6));
+    this.palmMiss[i].set(S.miss);
     const x = S.x, a = Math.hypot(x[3], x[4], x[5]);
     const W = (c0: number, c1: number, c2: number): V3 => [h[0] * c0 + t[0] * c1 + p[0] * c2, h[1] * c0 + t[1] * c1 + p[1] * c2, h[2] * c0 + t[2] * c1 + p[2] * c2];
     const turn = (v: V3): V3 => (a < 1e-9 ? v : rotateAxis(v, [x[3] / a, x[4] / a, x[5] / a], a));
     const h2 = W(...turn([1, 0, 0])), p2 = W(...turn([0, 0, 1]));
     const w2 = add(wrist, W(x[0], x[1], x[2]));
-    // (the arm turns the hand by its own turn again: handed back without it)
-    const down = psi ? rotateAxis(p2, h2, -psi) : p2;
-    return { ...goal, palm: add(w2, scale(h2, hl * 0.55)), knuckles: goal.knuckles ? add(w2, scale(h2, kl)) : undefined, fwd: h2, down };
+    return { ...goal, palm: add(w2, scale(h2, hl * 0.55)), knuckles: goal.knuckles ? add(w2, scale(h2, kl)) : undefined, fwd: h2, down: p2, exact: true, turn: 0 };
   }
 
   /** the fingers solved on the hand as the arm has put it (the palm held), and posed */

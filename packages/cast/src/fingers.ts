@@ -239,8 +239,12 @@ export interface HandAsk {
   free: number;
   /** a resting finger's knuckle dragged by its neighbours (enslaving): set by solveHand's caller per finger (1: rests) */
   resting: Uint8Array;
+  /** a surface under the hand (the keys' tops, a fingerboard): its normal and offset (n·p = d on it, hand space) and how
+   *  far clear of it a fingertip without a target keeps (m; 0: no surface) */
+  floor: Float64Array; clear: number;
 }
-export const handAsk = (): HandAsk => ({ tgt: new Float64Array(15), w: new Float64Array(5), rest: new Float64Array(HAND_N), wr: new Float64Array(HAND_N), free: 0, resting: new Uint8Array(5) });
+export const handAsk = (): HandAsk => ({ tgt: new Float64Array(15), w: new Float64Array(5), rest: new Float64Array(HAND_N), wr: new Float64Array(HAND_N), free: 0, resting: new Uint8Array(5),
+  floor: new Float64Array(4), clear: 0 });
 
 /** a hand's solve carried frame to frame: its numbers, the damping, each fingertip's miss after (m) */
 export class HandSolve {
@@ -273,7 +277,7 @@ function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
 
 /** the weights: a fingertip's miss (per mm), the end joint's tendon, the webs and the enslaving bands (hinges past
  *  them), fingertips a finger's breadth apart, the palm's move (per its scale) and turn */
-const W_DIP = 1.2, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.3;
+const W_FLOOR = 1, W_DIP = 1.2, W_WEB = 15, W_APART = 12, W_GAP = 0.6, W_PALM = 0.7, PALM_M = 0.02, PALM_R = 0.3;
 /** the fingertips kept this far apart (a share of the knuckles' width) */
 const GAP = 0.26;
 
@@ -424,6 +428,23 @@ function pass(M: HandModel, S: HandSolve, Q: HandAsk, x: Float64Array, jac: bool
     const ja = f * 3 * N, jb = (f + 1) * 3 * N;
     const gr = (c: number) => -1000 * W_GAP * (u[0] * (J[ja + c] - J[jb + c]) + u[1] * (J[ja + N + c] - J[jb + N + c]) + u[2] * (J[ja + 2 * N + c] - J[jb + 2 * N + c]));
     for (const a of C1) { const ga = gr(a); if (ga === 0) continue; g[a] += ga * r; for (const b of C1) H[a * N + b] += ga * gr(b); }
+  }
+  // a surface: the fingertips without a target clear of it
+  if (Q.clear > 0) {
+    const F = Q.floor;
+    for (let f = 0; f < 5; f++) {
+      const k = 1 - Math.min(1, Q.w[f]);
+      if (k <= 0) continue;
+      const h = F[0] * T[f * 3] + F[1] * T[f * 3 + 1] + F[2] * T[f * 3 + 2] - F[3];
+      if (h >= Q.clear) continue;
+      const w = 1000 * W_FLOOR * k;
+      cost += (w * (Q.clear - h)) ** 2;
+      if (!jac) continue;
+      cols(f, C1);
+      const jb = f * 3 * N, r = w * (Q.clear - h);
+      const gr = (c: number) => -w * (F[0] * J[jb + c] + F[1] * J[jb + N + c] + F[2] * J[jb + 2 * N + c]);
+      for (const a of C1) { const ga = gr(a); if (ga === 0) continue; g[a] += ga * r; for (const b of C1) H[a * N + b] += ga * gr(b); }
+    }
   }
   // the palm: its move and turn from where the goal put it
   if (Q.free > 0) {
