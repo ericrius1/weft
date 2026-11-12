@@ -33,7 +33,8 @@ them at once.
 | `math` | weft's vector maths, `rotateAxis`, `damp`, `ease`, `minJerk`, `cdSpring`, `Spring3` |
 | `asset` | `HeroAsset` and the DNC1 reader: `loadHero(url, { fetch, maxBones })`, `parseHero(bytes)`, `MAX_BONES`, `VBYTES`, `CORE` |
 | `garment` | the hips' hanging frame for skirts and tunic panels (`fitGarments`, `poseHang`, `hang`), `sleeveFit` |
-| `hands` | `fitHands` (a hand's skin given to its finger bones so a grip shows), `mirrorChinRest` |
+| `hands` | `fitHands` (a hand's skin given to its finger bones so a grip shows; a file whose header has `hand`, a hand built and weighted as one, is left as it is), `mirrorChinRest` |
+| `fingers` | the hand as a hand: `HandModel` (a body's bind hand, its joints' ranges), `solveHand`, `HandSolve`, `handAsk`: several fingertips placed at once with the palm free; the rig uses it for every `HandGoal` with fingertip targets |
 | `face`, `speech`, `sip` | `Face`: blinks, saccades, gaze, moods, visemes on a line's clock, a sip |
 | `actor` | `Actor`: a body on a stage with its hands' goals eased in and out, fists round handles (`fistGoal`, `fist`) |
 | `groove` | `groove(bar, k, feel)`, `mixGroove`: a one-drop riddim in the body, as the rig's `Groove` |
