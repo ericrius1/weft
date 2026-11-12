@@ -22,7 +22,7 @@
 // Jacobian analytic for the hinges (a hinge's tip moves as its axis crossed with the lever) and by differences only
 // for the thumb's saddle and the arch. A few iterations a frame; converged ones stop at once.
 import type { HeroAsset } from './asset.js';
-import { type V3, sub, dot, cross, norm, rej } from './math.js';
+import { type V3, sub, dot, cross, norm, rej, dsin, dcos } from './math.js';
 import { JOINTS, SPREAD, ENSLAVE } from './body/anatomy.js';
 
 /** the hand's numbers: the palm's move (0-2, hand space, m), its turn (3-5: a rotation vector — roll about the hand's
@@ -53,7 +53,7 @@ const rodr = (o: Float64Array, i: number, vx: number, vy: number, vz: number, kx
 /** a finger's three bones' ways (v), their ups (u, or null) and the thumb's pad (q) turned by a about k */
 function turnAll(v: Float64Array, u: Float64Array | null, q: Float64Array, kx: number, ky: number, kz: number, a: number) {
   if (a === 0) return;
-  const c = Math.cos(a), s = Math.sin(a);
+  const c = dcos(a), s = dsin(a);
   for (let j = 0; j < 9; j += 3) { rodr(v, j, v[j], v[j + 1], v[j + 2], kx, ky, kz, c, s); if (u) rodr(u, j, u[j], u[j + 1], u[j + 2], kx, ky, kz, c, s); }
   rodr(q, 0, q[0], q[1], q[2], kx, ky, kz, c, s);
 }
@@ -175,7 +175,7 @@ export class HandModel {
     const m0 = this.mAx[f * 3], m1 = this.mAx[f * 3 + 1], m2 = this.mAx[f * 3 + 2];
     const p0 = this.piv[f * 3], p1 = this.piv[f * 3 + 1], p2 = this.piv[f * 3 + 2];
     const g = ARCH_G[f] * ar, be = ARCH_B[f] * ar, k = this.mk2;
-    const cg = Math.cos(g), sg = Math.sin(g), cb = Math.cos(be), sb = Math.sin(be);
+    const cg = dcos(g), sg = dsin(g), cb = dcos(be), sb = dsin(be);
     rodr(k, 0, this.kAx[f * 3], this.kAx[f * 3 + 1], this.kAx[f * 3 + 2], -m0, -m1, -m2, cg, sg);
     for (const j of [0, 3]) { o[j] -= p0; o[j + 1] -= p1; o[j + 2] -= p2; rodr2(o, j, -m0, -m1, -m2, cg, sg, k, cb, sb); o[j] += p0; o[j + 1] += p1; o[j + 2] += p2; }
     rodr2(o, 6, -m0, -m1, -m2, cg, sg, k, cb, sb);
@@ -215,11 +215,11 @@ export class HandModel {
       const a1 = x[25], a2 = x[25] + x[26];
       P[0] = b[0]; P[1] = b[1]; P[2] = b[2];
       P[3] = P[0] + v[0]; P[4] = P[1] + v[1]; P[5] = P[2] + v[2];
-      let c = Math.cos(a1), s = Math.sin(a1);
+      let c = dcos(a1), s = dsin(a1);
       rodr(v, 3, v[3], v[4], v[5], kx, ky, kz, c, s);
       if (U) { for (let j = 0; j < 3; j++) U[j] = u[j]; rodr(U, 3, u[3], u[4], u[5], kx, ky, kz, c, s); }
       P[6] = P[3] + v[3]; P[7] = P[4] + v[4]; P[8] = P[5] + v[5];
-      c = Math.cos(a2); s = Math.sin(a2);
+      c = dcos(a2); s = dsin(a2);
       rodr(v, 6, v[6], v[7], v[8], kx, ky, kz, c, s);
       if (U) rodr(U, 6, u[6], u[7], u[8], kx, ky, kz, c, s);
       P[9] = P[6] + v[6]; P[10] = P[7] + v[7]; P[11] = P[8] + v[8];
@@ -234,9 +234,9 @@ export class HandModel {
       const g = ARCH_G[f] * ar, be = ARCH_B[f] * ar;
       // (rolled about the metacarpal's way, then bent about its own hinge, turned with it)
       const k = this.sk;
-      const cg = Math.cos(g), sg = Math.sin(g);
+      const cg = dcos(g), sg = dsin(g);
       rodr(k, 0, this.kAx[f * 3], this.kAx[f * 3 + 1], this.kAx[f * 3 + 2], -m0, -m1, -m2, cg, sg);
-      const cb = Math.cos(be), sb = Math.sin(be);
+      const cb = dcos(be), sb = dsin(be);
       for (let j = 0; j < 9; j += 3) { rodr2(v, j, -m0, -m1, -m2, cg, sg, k, cb, sb); if (U) rodr2(u, j, -m0, -m1, -m2, cg, sg, k, cb, sb); }
       rodr2(zf, 0, -m0, -m1, -m2, cg, sg, k, cb, sb);
       b[0] -= p0; b[1] -= p1; b[2] -= p2;
@@ -246,7 +246,7 @@ export class HandModel {
     // the spread, about the palm's normal (as the arch has turned it)
     const al = x[o];
     if (al !== 0) {
-      const c = Math.cos(al), s = Math.sin(al);
+      const c = dcos(al), s = dsin(al);
       for (let j = 0; j < 9; j += 3) { rodr(v, j, v[j], v[j + 1], v[j + 2], zf[0], zf[1], zf[2], c, s); if (U) rodr(u, j, u[j], u[j + 1], u[j + 2], zf[0], zf[1], zf[2], c, s); }
     }
     Zf[0] = zf[0]; Zf[1] = zf[1]; Zf[2] = zf[2];
@@ -258,7 +258,7 @@ export class HandModel {
     let a = 0;
     for (let j = 0; j < 3; j++) {
       a += x[o + 1 + j];
-      const c = Math.cos(a), s = Math.sin(a);
+      const c = dcos(a), s = dsin(a);
       rodr(v, j * 3, v[j * 3], v[j * 3 + 1], v[j * 3 + 2], kx, ky, kz, c, s);
       if (U) rodr(U, j * 3, u[j * 3], u[j * 3 + 1], u[j * 3 + 2], kx, ky, kz, c, s);
       P[j * 3 + 3] = P[j * 3] + v[j * 3]; P[j * 3 + 4] = P[j * 3 + 1] + v[j * 3 + 1]; P[j * 3 + 5] = P[j * 3 + 2] + v[j * 3 + 2];
@@ -306,7 +306,7 @@ export class HandSolve {
 function rotM(w0: number, w1: number, w2: number, R: Float64Array, o = 0) {
   const a = len3(w0, w1, w2);
   if (a < 1e-9) { R.fill(0, o, o + 9); R[o] = R[o + 4] = R[o + 8] = 1; return; }
-  const k0 = w0 / a, k1 = w1 / a, k2 = w2 / a, c = Math.cos(a), s = Math.sin(a), t = 1 - c;
+  const k0 = w0 / a, k1 = w1 / a, k2 = w2 / a, c = dcos(a), s = dsin(a), t = 1 - c;
   R[o] = c + k0 * k0 * t; R[o + 1] = k0 * k1 * t - k2 * s; R[o + 2] = k0 * k2 * t + k1 * s;
   R[o + 3] = k1 * k0 * t + k2 * s; R[o + 4] = c + k1 * k1 * t; R[o + 5] = k1 * k2 * t - k0 * s;
   R[o + 6] = k2 * k0 * t - k1 * s; R[o + 7] = k2 * k1 * t + k0 * s; R[o + 8] = c + k2 * k2 * t;

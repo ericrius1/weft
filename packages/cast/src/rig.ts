@@ -30,7 +30,7 @@
 // mid-motion: carry) and Drake's (dancing on the spot: groove; a dragon's knees and a quick dismount's feet; the
 // walking clock hurried by a foot left far behind; the breath; holds anchored to a bone; forearm twist limits; chains
 // whose constraints can't fling them: MAX_KICK). See MIGRATION.md for what each project's copy differs by.)
-import { type V3, add, sub, scale, norm, cross, dot, len, clamp, lerp, lerp3, smoothstep, rotateAxis, damp, angDiff, ease, minJerk, rej, cdSpring, Spring3, bump } from './math.js';
+import { type V3, add, sub, scale, norm, cross, dot, len, clamp, lerp, lerp3, smoothstep, rotateAxis, damp, drotateAxis, ddamp, q30, angDiff, ease, minJerk, rej, cdSpring, Spring3, bump } from './math.js';
 import type { HeroAsset } from './asset.js';
 import { MAX_BONES } from './asset.js';
 import { poseHang, hang, hangBone, HOLD } from './garment.js';
@@ -2388,6 +2388,9 @@ export class HeroRig {
 
   private rigFingers(side: number, curl: number, grip: number, goal: HandGoal | null, goalW: number, dt: number) {
     const t = side > 0 ? 'L' : 'R';
+    // (the hand's solve carries its numbers frame to frame: what comes in is held to a grid first, so no engine's own
+    // last bits get in — the same pose in every browser and in Node; math.ts dsin)
+    curl = q30(curl); grip = q30(grip); goalW = q30(goalW);
     // (holding something: the goal's grip; else the keys' resting curve below)
     const holds = !!goal && goal.grip !== undefined && goalW > 0.001;
     if (holds) grip = lerp(grip, goal!.grip!, goalW);
@@ -2513,7 +2516,7 @@ export class HeroRig {
     const FAN = keys ? K.fan : [0.06, 0.02, -0.03, -0.08];
     for (let f = 0; f < 5; f++) {
       const tip = goal.tips[f] ?? null;
-      tw[f] = damp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
+      tw[f] = ddamp(tw[f], tip ? 1 : 0, tip ? 30 : 14, dt);
       let k = tip ? goalW * tw[f] * (goal.tipW?.[f] ?? 1) : 0, rf = tip ? 1 : 0;
       if (tip) {
         toC(tip, Q.tgt, f * 3);
@@ -2585,6 +2588,7 @@ export class HeroRig {
    *  the palm moved and turned as solved, for the arm to take (the fingers are solved again on the hand as the arm put
    *  it: chordFingers) */
   private chordPalm(i: number, side: number, T: string, goal: HandGoal, goalW: number, dt: number): HandGoal {
+    goalW = q30(goalW);
     const M = this.handM[i]!, S = this.handS[i], Q = this.handQ[i];
     // (the goal's own frame: its roll is the solve's to choose now, not the arm's turn — the hand is handed back held
     // exactly as solved)
@@ -2604,7 +2608,7 @@ export class HeroRig {
     this.palmMiss[i].set(S.miss);
     const x = S.x, a = Math.hypot(x[3], x[4], x[5]);
     const W = (c0: number, c1: number, c2: number): V3 => [h[0] * c0 + t[0] * c1 + p[0] * c2, h[1] * c0 + t[1] * c1 + p[1] * c2, h[2] * c0 + t[2] * c1 + p[2] * c2];
-    const turn = (v: V3): V3 => (a < 1e-9 ? v : rotateAxis(v, [x[3] / a, x[4] / a, x[5] / a], a));
+    const turn = (v: V3): V3 => (a < 1e-9 ? v : drotateAxis(v, [x[3] / a, x[4] / a, x[5] / a], a));
     const h2 = W(...turn([1, 0, 0])), p2 = W(...turn([0, 0, 1]));
     const w2 = add(wrist, W(x[0], x[1], x[2]));
     // (where the hand is to be, so the fingers' second solve can be skipped when the arm put it there)
