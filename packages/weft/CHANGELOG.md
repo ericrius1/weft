@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`AGENTS.md`'s cast section** says how to play a score with cast's pianist, on the frames or on an audio clock
+  (cast 0.2.0's `playScore(score, { clock })`).
 - **`triangulate`** is exported from the package (the ear clipping MeshBuilder's polygons use): a footprint or a
   river's outline triangulated for a roof or a surface (Dublin's district), no copy in the project.
 - **`AGENTS.md`**, shipped in the package (`node_modules/@ericrius1/weft/AGENTS.md`): a guide for coding agents in the
