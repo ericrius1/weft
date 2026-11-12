@@ -81,7 +81,8 @@ export interface HandGoal { palm: V3; fwd: V3; down: V3; tips: (V3 | null)[]; /*
   /** the way the elbow would rather point (world): a preference the arm's fit weighs against its ease (armFit) */
   elbow?: V3;
   /** how much that way counts against the arm's ease (default 0.35): more, and the elbow keeps to it while the hand
-   *  turns through a move, rather than hopping to the other side when that side's a little easier for the wrist */
+   *  turns through a move, rather than hopping to the other side when that side's a little easier for the wrist; 100 or
+   *  more, the elbow is kept that way whatever the arm's ease (a violinist's left elbow under the fiddle) */
   elbowW?: number;
   /** the knuckles' line (its middle, world): set, the wrist goes a hand's length back from it along `fwd` (the body's
    *  own hand: a child's or a big man's), and `palm` is ignored */
@@ -490,6 +491,8 @@ const rollK = (G: HandFrame) => 1 + ((G.k ?? 1) - 1) * 0.25, wristK = (G: HandFr
  *  own cost, and a share of it) a far way round must be before the elbow hurries over to it (boulder's hero rig, from
  *  Codevember's day 9: elbows that slide, never flip) */
 const ARM_SWING = 9, ARM_FLIP = 2.5;
+/** a goal's elbowW from which its elbow's way is kept as given (HandGoal.elbowW) */
+const ELBOW_SET = 100;
 /** the forearm's whole turn (rad, about its length, from the elbow's way: the forearm's half and the wrist's): free to
  *  TW0, eased to at most TW1 past it */
 const TW0 = 1.75, TW1 = 2.05;
@@ -2277,7 +2280,11 @@ export class HeroRig {
       if (len(p) > 0.2) { const pn = norm(p); G = { h, p: pn, t: norm(scale(cross(pn, h), side)), turn: goal.turn, bear: goal.bear, hum: goal.bear || goal.shoulder, k: this.flex, ew: goal.elbowW }; }
     }
     // (and the elbow for it: swung round the shoulder-wrist line to where the whole arm's most at ease)
-    if (G) {
+    if (G && goal?.elbow && (goal.elbowW ?? 0) >= ELBOW_SET) {
+      // (an elbow the player sets against the arm's ease — a violinist's under the fiddle: kept that way)
+      this.swPrev[ti] = null; this.swVel[ti] = 0;
+      if (G.turn) G = turnHand(G, this.psi[ti]);
+    } else if (G) {
       const fit = this.armFit(side, ti, shoulder, target, lu, lf, soft, pole, G, CS, shoulderBind, dt);
       pole = norm(lerp3(pole, fit, goalW));
       if (G.turn) G = turnHand(G, this.psi[ti]);
