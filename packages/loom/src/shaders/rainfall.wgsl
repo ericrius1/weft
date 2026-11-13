@@ -27,7 +27,7 @@ struct RainU {
   vel: vec4f,                // xyz the drops' velocity (m/s), w the top of the fall (world y: the cloud base)
   fall: array<vec4f, 3>,     // per box: how far the drops have moved (m, wrapped to the box)
   box: array<vec4f, 3>,      // per box: its size (m), w the instances' share up to it (cumulative)
-  veil: vec4f,               // x the fall's extinction (1/m), y -, z the splashes' share, w the time (s)
+  veil: vec4f,               // x the fall's extinction (1/m), y the share that's snow (0..1), z the splashes' share, w the time (s)
 }
 @group(2) @binding(0) var<uniform> rainP: RainU;
 @group(2) @binding(1) var rainZ: texture_2d<f32>;
@@ -118,7 +118,11 @@ fn rainDepthAt(px: vec2f) -> f32 { return textureLoad(rainZ, vec2i(px * vec2f(te
   var o: RainOut;
   let k = rainBoxOf(i);
   let pl = rainPlaced(i, k, rainP.fall[k].xyz);
-  let p = pl.xyz;
+  // (a flake flutters as it falls: a slow wander of its own, a few tens of centimetres)
+  let snow = rainP.veil.y;
+  let ph = rainHash(i * 13u + 5u) * 6.2832;
+  let t = rainP.veil.w;
+  let p = pl.xyz + vec3f(sin(t * 1.3 + ph), 0.0, cos(t * 1.1 + ph * 1.7)) * 0.22 * snow;
   var a = pl.w * rainShown(f32(i) / RAIN_MAX, rainP.rain.x, p);
   if (a <= 0.001) { o.pos = RAIN_OFF; return o; }
   // (each drop its own size: the big ones longer and brighter)
@@ -126,7 +130,7 @@ fn rainDepthAt(px: vec2f) -> f32 { return textureLoad(rainZ, vec2i(px * vec2f(te
   let v = rainP.vel.xyz;
   let dist = length(p - frame.camPos);
   // (the far ones drawn longer, as a streak the eye reads as rain rather than a speck)
-  let tail = p - v * rainP.rain.y * (0.7 + 0.3 * sz) * (1.0 + dist / 14.0);
+  let tail = p - v * rainP.rain.y * (0.7 + 0.3 * sz) * (1.0 + dist / 14.0 * (1.0 - snow));
   a *= rainSegment(tail, p, rainP.rain.z * sz, 1.0, rainCorner(vi), &o);
   // (the nearest a blur too close to see, the near ones strongest, the far ones fainter)
   a *= smoothstep(0.5, 1.5, dist) * mix(1.0, 0.4, smoothstep(2.0, 30.0, dist)) * rainP.rain.w;
