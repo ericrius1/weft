@@ -340,6 +340,8 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) cur: vec4f, @location(
 o.pos = clipAt(p); o.cur = o.pos; o.prev = prevClipAt(pWas);
 // (far from the origin, positions relative to this frame's eye from the CPU in doubles instead: clipRel(r) and
 // prevClipRel(rWas), rWas = the point a frame ago minus this frame's eye — a float32 world position is 6 cm off at 1,000 km)
+// (both through the same path: clipAt with prevClipAt, or clipRel with prevClipRel. `frame.viewProj * p` beside
+// prevClipAt gives a still draw a motion of its own away from the origin: 0.16 px mean, 7 px at worst, 8 km out)
 // fragment: the colour and its motion
 struct FOut { @location(0) c: vec4f, @location(1) m: vec4f }
 o.m = motionOf(i.cur, i.prev);            // or motionAt(i.pos, i.prev): one varying (perspective, infinite far only)
