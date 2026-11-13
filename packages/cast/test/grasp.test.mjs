@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { HandModel, hpOf, HAND_N } from '../dist/fingers.js';
-import { grasp, graspGoal, heldWorld, heldSd, GRASPS, BOWREST } from '../dist/grasp.js';
+import { grasp, graspGoal, heldWorld, heldSd, GRASPS, BOWREST, bowReachScale, BOW_REACH_EASE } from '../dist/grasp.js';
 
 const fx = JSON.parse(readFileSync(new URL('./fixtures/hands-built.json', import.meta.url), 'utf8'));
 const asset = { bones: fx.bones, index: Object.fromEntries(fx.bones.map((b, i) => [b.name, i])) };
@@ -124,4 +124,20 @@ test('what a grasp costs: solved once per thing held (not per frame)', () => {
   const ms = (performance.now() - t0) / n;
   console.log(`  a grasp's solve: ${ms.toFixed(1)} ms on average over ${n} kinds`);
   assert.ok(ms < 100, `${ms.toFixed(1)} ms a grasp`);
+});
+
+test("the bow's stick eased in for a short hand only, with no step (0.6.3 release check)", () => {
+  // (0.6.3's first try moved any hand 3 % off either way: a long-fingered hand's hold went further from its rests, and a
+  // 0.1 % change in proportion at 0.97 jumped the index 20 deg)
+  for (const rr of [1, 1.01, 1.03, 1.052, 1.2, BOW_REACH_EASE[0], 0.99]) assert.equal(bowReachScale(rr), 1, `rr ${rr}`);
+  let prev = bowReachScale(1);
+  for (let rr = 1.0; rr >= 0.84; rr -= 0.0005) {
+    const s = bowReachScale(rr);
+    assert.ok(s <= prev + 1e-12, `never larger for a shorter hand (rr ${rr.toFixed(4)})`);
+    assert.ok(prev - s < 0.0012, `no step: ${rr.toFixed(4)} moves ${(prev - s).toFixed(5)}`);
+    prev = s;
+  }
+  assert.ok(Math.abs(bowReachScale(0.969) - bowReachScale(0.971)) < 0.002);
+  assert.ok(Math.abs(bowReachScale(0.93) - (1 + (0.93 - 1) * 0.6)) < 1e-12, 'all of it past the band (Iroh 0.93)');
+  assert.ok(!Number.isNaN(bowReachScale(NaN)) && bowReachScale(NaN) === 1);
 });

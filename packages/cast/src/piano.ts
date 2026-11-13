@@ -526,7 +526,7 @@ export class Pianist {
   private narrowShift(n: number, inQ: number): number {
     const I = this.inst!, k = this.handK;
     const e = clamp((inQ - 0.008 * k) / (0.01 * k), 0, 1);
-    if (e <= 0) return 0;
+    if (!(e > 0)) return 0;   // (and NaN: forHand(0) gives a zero handK)
     const x = this.along(n);
     let ws = 0;
     for (const d of [1, -1, 2, -2]) { const m = n + d; if (I.notePoint(m) && !this.black(m)) { ws = Math.abs(this.along(m) - x); break; } }

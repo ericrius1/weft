@@ -68,3 +68,23 @@ test('the term readout is not stale after the watch is turned off and on again (
   assert.ok(Object.keys(termPulls(A)).length > 0, 'read again once solved');
   setTermWatch(null);
 });
+
+test('a Pianist for a hand of no length (forHand(0)) plans no NaN fingertip (0.6.3 release check)', async () => {
+  const { Pianist, pianoPlayable } = await import('../dist/piano.js');
+  const Wk = [0, 0.5, 1, 1.5, 2, 3, 3.5, 4, 4.5, 5, 5.5, 6];
+  const xOf = (n) => (Math.floor(n / 12) - 5) * 7 * 0.0235 + Wk[n % 12] * 0.0235;
+  const I = pianoPlayable({
+    axes: { along: [1, 0, 0], toward: [0, 0, 1], up: [0, 1, 0] }, facing: [0, 0, -1],
+    seat: [0, 0.49, 0.6], keyboard: [0, 0.74, 0], pedalTop: [0, 0.07, -0.1], look: [0, 0.98, -0.2],
+    touch: (n) => (n >= 36 && n <= 96 ? [xOf(n), 0.74, -0.035] : null),
+  }, { state: new Float32Array(88), pedalState: { sustain: false } });
+  const P = new Pianist().forHand(0);
+  P.sit(I, I.stand, I.seat.yaw);
+  for (let i = 0; i < 60; i++) P.update(1 / 60, 0);
+  const notes = [60, 62, 64, 65, 67, 69, 71, 72].map((note, i) => ({ note, t0: 0.5 + i * 0.25, t1: 0.7 + i * 0.25, vel: 0.7 }));
+  let t = 0;
+  P.playScore({ notes, pedal: [], duration: 3 }, { clock: () => t });
+  let bad = 0;
+  for (let i = 0; i < 180; i++) { t = i / 60; P.update(1 / 60, 0); for (const h of P.planned) for (const q of h) if (q && !q.every(Number.isFinite)) bad++; }
+  assert.equal(bad, 0);
+});

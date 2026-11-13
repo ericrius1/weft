@@ -1,6 +1,6 @@
 {
   "name": "@ericrius1/cast",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "The cast's procedural character runtime, shared by every project: the hero rig (gait, flight, swimming, seats and holds, the arm fit with elbow continuity, finger IK, verlet hair and cloth, the face), garments, strands, a stroke planner for anything swung, keyed tracks, the whole-body solver, and the articulation of a body playing an instrument. CPU only, no renderer.",
   "type": "module",
   "license": "MIT",

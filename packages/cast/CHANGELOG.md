@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.3
+
+Against 0.6.2.
+
+- **`sit()` now clears the after-piece hold** (`Pianist.after`, the hands resting on a clocked piece's plan after it
+  ends): 0.6.2's entry said `sit` does not clear it; now a new seat, getting up, `playScore`, and live notes (keys played
+  by hand, not from a score) all clear it — **for every Pianist**, `forHand` or not. `stopScore` finds the piece's last
+  let-go with a loop (a very long score overflowed the stack).
+- **New public field `Pianist.fallExp`** (default 3: as 0.6.2): the stroke's last fall onto its key goes as
+  `1 - (1 - u)^fallExp` of the hover. `forHand` sets 3.5 (a built hand's tip reaches the key within the frame its note
+  sounds at 60 fps: it was 5.9 mm over it a frame early).
+- **The narrow-part rule** (a white key's fingertip in past the black keys' fronts goes along to the middle of the key's
+  narrow part between its black neighbours, eased in 8-18 mm past its touch point, scaled by the hand) and `fallExp` 3.5
+  are switched on by **`forHand`** (two commit messages on the way said "with the prior": it is `forHand`). A Pianist
+  without `forHand` is bit for bit 0.6.2's.
+- `Pianist.deepness` finds each finger's first stroke not yet over by halving (was a scan of every note so far, each
+  frame); numbers identical.
+- **Motion in World's duet (a `forHand` pianist)**: every note still lands (109/109 at 50/60/90/120/144 fps, worst 14.1 /
+  13.4 / 13.4 / 13.4 / 14.4 ms); joint steps over 10 deg a frame 19/14/10 -> 27/18/11 at 50/60/144 fps (worst
+  21.2/17.9/11.3 -> 20.8/18.2/11.4 deg).
+- **The bow grasp** (`grasp(M, 'bow', ...)`) for a hand whose fingers are SHORT for its knuckles' width: the stick placed
+  by six tenths of the hand's reach difference from the fitted hand's (the middle knuckle out from the wrist plus the
+  middle finger's length, per knuckle width; the fitted hand 3.32), eased in by a smooth step from 0.985 of that reach
+  (none) to 0.95 (all), so no step anywhere (new exports `bowReachScale(rr)`, `BOW_REACH_EASE`). Hands it moves: those
+  under 0.985 — on World's bodies iroh (0.93: index 21/66 deg -> 40/76/6, pads within 0.4 mm of the stick, was 3.8 mm
+  off) and the people kit's painted singer and fiddler (0.86: worst pad miss 20 -> 12 mm). Unchanged, bit for bit:
+  katara, june (1.0), the fiddler stand-in raker (0.988), aang (1.03), augie (1.05: long fingers are held as in 0.6.2)
+  and every hand at or above 0.985.
+- **Malformed asks**: a held goal's NaN `grip` is left out (it made every finger's bones NaN; also the flat hand's
+  put-back grip); the term readout (`termPulls`) dropped for every hand when the watch is turned off; `forHand(0)` no
+  longer puts NaN into `Pianist.planned` (the narrow-part rule's ease is 0 for a zero-length hand).
+
 ## 0.6.2
 
 - **The bow hold replanned from real holds** (`grasp(M, 'bow', …)`): the stick placed in the hand where fitted frog
