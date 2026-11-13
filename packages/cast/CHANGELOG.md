@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (world/motion)
+
+- **A body of its own kind** (DNC1 `header.kind`): any kind but `'human'` needs none of the CORE bones; each bone names
+  its parent (an earlier bone's name or index, null or -1 the root's: one root); `asset.parents`; no garments fitted;
+  `HeroRig` refuses it with a clear error. A person's file (no `kind`, or `'human'`) is read exactly as before.
+  `test/body.test.mjs`.
+
 ## 0.6.3
 
 Against 0.6.2.

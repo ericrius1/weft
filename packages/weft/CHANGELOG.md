@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (world/motion)
+
+- **Motion for what moves by itself** (`Taau` option `motion`, `weft/motion`): a draw that moves (a followed car or bird,
+  a skinned body, instances with their own frames, grass in the wind) writes a second colour target of the scene pass
+  from its clip position now and last frame's (`motionOf(cur, prev)`, or `motionAt(fragPos, prev)` with one varying);
+  the TAAU reprojects such a texel by that motion and checks its history against the distance that surface had, where
+  the distance written with it is the depth buffer's (a static draw in front writes nothing and fails the match), and
+  by the camera elsewhere, as before. A separate shader file (`taaumotion.wgsl`): an app without a motion target is
+  given `taau.wgsl`'s code unchanged. `Frame.jitterNdc` (this frame's and last frame's jitter in NDC) after the 0.2.8
+  fields (784 → 800 bytes; nothing moves; shaders that don't read it unchanged). `AGENTS.md` has the recipe.
+  `test/motion.test.mjs`: the motion through the camera in float32 against a double pinhole, 5e-5 px at 1080p at the
+  origin and 1,000 km out. `tools/shader-ab.mjs`: which shaders of some projects change between two libraries.
+
 ## 0.2.8
 
 - **Camera-relative matrices**, for drawing far from the world's origin: `Camera.viewRel` (the view's rotation alone),

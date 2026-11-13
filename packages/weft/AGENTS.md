@@ -144,7 +144,7 @@ or a `GPUSampler` from `kit.sampler(desc)`.
 | `pass.bundle(label).draw(...)` | static draws recorded once into a `GPURenderBundle` and re-recorded only when something they use changes |
 | `kit.copy(src, dst)`, `kit.raw(enc => …)`, `kit.action(() => …)`, `pingpong.swap` | a copy, raw encoder access, and a CPU step at that point in the list |
 | `new MipChain(kit, tex)` | fills a texture's mips |
-| `new Taau(kit, hdr, depth, opts)` | temporal AA and upscaling. Run `taau.items`, then read `taau.out` |
+| `new Taau(kit, hdr, depth, opts)` | temporal AA and upscaling. Run `taau.items`, then read `taau.out`. `opts.motion`: the moving draws' own motion (Recipes) |
 
 Every item accepts `enabled: boolean | () => boolean`. Prefer that over rebuilding the run list. Draws and computes
 have `.set(name, value)` to rebind one resource later (the layout stays the same), `.ready()` to wait for their own
@@ -325,6 +325,29 @@ Both move `kit.renderScale`, and `'render'`-sized textures follow. Pair it with 
 `Pack.load(assets, name)` streams tiles by Range request. The `remoteAssets()` plugin serves the R2 copy in dev when a
 file isn't on disk. To publish, run `node node_modules/@ericrius1/weft/tools/publish-assets.mjs`.
 
+**Things that move by themselves keep their TAAU history** (a followed car or bird, a skinned body, grass in the
+wind). Give the scene pass a second colour target and hand it to the TAAU; only the moving draws write it:
+```ts
+const motion = kit.texture({ label: 'motion', format: 'rgba16float', size: 'render', samples, usage: ['render', 'sample'] });
+const scene = kit.pass({ color: [{ target: hdr, clear: [0, 0, 0, 0] }, { target: motion, clear: [0, 0, 0, 0] }], depth: { target: depth, clear: 0 } });
+const taau = new Taau(kit, hdr, depth, { motion });
+```
+```wgsl
+#include "weft/motion"
+struct VOut { @builtin(position) pos: vec4f, @location(0) cur: vec4f, @location(1) prev: vec4f, /* … */ }
+// vertex: the point now and the same point a frame ago (last model matrix, last bones, last instance frame, or the
+// displacement at frame.time - frame.dt)
+o.pos = clipAt(p); o.cur = o.pos; o.prev = prevClipAt(pWas);
+// fragment: the colour and its motion
+struct FOut { @location(0) c: vec4f, @location(1) m: vec4f }
+o.m = motionOf(i.cur, i.prev);            // or motionAt(i.pos, i.prev): one varying (perspective, infinite far only)
+```
+Draws that write nothing need no change (weft gives them a write mask of 0 on the second target) and are reprojected
+by the camera; the TAAU takes a texel's motion only where its distance matches the depth buffer's, so a static draw in
+front of a moving one is fine. An MSAA scene's target is multisampled like the depth (the TAAU reads its first sample).
+The texel: uv now − uv last frame (y down) without either frame's jitter (`Frame.jitterNdc`), the view distance then,
+the view distance now (0: nothing written).
+
 **A planetarium dome**: `new Fulldome(kit, { size, source })` stitches six `Camera.shift` views into a 180° fisheye.
 Turn off screen-space effects (vignette, grain, lens flares, shafts, motion blur, temporal accumulation) while
 rendering it.
@@ -382,6 +405,14 @@ feature without any error.
 - **Options** (`RendererOptions`): `msaa: 1 | 4`, `clouds: 'volumetric' | 'sprites' | 'none'`, `shadowSize`, `taau`,
   `lights: { max }` (more than 32 lights are clustered), `gi: { min, max, spacing }` (irradiance probes) and `ripples`.
   Point lights are set with `r.setPointLights(list, camPos)`.
+- **A subject's own shadow** (`@ericrius1/loom/render/subjectshadow`, `loom/subject`): one small map fitted round one
+  subject (a flown bird, a face under a hat) for detail no cascade has: `const s = new SubjectShadow(kit, { size: 256,
+  layers: true })`; each frame `s.fit(centre, radius, sunDir)` (or `s.off()`) and `kit.run([...s.passes(), …])`; draw
+  the subject's casters into `s.depthPass` (a vertex entry returning `frame.viewProj * world`) and, for light through
+  layers, into `s.layerPass` (fragment `subjectLayerOut(S, map, q.xy, q.z)`, `blend: 'add'`, `cull: 'none'`).
+  Receivers bind `s.uniform`, `s.depth`, `s.layers` and call `subjectVis(S, map, p, n)` (1 lit) and
+  `subjectLayers(S, map, layers, p)` (surfaces between p and the sun). `subjectShapes` shades from a few ellipsoids
+  where there's no map (a phone).
 - Other modules are imported by path: `@ericrius1/loom/terrain/clipmap`, `world/forest`, `weather/rainfall`,
   `render/volume`, `render/film`, `render/clouds`, `destruct/rubble`, `physics/box3d`, `audio` (a procedural Web Audio
   engine: `audio.bus('sfx' | 'music' | 'amb')`), `camera/autopilot`, `particles`. Each module's header comment explains
@@ -398,6 +429,11 @@ const rig = new HeroRig(await loadHero(url, { maxBones }));
 rig.update({ dt, time, pos, yaw, vel, speed, running, onGround, wade: 0, landImpact: 0, pose, look: null, wind, ground });
 skin.write(rig.dq.subarray(0, rig.nBones * 8));     // a storage buffer, read in WGSL through weft/skin
 ```
+
+A body that isn't a person (a bird, a dog) is the same DNC1 file with `header.kind` set (anything but `'human'`) and
+each bone's `parent` (an earlier bone's name or index, null for the root): `parseHero`/`loadHero` read it without the
+human bones and give `asset.parents`; pose it with your own rig and write its dual quaternions with `matToDQ`
+(HeroRig refuses it).
 
 In the vertex shader: `#include "weft/skin"`, declare `DQ: array<vec4f>` (two per bone), then
 `let q = skinBlend(bones, weights); let p = skinPoint(q, bones, weights, pos); let n = skinDir(q, bones, weights, nrm);`.

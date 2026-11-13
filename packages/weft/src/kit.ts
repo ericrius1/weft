@@ -92,6 +92,7 @@ export class View {
       near: c.near, camUp: c.up, frame: k.frameIndex, res: [w, h], invRes: [1 / w, 1 / h], jitter: c.jitter, fovY: c.fovY,
       aspect: w / h, mouse: k.mouse, user: this.user,
       viewProjRel: c.viewProjRel, invViewProjRel: c.invViewProjRel, prevViewProjRel: c.prevViewProjRel, camLo: c.camLo,
+      jitterNdc: c.jitterNdc,
     });
   }
   /** its group-0 bind group (made again only when the Frame buffer or the globals change) */

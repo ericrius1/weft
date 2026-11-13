@@ -11,11 +11,13 @@
 //
 // The jitter for the next frame is set on the view's camera as the items run, so every pass of a frame sees one jitter
 // (whatever a game does with its camera before kit.run, so long as it leaves `jitter` to this). Moving objects reproject
-// by the camera's motion alone (no velocity buffer): the clip keeps them from ghosting. Call `cut()` after a camera cut.
+// by the camera's motion alone unless given a `motion` target that they write their own motion into (weft/motion):
+// then a followed car, a flown bird, grass in the wind keep their history. Call `cut()` after a camera cut.
 import type { Kit, View, RunEntry } from './kit';
 import type { Compute } from './passes';
 import { Ref, deref, type Texture, type UniformBuffer, PingPong, RunAction } from './resources';
 import taauShader from '../shaders/taau.wgsl';
+import taauMotionShader from '../shaders/taaumotion.wgsl';
 
 export interface TaauOptions {
   /** the output size: 'canvas' (the default) or 'render' (anti-aliasing alone, no upscale) */
@@ -27,6 +29,12 @@ export interface TaauOptions {
   /** the app's own motion vectors (rg: screen uv now − uv last frame, at the render size): what moves by itself — a
    *  creature, a car, a jiggling molecule — reprojects instead of ghosting. Without, the camera's motion alone */
   velocity?: Texture;
+  /** a motion target (rgba16float, the render size, the scene's sample count or 1, cleared to 0 each frame) that only
+   *  the draws moving by themselves write (shaders/motion.wgsl `motionOf`): a texel whose distance is the depth
+   *  buffer's there is reprojected by that draw's own motion and its history checked against the distance that surface
+   *  had last frame; everywhere else (texels left at 0, or hidden behind a draw that wrote nothing) the camera's motion,
+   *  as without. Replaces `velocity` when both are given */
+  motion?: Texture;
   /** a sharpening pass after the resolve (default true; false saves its canvas-size texture — a phone's ~20 MB — for
    *  an app whose final pass sharpens) */
   sharpen?: boolean;
@@ -76,6 +84,9 @@ export class Taau {
     on: true, feedback: 1 / 12, clip: 1, antiFlicker: 0.6, sharpen: 0.35, phases: 16, debug: false,
     /** the depth mismatch (relative) past which the history is dropped: what moved by itself, what was uncovered */
     depthReject: 0.035,
+    /** (with a motion target) how near a motion texel's distance must be the depth buffer's to be the visible surface's
+     *  (relative): a static draw in front of a moving one, at a greater gap than this, is reprojected by the camera */
+    motionMatch: 0.02,
     /** the scene's exposure (or a function giving it each frame): the blend's tonemap sees what the eye will, so a
      *  night scene's dim values and a day's bright ones are weighed alike */
     exposure: 1 as number | (() => number),
@@ -127,12 +138,16 @@ export class Taau {
     const threads = () => [this.hist.a.width, this.hist.a.height];
     // (an MSAA scene's depth read straight from its first sample: no resolve needed)
     const ms = depth.samples > 1;
-    this.velocity = opts.velocity ?? null;
-    const vel = opts.velocity ?? k.texture({ label: `${label}.noVelocity`, format: 'rg16float', size: [1, 1], usage: ['sample'] });
-    this.resolveC = k.compute(taauShader, {
-      label: `${label}.resolve`, entry: ms ? 'resolveMS' : 'resolve', view: this.view, enabled: on, threads,
-      bind: { T: this.u, taauSrc: src, [ms ? 'taauDepthMS' : 'taauDepth']: depth, taauHist: this.hist.read, taauOut: this.hist.write, taauVel: vel },
-    });
+    this.velocity = opts.motion ? null : opts.velocity ?? null;
+    const mo = opts.motion ?? null;
+    this.motion = mo;
+    // (a motion target: its own shader file, so an app without one is given the same code as before; read like the
+    // depth, its first sample when multisampled)
+    const bind: Record<string, unknown> = { T: this.u, taauSrc: src, [ms ? 'taauDepthMS' : 'taauDepth']: depth, taauHist: this.hist.read, taauOut: this.hist.write };
+    if (mo) bind[mo.samples > 1 ? 'taauMotionMS' : 'taauMotion'] = mo;
+    else bind.taauVel = opts.velocity ?? k.texture({ label: `${label}.noVelocity`, format: 'rg16float', size: [1, 1], usage: ['sample'] });
+    const entry = mo ? (ms ? 'resolveObjMS' : 'resolveObj') : ms ? 'resolveMS' : 'resolve';
+    this.resolveC = k.compute(mo ? taauMotionShader : taauShader, { label: `${label}.resolve`, entry, view: this.view, enabled: on, threads, bind: bind as never });
     this.sharpC = this.sharp ? k.compute(taauShader, {
       label: `${label}.sharpen`, entry: 'sharpen', view: this.view, threads, enabled: () => on() && this.params.sharpen > 0,
       bind: { T: this.u, sharpSrc: this.hist.read, sharpOut: this.sharp },
@@ -144,6 +159,8 @@ export class Taau {
   }
 
   private velocity: Texture | null;
+  /** the motion target the moving draws write (TaauOptions.motion), or null */
+  readonly motion: Texture | null;
 
   /** drop the history (a camera cut, a teleport): the next frame starts it over */
   cut() { this.dropNext = true; }
@@ -218,6 +235,8 @@ export class Taau {
       jitter: [cam.jitter[0], cam.jitter[1], drop ? 1 : 0, Math.min(1, Math.max(0, P.sharpen))],
       k: [P.feedback, P.clip, P.antiFlicker, P.debug ? 1 : 0],
       o: [this.velocity ? 1 : 0, E > 0 && isFinite(E) ? E : 1, cam.ortho ? 1 : 0, Math.max(0, P.depthReject)],
+      m: [Math.max(0, P.motionMatch), 0, 0, 0],
+      iw: [iPj[3], iPj[7], iPj[11], iPj[15]],
     });
     // (uploaded now: the encoder's commands are submitted after this write)
     this.u.upload();
