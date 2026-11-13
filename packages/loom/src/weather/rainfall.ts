@@ -119,7 +119,7 @@ export class Rainfall {
     if (sh.rain <= 0) return;
     let acc = 0;
     this.u.set({
-      rain: [sh.rain, 1 / 45, (0.0016 + 0.0016 * smooth(0.5, 20, R)) * (1 - snow) + 0.014 * snow, 0.62 + 0.3 * snow],
+      rain: [sh.rain, (1 / 45) * (1 - 0.85 * snow), (0.0016 + 0.0016 * smooth(0.5, 20, R)) * (1 - snow) + 0.014 * snow, 0.62 + 0.3 * snow],
       vel: [...v, this.top],
       fall: this.fall.map((f) => [...f, 0]) as never,
       box: BOXES.map((b) => { acc += b[3]; return [b[0], b[1], b[2], acc]; }) as never,
