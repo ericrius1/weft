@@ -169,7 +169,7 @@ export class Pianist {
     // 80 / 95 / 90 / 55 mm in, the long fingers wedged between the black keys: from above, a claw. Among the black keys
     // (deepIn) the white keys are played further in, as before; on the black keys themselves, as before (blackAlong).)
     this.fingerIn = [-0.007, 0.014, 0.028, 0.018, 0].map((v) => v * k); this.deepIn = [0.025, 0.045, 0.06, 0.055, 0.045].map((v) => v * k); this.handK = k;
-    this.blackAlong = [0, 0.02, 0.03, 0.03, 0].map((v) => v * k); this.blackIn = 0.03 * k; this.blackExtra = [0, 0, 0, 0.012 * k, 0]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
+    this.fallExp = 3.5; this.blackAlong = [0, 0.02, 0.03, 0.03, 0].map((v) => v * k); this.blackIn = 0.03 * k; this.blackExtra = [0, 0, 0, 0.012 * k, 0]; this.idleW = 0.04; this.idleLift = [0.015, 0, 0, 0, 0]; this.idleClear = 0.018; return this; }
   /** how far over the white keys' tops a finger with nothing to play is held clear (m: the hand's solve's floor). A built
    *  hand's (forHand) 18 mm: its idle fingers lie long as levers now, and at 6 mm their tips sank into the black keys'
    *  fronts, so from above they read as stubs; side clips of pianists: idle tips 23 mm over the hand's lowest (median),
@@ -540,6 +540,10 @@ export class Pianist {
     return ((lo + hi) / 2 - x) * e * e * (3 - 2 * e);
   }
   private handK = 1;
+  /** the stroke's fall onto its key: the height left goes as (1 - (1 - u)^fallExp) of the hover, u the share of the fall
+   *  still to go — 3 a smooth landing; a built hand's (forHand) 3.5, faster in its last frame: at 3 a tip was 5.9 mm over
+   *  its key a 60 fps frame before its note, inside the page's 6 mm touch, so it counted a frame early (16.2 of 16.7 ms) */
+  fallExp = 3;
   private black(n: number): boolean { const I = this.inst!, m = I.notePoint(60)!, p = I.notePoint(n); return !!p && dot(sub(p, m), I.axes.up) > 0.004; }
 
   /** the whole piece planned: hands, fingers, strokes, each hand's places */
@@ -667,7 +671,7 @@ export class Pianist {
     // before it lands: from its last key (let go) up, over to this one, a wait at its hover, the fall — each part
     // shortened alike when the notes come too quickly for all of it, never out of order (a finger crossing the keys
     // low, or still on its way over as it falls, is seen on the wrong key)
-    const fall = (k: number) => { const u = clamp((t0 - s) / (FALL * k), 0, 1); return hv * (1 - (1 - u) ** 3); };
+    const fall = (k: number) => { const u = clamp((t0 - s) / (FALL * k), 0, 1); return hv * (1 - (1 - u) ** this.fallExp); };
     // (a finger taken from rest — its first note, or the last one let go long since — comes over from its idle place to
     // the key and its pull from an idle finger's to a playing one's, over most of its reach: it had jumped there in a
     // frame, the target and its weight both, and the finger with them — 62 deg at its middle joint in one frame)
