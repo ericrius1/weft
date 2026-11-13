@@ -14,7 +14,7 @@ import type { Kit, RenderPass, RunEntry, Shader, Texture, UniformBuffer, V3 } fr
 import litShader from '../shaders/rainfall_lit.wgsl';
 
 /** the weather it reads: rain 0..1, cloud cover 0..1, wind (m/s) and the way it blows toward ([x, z], unit) */
-export interface RainWeather { rain: number; cloud: number; wind: number; windDir: ArrayLike<number>; /** the share falling as snow (0..1): absent, rain */ snowing?: number }
+export interface RainWeather { rain: number; cloud: number; wind: number; windDir: ArrayLike<number>; /** the share falling as snow (0..1): absent, rain */ snowing?: number; /** the ground under the eye (world y, m): the cloud base is over it (absent: 0, a world at the sea) */ ground?: number }
 
 /** the default shader's light (loom/rainfall_lit): linear rgb, as the scene's */
 export interface RainLight {
@@ -95,7 +95,7 @@ export class Rainfall {
     const snow = Math.min(1, Math.max(0, w.snowing ?? 0));
     const sh = this.shares;
     // (snow: more flakes than drops for the same water, each far bigger and slower)
-    sh.rain = R > 0.01 ? Math.min(1, (1 - Math.exp(-R / 3.5)) * (1 + 0.8 * snow)) : 0;
+    sh.rain = R > 0.01 ? Math.min(1, (1 - Math.exp(-R / 3.5)) * (1 + 2.6 * snow)) : 0;
     sh.splash = sh.rain * (1 - snow);
     // the visibility (Koschmieder: extinction = 3.9 / visibility): in rain by its rate; in snow far less, a moderate
     // fall (R ~1 mm/h of water) a kilometre or so
@@ -103,8 +103,9 @@ export class Rainfall {
     const visSnow = R > 0.01 ? 1400 * Math.pow(R, -0.8) : Infinity;
     const vis = snow > 0 ? 1 / ((1 - snow) / visRain + snow / visSnow) : visRain;
     sh.veil = 3.912 / vis;
-    // the cloud base: low in a storm, higher in showers
-    this.top = 1400 - 900 * smooth(0.2, 0.9, w.cloud);
+    // the cloud base: low in a storm, higher in showers; over the ground under the eye (a town 1,600 m up has its
+    // storms' bases over it, not under it)
+    this.top = (w.ground ?? 0) + 1400 - 900 * smooth(0.2, 0.9, w.cloud);
     // the drops: drizzle fine and slow, a downpour big and fast; the wind carries them
     const fall = (3 + 6 * smooth(0.2, 8, R)) * (1 - snow) + (0.9 + 0.3 * smooth(0.5, 5, R)) * snow;
     // (near the ground the drops take only part of the wind's speed: a gale slants them, it doesn't fling them flat;
@@ -118,7 +119,7 @@ export class Rainfall {
     if (sh.rain <= 0) return;
     let acc = 0;
     this.u.set({
-      rain: [sh.rain, 1 / 45, (0.0016 + 0.0016 * smooth(0.5, 20, R)) * (1 - snow) + 0.007 * snow, 0.62 + 0.3 * snow],
+      rain: [sh.rain, 1 / 45, (0.0016 + 0.0016 * smooth(0.5, 20, R)) * (1 - snow) + 0.014 * snow, 0.62 + 0.3 * snow],
       vel: [...v, this.top],
       fall: this.fall.map((f) => [...f, 0]) as never,
       box: BOXES.map((b) => { acc += b[3]; return [b[0], b[1], b[2], acc]; }) as never,
