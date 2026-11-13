@@ -968,7 +968,7 @@ function cholSolve(A, b, x, n) {
  *  argument the hand solved last), and cleared when the watch is turned off */
 let TERMW = null;
 const TERMS = { prev: null, last: '', cur: {}, S: null };
-const TERMBY = new WeakMap();
+let TERMBY = new WeakMap();
 function termMark(g, name) {
     const now = TERMW.map((i) => g[i]);
     if (TERMS.prev)
@@ -978,10 +978,13 @@ function termMark(g, name) {
 }
 export function setTermWatch(ix) {
     TERMW = ix && ix.length ? ix.slice() : null;
+    // (off: every reading dropped, each hand's too — kept, a hand's reading from before came back as its own once the watch
+    // was on again, until that hand was solved again)
     if (!TERMW) {
         TERMS.prev = null;
         TERMS.cur = {};
         TERMS.S = null;
+        TERMBY = new WeakMap();
     }
 }
 /** the last reading (a copy): of hand solve S, or of the hand solved last; empty while the watch is off */

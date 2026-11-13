@@ -131,6 +131,8 @@ export class Pianist {
         // (deepIn) the white keys are played further in, as before; on the black keys themselves, as before (blackAlong).)
         this.fingerIn = [-0.007, 0.014, 0.028, 0.018, 0].map((v) => v * k);
         this.deepIn = [0.025, 0.045, 0.06, 0.055, 0.045].map((v) => v * k);
+        this.handK = k;
+        this.fallExp = 3.5;
         this.blackAlong = [0, 0.02, 0.03, 0.03, 0].map((v) => v * k);
         this.blackIn = 0.03 * k;
         this.blackExtra = [0, 0, 0, 0.012 * k, 0];
@@ -207,6 +209,8 @@ export class Pianist {
     path = [[], []];
     sit(inst, from, yaw) {
         this.inst = inst;
+        // (a piece's resting hands belong to the keys it was played at: a new seat starts from the live plan)
+        this.after = null;
         this.state = 'approach';
         this.approachFrom = [...from];
         this.approachYaw = yaw;
@@ -271,8 +275,13 @@ export class Pianist {
         this.pedalSet?.(false);
         this.score = null;
         // (and off the clock: the hands back on the frames' dt, not miming the rest of the piece unheard)
-        if (this.clock && this.struck.length)
-            this.after = Math.max(this.scoreT, ...this.struck.map((x) => x.up + HOLD_UP + 0.01));
+        // (a loop, not Math.max(...all): a long score's every note spread into one call overflows the stack)
+        if (this.clock && this.struck.length) {
+            let a = this.scoreT;
+            for (const x of this.struck)
+                a = Math.max(a, x.up + HOLD_UP + 0.01);
+            this.after = a;
+        }
         this.clock = null;
         this.struck = [];
     }
@@ -322,12 +331,17 @@ export class Pianist {
             if (this.w <= 0 && this.out >= 1) {
                 this.state = 'idle';
                 this.inst = null;
+                this.after = null;
                 return null;
             }
         }
         const clocked = this.clock && this.struck.length ? this.clock() : null;
         if (this.score && this.state === 'seated')
             this.stepScore(dt, audioNow, clocked);
+        // (live notes after a clocked piece: the live plan has the hands from then on — kept, the piece's resting hands came
+        // back the moment the live notes ended, a jump)
+        if (this.after !== null && clocked === null && this.targets().length)
+            this.after = null;
         return { pelvis: I.seat.pelvis, yaw: I.seat.yaw, feet: I.seat.feet, hands: clocked !== null ? this.planAt(clocked) : this.after !== null && !this.targets().length ? this.planAt(this.after) : this.plan(dt), look: I.look, lean: 0.2, w: this.w };
     }
     stepScore(dt, now, clocked = null) {
@@ -504,8 +518,20 @@ export class Pianist {
      *  let go, easing in and out over DEEP_EASE on the clock (the same at every frame rate) */
     deepness(h, s) {
         let k = 0;
-        for (let f = 0; f < 5; f++)
-            for (const x of this.byFinger[h][f]) {
+        // (from the first stroke not yet over: a finger's strokes are let up in order — planScore cuts each before the next
+        // — so found by halving, not by scanning every note played so far each frame)
+        for (let f = 0; f < 5; f++) {
+            const F = this.byFinger[h][f];
+            let lo = 0, hi = F.length;
+            while (lo < hi) {
+                const m = (lo + hi) >> 1;
+                if (F[m].up + DEEP_EASE < s)
+                    lo = m + 1;
+                else
+                    hi = m;
+            }
+            for (let i = lo; i < F.length; i++) {
+                const x = F[i];
                 const a = x.t0 - FALL - REACH - this.approachOf(h, f, x);
                 if (a - DEEP_EASE > s)
                     break;
@@ -515,9 +541,46 @@ export class Pianist {
                 if (v > k)
                     k = v;
             }
+        }
         k = clamp(k, 0, 1);
         return k * k * (3 - 2 * k);
     }
+    /** how far along to move a fingertip on white key n, `inQ` (m) in past its touch point, so its pad is in the middle of
+     *  the key's narrow part between its black neighbours: none in front of them, all of it from 18 mm in (scaled by the
+     *  hand; the black keys' fronts ~20 mm past a white key's touch point on a standard keyboard), eased between; a black
+     *  key 0.58 of a white key's width (13.7 of 23.5 mm) */
+    narrowShift(n, inQ) {
+        const I = this.inst, k = this.handK;
+        const e = clamp((inQ - 0.008 * k) / (0.01 * k), 0, 1);
+        if (!(e > 0))
+            return 0; // (and NaN: forHand(0) gives a zero handK)
+        const x = this.along(n);
+        let ws = 0;
+        for (const d of [1, -1, 2, -2]) {
+            const m = n + d;
+            if (I.notePoint(m) && !this.black(m)) {
+                ws = Math.abs(this.along(m) - x);
+                break;
+            }
+        }
+        if (!(ws > 0))
+            return 0;
+        const bw = 0.58 * ws;
+        let lo = x - ws / 2, hi = x + ws / 2;
+        const L = n - 1, R = n + 1, lx = I.notePoint(L) && this.black(L) ? this.along(L) : null, rx = I.notePoint(R) && this.black(R) ? this.along(R) : null;
+        if (lx !== null)
+            lo = Math.max(lo, lx + bw / 2);
+        if (rx !== null)
+            hi = Math.min(hi, rx - bw / 2);
+        if (!(hi > lo))
+            return 0;
+        return ((lo + hi) / 2 - x) * e * e * (3 - 2 * e);
+    }
+    handK = 1;
+    /** the stroke's fall onto its key: the height left goes as (1 - (1 - u)^fallExp) of the hover, u the share of the fall
+     *  still to go — 3 a smooth landing; a built hand's (forHand) 3.5, faster in its last frame: at 3 a tip was 5.9 mm over
+     *  its key a 60 fps frame before its note, inside the page's 6 mm touch, so it counted a frame early (16.2 of 16.7 ms) */
+    fallExp = 3;
     black(n) { const I = this.inst, m = I.notePoint(60), p = I.notePoint(n); return !!p && dot(sub(p, m), I.axes.up) > 0.004; }
     /** the whole piece planned: hands, fingers, strokes, each hand's places */
     planScore(score) {
@@ -668,7 +731,7 @@ export class Pianist {
         // before it lands: from its last key (let go) up, over to this one, a wait at its hover, the fall — each part
         // shortened alike when the notes come too quickly for all of it, never out of order (a finger crossing the keys
         // low, or still on its way over as it falls, is seen on the wrong key)
-        const fall = (k) => { const u = clamp((t0 - s) / (FALL * k), 0, 1); return hv * (1 - (1 - u) ** 3); };
+        const fall = (k) => { const u = clamp((t0 - s) / (FALL * k), 0, 1); return hv * (1 - (1 - u) ** this.fallExp); };
         // (a finger taken from rest — its first note, or the last one let go long since — comes over from its idle place to
         // the key and its pull from an idle finger's to a playing one's, over most of its reach: it had jumped there in a
         // frame, the target and its weight both, and the finger with them — 62 deg at its middle joint in one frame)
@@ -726,8 +789,12 @@ export class Pianist {
                     // longer — flatter, not hooked onto its front; Checkpoint L: the five-note black chord was a claw)
                     if (dot(sub(q, mid), A.up) >= 0.004)
                         return this.blackAlong ? add(q, scale(A.toward, -(this.blackAlong[f] + (this.blackExtra[f] ?? 0)))) : this.blackIn > 0 ? add(q, scale(A.toward, -(Math.min(this.blackIn, Math.max(0, this.fingerIn[f] - this.fingerIn[0])) + (this.blackExtra[f] ?? 0)))) : q;
-                    if (this.deepIn)
-                        return add(q, scale(A.toward, lerp((f === 0 ? THUMB_IN : 0) - this.fingerIn[f], -(this.deepIn[f] + (this.blackExtra[f] ?? 0)), dk)));
+                    if (this.deepIn) {
+                        const off = lerp((f === 0 ? THUMB_IN : 0) - this.fingerIn[f], -(this.deepIn[f] + (this.blackExtra[f] ?? 0)), dk);
+                        // (Checkpoint W: and in from the black keys' fronts, along to the middle of the white key's narrow part between
+                        // them — at its own middle the pad lay across the black key's side, from above a finger on two keys)
+                        return add(add(q, scale(A.toward, off)), scale(A.along, this.narrowShift(n, -off)));
+                    }
                     return add(q, scale(A.toward, deep ? -(Math.max(DEEP, this.fingerIn[f]) + (this.blackExtra[f] ?? 0)) : (f === 0 ? THUMB_IN : 0) - this.fingerIn[f]));
                 };
                 // (an idle finger over its place; in among the black keys, as far in as the hand has gone)

@@ -29,6 +29,12 @@ export declare const BOW: {
  *  the end joints vary most between frames (-10..44 deg) and are the least sure; 0.6.1's 13/53/32, 41/69/30, 58/56/21, 66/40/14 came from MediaPipe's points on hands seen along the stick, which
  *  zig-zag round a frog, and no stick could be placed that all four reached at once) */
 export declare const BOWREST: readonly (readonly number[])[];
+/** the stick's place eased in for a hand short of that reach: none at BOW_REACH_EASE[0] of it and above (every hand
+ *  within 1.5 % short, and every long-fingered hand, holds the bow exactly as 0.6.2), all of it at [1] and below, a
+ *  smooth step between (no cliff: a hand at 0.969 and one at 0.971 hold it alike) */
+export declare const BOW_REACH_EASE: readonly number[];
+/** the stick's place (a scale on BOWSTICK.c) for a hand whose reach for its width is `rr` of the fitted hand's */
+export declare function bowReachScale(rr: number): number;
 /** the bow's stick in the hand (hand space at a 5.38 cm knuckle span: its axis toward the tip, and its point over the
  *  hair's end at the frog — the held shape's centre, so a caller places the grasp there) as the fits put it (the palm behind the stick and just above it, the fingers over it), and
  *  where it crosses each finger (fingers.ts sample points: the index's end bone at its middle, past the frog toward the

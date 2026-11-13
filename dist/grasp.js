@@ -25,6 +25,20 @@ export const BOW = Object.freeze({ spread: Object.freeze([0.05, -0.03, -0.21, -0
  *  the end joints vary most between frames (-10..44 deg) and are the least sure; 0.6.1's 13/53/32, 41/69/30, 58/56/21, 66/40/14 came from MediaPipe's points on hands seen along the stick, which
  *  zig-zag round a frog, and no stick could be placed that all four reached at once) */
 export const BOWREST = Object.freeze([[34, 66, 5], [55, 54, 10], [60, 52, 20], [45, 51, 25]].map((r) => Object.freeze(r.map((d) => (d * Math.PI) / 180))));
+/** the fitted hand's reach for its knuckles' width (the middle finger's knuckle from the wrist along the hand, and its
+ *  length: the MakeHuman hand the bow's hold was fitted on, test/fixtures/hands-built.json) */
+const BOW_REACH = 3.32;
+/** the stick's place eased in for a hand short of that reach: none at BOW_REACH_EASE[0] of it and above (every hand
+ *  within 1.5 % short, and every long-fingered hand, holds the bow exactly as 0.6.2), all of it at [1] and below, a
+ *  smooth step between (no cliff: a hand at 0.969 and one at 0.971 hold it alike) */
+export const BOW_REACH_EASE = Object.freeze([0.985, 0.95]);
+/** the stick's place (a scale on BOWSTICK.c) for a hand whose reach for its width is `rr` of the fitted hand's */
+export function bowReachScale(rr) {
+    if (!(rr < BOW_REACH_EASE[0]))
+        return 1;
+    const t = Math.min(1, (BOW_REACH_EASE[0] - rr) / (BOW_REACH_EASE[0] - BOW_REACH_EASE[1]));
+    return 1 + (rr - 1) * 0.6 * t * t * (3 - 2 * t);
+}
 /** the bow's stick in the hand (hand space at a 5.38 cm knuckle span: its axis toward the tip, and its point over the
  *  hair's end at the frog — the held shape's centre, so a caller places the grasp there) as the fits put it (the palm behind the stick and just above it, the fingers over it), and
  *  where it crosses each finger (fingers.ts sample points: the index's end bone at its middle, past the frog toward the
@@ -486,7 +500,16 @@ function plan(M, kind, size, sc) {
             // straightened it)
             const r = size.r ?? 0.0055, B = BOWSTICK;
             const a = norm(B.a);
-            let c = scale(B.c, sc);
+            // (the stick's place scaled by the hand's reach (the middle finger's knuckle out from the wrist and its length) where
+            // that differs from its knuckles' width by more than 3 % from the fitted hand's: Iroh's fingers and palm are 7 %
+            // shorter for their width, and placed by the width alone the stick sat out of his index's reach — it straightened
+            // to touch (middle joint 21 deg, rest 66) and still missed by 3.8 mm (0.6.2 release check). Six tenths of the reach's
+            // difference (the palm's part of the place goes with the width): Iroh's index 40/76/6 deg (the fiddler's 39/76/6), the
+            // whole of it bent it to 80. 0.6.3: only a SHORT hand, and eased in (bowReachScale): a long-fingered hand (augie,
+            // 5 % long) is held as in 0.6.2 — moved, its index went further from its rest — and no step at a threshold)
+            const reach = (M.base[6] + [0, 1, 2].reduce((s, k) => s + Math.hypot(M.seg[(6 + k) * 3], M.seg[(6 + k) * 3 + 1], M.seg[(6 + k) * 3 + 2]), 0)) / M.width;
+            const rr = reach / BOW_REACH;
+            let c = scale(B.c, sc * bowReachScale(rr));
             const F = [0, 1, 2, 3].map((g) => ({ rest: [...BOWREST[g]], restW: 2.5, spread: BOW.spread[g], on: [B.on[g]], dipW: 0.5, gap: 0.0005, penW: 40 }));
             // (the stick moved square to its axis until no finger at its rest is inside it: a few millimetres either way for
             // another hand's proportions)

@@ -229,6 +229,16 @@ export declare class Pianist {
     /** how far a hand is among the black keys at s (0..1): 1 from DEEP_EASE before a black key's finger is taken until it's
      *  let go, easing in and out over DEEP_EASE on the clock (the same at every frame rate) */
     private deepness;
+    /** how far along to move a fingertip on white key n, `inQ` (m) in past its touch point, so its pad is in the middle of
+     *  the key's narrow part between its black neighbours: none in front of them, all of it from 18 mm in (scaled by the
+     *  hand; the black keys' fronts ~20 mm past a white key's touch point on a standard keyboard), eased between; a black
+     *  key 0.58 of a white key's width (13.7 of 23.5 mm) */
+    private narrowShift;
+    private handK;
+    /** the stroke's fall onto its key: the height left goes as (1 - (1 - u)^fallExp) of the hover, u the share of the fall
+     *  still to go — 3 a smooth landing; a built hand's (forHand) 3.5, faster in its last frame: at 3 a tip was 5.9 mm over
+     *  its key a 60 fps frame before its note, inside the page's 6 mm touch, so it counted a frame early (16.2 of 16.7 ms) */
+    fallExp: number;
     private black;
     /** the whole piece planned: hands, fingers, strokes, each hand's places */
     private planScore;
