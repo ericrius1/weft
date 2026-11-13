@@ -338,6 +338,8 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) cur: vec4f, @location(
 // vertex: the point now and the same point a frame ago (last model matrix, last bones, last instance frame, or the
 // displacement at frame.time - frame.dt)
 o.pos = clipAt(p); o.cur = o.pos; o.prev = prevClipAt(pWas);
+// (far from the origin, positions relative to this frame's eye from the CPU in doubles instead: clipRel(r) and
+// prevClipRel(rWas), rWas = the point a frame ago minus this frame's eye — a float32 world position is 6 cm off at 1,000 km)
 // fragment: the colour and its motion
 struct FOut { @location(0) c: vec4f, @location(1) m: vec4f }
 o.m = motionOf(i.cur, i.prev);            // or motionAt(i.pos, i.prev): one varying (perspective, infinite far only)

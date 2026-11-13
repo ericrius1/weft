@@ -1,7 +1,15 @@
 # Changelog
 
-## Unreleased (world/motion)
+## 0.2.9
 
+Against 0.2.8. Additions only: an app that sets neither `View.globals` nor the TAAU's `motion` is given the same
+shader code as 0.2.8 (every entry shader of weft, loom, the lab, Drake, San Francisco and World byte-identical once
+lean), and every 0.2.8 `Frame` field keeps its offset.
+
+- **A view's own globals** (`View.globals`): a view may bind its own copy of the app's globals struct at group 0,
+  binding 1, in place of the kit's (a place mounted in another's frame, with its own sun and shadows). It must be laid
+  out as the kit's struct; `null`, the default, binds the kit's. Only that view's group 0 changes; the bind group
+  layouts are the same. `test/viewglobals.test.mjs`.
 - **Motion for what moves by itself** (`Taau` option `motion`, `weft/motion`): a draw that moves (a followed car or bird,
   a skinned body, instances with their own frames, grass in the wind) writes a second colour target of the scene pass
   from its clip position now and last frame's (`motionOf(cur, prev)`, or `motionAt(fragPos, prev)` with one varying);
