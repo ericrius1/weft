@@ -33,6 +33,10 @@ export class View {
     updatedFrame = -1;
     /** per-view values for the shaders (Frame.user): a reflection's clip plane, a flag… */
     user = [0, 0, 0, 0];
+    /** this view's own globals (group 0, binding 1) in place of the kit's: a second world drawn in the same frame (a
+     *  place mounted in another's frame, with its own sun and shadows) binds its own copy of the app's globals struct
+     *  here. It must be laid out as the kit's (`kit.setGlobals`' struct); null (the default) binds the kit's */
+    globals = null;
     /** pixels: fixed, or a fraction of the render size (a half-res reflection: 0.5), or the render size (null) */
     constructor(kit, camera, size = null, label = 'view') {
         this.kit = kit;
@@ -57,11 +61,12 @@ export class View {
             near: c.near, camUp: c.up, frame: k.frameIndex, res: [w, h], invRes: [1 / w, 1 / h], jitter: c.jitter, fovY: c.fovY,
             aspect: w / h, mouse: k.mouse, user: this.user,
             viewProjRel: c.viewProjRel, invViewProjRel: c.invViewProjRel, prevViewProjRel: c.prevViewProjRel, camLo: c.camLo,
+            jitterNdc: c.jitterNdc,
         });
     }
     /** its group-0 bind group (made again only when the Frame buffer or the globals change) */
     group0() {
-        const g = this.kit.globals, gv = g ? g.version : 0;
+        const g = this.globals ?? this.kit.globals, gv = g ? g.version : 0;
         if (!this.group || this.groupFrame !== this.frame.version || this.groupGlobals !== g || this.groupGlobalsVersion !== gv) {
             const s = this.kit.samplers;
             this.group = this.kit.device.createBindGroup({

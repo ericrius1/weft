@@ -53,6 +53,10 @@ export declare class View {
     updatedFrame: number;
     /** per-view values for the shaders (Frame.user): a reflection's clip plane, a flag… */
     user: [number, number, number, number];
+    /** this view's own globals (group 0, binding 1) in place of the kit's: a second world drawn in the same frame (a
+     *  place mounted in another's frame, with its own sun and shadows) binds its own copy of the app's globals struct
+     *  here. It must be laid out as the kit's (`kit.setGlobals`' struct); null (the default) binds the kit's */
+    globals: UniformBuffer<any> | null;
     /** pixels: fixed, or a fraction of the render size (a half-res reflection: 0.5), or the render size (null) */
     constructor(kit: Kit, camera: Camera, size?: [number, number] | number | null, label?: string);
     get width(): number;

@@ -42,6 +42,10 @@ export class Camera {
      *  0, and the eye is only as good as the matrix (a shadow camera 1,000 km out: 6 cm). Give such a camera a `position`
      *  in doubles and a rotation-only override instead when it must be exact far from the origin */
     camLo = [0, 0, 0];
+    /** the jitter as the projection carries it, in NDC (x right, y up: what `jitter` adds to a point's ndc): this frame's
+     *  in xy, last frame's in zw (motion vectors: a point's ndc now minus xy, last frame's minus zw, is where it is without
+     *  either frame's jitter; shaders/motion.wgsl). The same as xy after a cut or on the first frame */
+    jitterNdc = [0, 0, 0, 0];
     prevRot = mat4();
     prevPos = [0, 0, 0];
     planes = new Float32Array(24);
@@ -65,6 +69,14 @@ export class Camera {
         if (!this.first) {
             this.prevViewProj.set(this.viewProj);
             this.prevRot.set(this.viewProjRel);
+            this.jitterNdc[2] = this.jitterNdc[0];
+            this.jitterNdc[3] = this.jitterNdc[1];
+        }
+        this.jitterNdc[0] = (this.jitter[0] * 2) / width;
+        this.jitterNdc[1] = (this.jitter[1] * 2) / height;
+        if (this.first) {
+            this.jitterNdc[2] = this.jitterNdc[0];
+            this.jitterNdc[3] = this.jitterNdc[1];
         }
         if (this.viewOverride) {
             this.view.set(this.viewOverride);

@@ -29,6 +29,7 @@ export interface Frame {
   prevViewProjRel: Mat4;
   camLo: Vec3;
   _relPad: number;
+  jitterNdc: Vec4;
 }
 export interface Taau {
   toCur: Mat4;
@@ -36,6 +37,8 @@ export interface Taau {
   jitter: Vec4;
   k: Vec4;
   o: Vec4;
+  m: Vec4;
+  iw: Vec4;
 }
 
 declare const shader: Shader<{ Frame: Frame; Taau: Taau }, 'frame' | 'T' | 'taauOut' | 'sharpOut' | 'taauSrc' | 'taauDepth' | 'taauDepthMS' | 'taauHist' | 'taauVel' | 'sharpSrc' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;

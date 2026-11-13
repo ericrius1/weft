@@ -1,5 +1,6 @@
 import { Ref, deref, RunAction } from './resources';
 import taauShader from '../shaders/taau.wgsl';
+import taauMotionShader from '../shaders/taaumotion.wgsl';
 // (4×4 column-major, in doubles)
 function mul4(a, b, out = new Float64Array(16)) {
     const o = new Float64Array(16);
@@ -58,6 +59,9 @@ export class Taau {
         on: true, feedback: 1 / 12, clip: 1, antiFlicker: 0.6, sharpen: 0.35, phases: 16, debug: false,
         /** the depth mismatch (relative) past which the history is dropped: what moved by itself, what was uncovered */
         depthReject: 0.035,
+        /** (with a motion target) how near a motion texel's distance must be the depth buffer's to be the visible surface's
+         *  (relative): a static draw in front of a moving one, at a greater gap than this, is reprojected by the camera */
+        motionMatch: 0.02,
         /** the scene's exposure (or a function giving it each frame): the blend's tonemap sees what the eye will, so a
          *  night scene's dim values and a day's bright ones are weighed alike */
         exposure: 1,
@@ -110,12 +114,18 @@ export class Taau {
         const threads = () => [this.hist.a.width, this.hist.a.height];
         // (an MSAA scene's depth read straight from its first sample: no resolve needed)
         const ms = depth.samples > 1;
-        this.velocity = opts.velocity ?? null;
-        const vel = opts.velocity ?? k.texture({ label: `${label}.noVelocity`, format: 'rg16float', size: [1, 1], usage: ['sample'] });
-        this.resolveC = k.compute(taauShader, {
-            label: `${label}.resolve`, entry: ms ? 'resolveMS' : 'resolve', view: this.view, enabled: on, threads,
-            bind: { T: this.u, taauSrc: src, [ms ? 'taauDepthMS' : 'taauDepth']: depth, taauHist: this.hist.read, taauOut: this.hist.write, taauVel: vel },
-        });
+        this.velocity = opts.motion ? null : opts.velocity ?? null;
+        const mo = opts.motion ?? null;
+        this.motion = mo;
+        // (a motion target: its own shader file, so an app without one is given the same code as before; read like the
+        // depth, its first sample when multisampled)
+        const bind = { T: this.u, taauSrc: src, [ms ? 'taauDepthMS' : 'taauDepth']: depth, taauHist: this.hist.read, taauOut: this.hist.write };
+        if (mo)
+            bind[mo.samples > 1 ? 'taauMotionMS' : 'taauMotion'] = mo;
+        else
+            bind.taauVel = opts.velocity ?? k.texture({ label: `${label}.noVelocity`, format: 'rg16float', size: [1, 1], usage: ['sample'] });
+        const entry = mo ? (ms ? 'resolveObjMS' : 'resolveObj') : ms ? 'resolveMS' : 'resolve';
+        this.resolveC = k.compute(mo ? taauMotionShader : taauShader, { label: `${label}.resolve`, entry, view: this.view, enabled: on, threads, bind: bind });
         this.sharpC = this.sharp ? k.compute(taauShader, {
             label: `${label}.sharpen`, entry: 'sharpen', view: this.view, threads, enabled: () => on() && this.params.sharpen > 0,
             bind: { T: this.u, sharpSrc: this.hist.read, sharpOut: this.sharp },
@@ -127,6 +137,8 @@ export class Taau {
         // (a Ref source is bound as given: resolved each run, so it may switch — the motion blur's output or the scene's)
     }
     velocity;
+    /** the motion target the moving draws write (TaauOptions.motion), or null */
+    motion;
     /** drop the history (a camera cut, a teleport): the next frame starts it over */
     cut() { this.dropNext = true; }
     /** the world's origin moved by d this frame (a floating origin: what was at p is drawn at p − d now), so last
@@ -212,6 +224,8 @@ export class Taau {
             jitter: [cam.jitter[0], cam.jitter[1], drop ? 1 : 0, Math.min(1, Math.max(0, P.sharpen))],
             k: [P.feedback, P.clip, P.antiFlicker, P.debug ? 1 : 0],
             o: [this.velocity ? 1 : 0, E > 0 && isFinite(E) ? E : 1, cam.ortho ? 1 : 0, Math.max(0, P.depthReject)],
+            m: [Math.max(0, P.motionMatch), 0, 0, 0],
+            iw: [iPj[3], iPj[7], iPj[11], iPj[15]],
         });
         // (uploaded now: the encoder's commands are submitted after this write)
         this.u.upload();

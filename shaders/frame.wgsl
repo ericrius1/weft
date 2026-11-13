@@ -23,6 +23,9 @@ struct Frame {
   invViewProjRel: mat4x4f,
   prevViewProjRel: mat4x4f,   // last frame's, about this frame's eye
   camLo: vec3f, _relPad: f32,
+  // the projection's jitter in NDC (what it adds to a point's ndc): this frame's in xy, last frame's in zw — a moving
+  // draw's motion vectors take both out (weft/motion)
+  jitterNdc: vec4f,
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(2) var samp_linear: sampler;

@@ -29,6 +29,7 @@ export interface Frame {
   prevViewProjRel: Mat4;
   camLo: Vec3;
   _relPad: number;
+  jitterNdc: Vec4;
 }
 
 declare const shader: Shader<{ Frame: Frame }, 'frame' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;

@@ -43,6 +43,10 @@ export declare class Camera {
      *  0, and the eye is only as good as the matrix (a shadow camera 1,000 km out: 6 cm). Give such a camera a `position`
      *  in doubles and a rotation-only override instead when it must be exact far from the origin */
     readonly camLo: V3;
+    /** the jitter as the projection carries it, in NDC (x right, y up: what `jitter` adds to a point's ndc): this frame's
+     *  in xy, last frame's in zw (motion vectors: a point's ndc now minus xy, last frame's minus zw, is where it is without
+     *  either frame's jitter; shaders/motion.wgsl). The same as xy after a cut or on the first frame */
+    readonly jitterNdc: [number, number, number, number];
     private prevRot;
     private prevPos;
     readonly planes: Float32Array<ArrayBuffer>;

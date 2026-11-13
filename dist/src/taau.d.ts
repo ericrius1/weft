@@ -10,6 +10,12 @@ export interface TaauOptions {
     /** the app's own motion vectors (rg: screen uv now − uv last frame, at the render size): what moves by itself — a
      *  creature, a car, a jiggling molecule — reprojects instead of ghosting. Without, the camera's motion alone */
     velocity?: Texture;
+    /** a motion target (rgba16float, the render size, the scene's sample count or 1, cleared to 0 each frame) that only
+     *  the draws moving by themselves write (shaders/motion.wgsl `motionOf`): a texel whose distance is the depth
+     *  buffer's there is reprojected by that draw's own motion and its history checked against the distance that surface
+     *  had last frame; everywhere else (texels left at 0, or hidden behind a draw that wrote nothing) the camera's motion,
+     *  as without. Replaces `velocity` when both are given */
+    motion?: Texture;
     /** a sharpening pass after the resolve (default true; false saves its canvas-size texture — a phone's ~20 MB — for
      *  an app whose final pass sharpens) */
     sharpen?: boolean;
@@ -41,6 +47,9 @@ export declare class Taau {
         debug: boolean;
         /** the depth mismatch (relative) past which the history is dropped: what moved by itself, what was uncovered */
         depthReject: number;
+        /** (with a motion target) how near a motion texel's distance must be the depth buffer's to be the visible surface's
+         *  (relative): a static draw in front of a moving one, at a greater gap than this, is reprojected by the camera */
+        motionMatch: number;
         /** the scene's exposure (or a function giving it each frame): the blend's tonemap sees what the eye will, so a
          *  night scene's dim values and a day's bright ones are weighed alike */
         exposure: number | (() => number);
@@ -78,6 +87,8 @@ export declare class Taau {
      *  depth: its depth (depth32float — the resolved one, or the multisampled one itself) */
     constructor(kit: Kit, src: Texture | Ref<Texture>, depth: Texture, opts?: TaauOptions);
     private velocity;
+    /** the motion target the moving draws write (TaauOptions.motion), or null */
+    readonly motion: Texture | null;
     /** drop the history (a camera cut, a teleport): the next frame starts it over */
     cut(): void;
     /** the world's origin moved by d this frame (a floating origin: what was at p is drawn at p − d now), so last
