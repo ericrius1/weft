@@ -411,12 +411,15 @@ feature without any error.
   Point lights are set with `r.setPointLights(list, camPos)`.
 - **A subject's own shadow** (`@ericrius1/loom/render/subjectshadow`, `loom/subject`): one small map fitted round one
   subject (a flown bird, a face under a hat) for detail no cascade has: `const s = new SubjectShadow(kit, { size: 256,
-  layers: true })`; each frame `s.fit(centre, radius, sunDir)` (or `s.off()`) and `kit.run([...s.passes(), …])`; draw
-  the subject's casters into `s.depthPass` (a vertex entry returning `frame.viewProj * world`) and, for light through
-  layers, into `s.layerPass` (fragment `subjectLayerOut(S, map, q.xy, q.z)`, `blend: 'add'`, `cull: 'none'`).
+  layers: true })`; each frame, after the scene's camera is placed, `s.fit(centre, radius, sunDir)` (or `s.off()`) and
+  `kit.run([...s.passes(), …])`; draw the subject's casters into `s.depthPass` (a vertex entry returning `clipAt(world)`
+  — the pass's frame is the light's — or `subjectClipRel(S, r)` with r relative to the scene's eye) and, for light
+  through layers, into `s.layerPass` (fragment `subjectLayerOut(S, map, q.xy, q.z)`, `blend: 'add'`, `cull: 'none'`).
   Receivers bind `s.uniform`, `s.depth`, `s.layers` and call `subjectVis(S, map, p, n)` (1 lit) and
-  `subjectLayers(S, map, layers, p)` (surfaces between p and the sun). `subjectShapes` shades from a few ellipsoids
-  where there's no map (a phone).
+  `subjectLayers(S, map, layers, p)` (surfaces between p and the sun), or `subjectVisRel` / `subjectLayersRel` with
+  eye-relative positions; in the view `fit` was given (the main view). It is camera-relative: far from the origin use
+  the Rel forms (test/subjectshadow.test.mjs: 2e-4 of a texel at 6,000 km). `subjectShapes` shades from a few
+  ellipsoids where there's no map (a phone).
 - Other modules are imported by path: `@ericrius1/loom/terrain/clipmap`, `world/forest`, `weather/rainfall`,
   `render/volume`, `render/film`, `render/clouds`, `destruct/rubble`, `physics/box3d`, `audio` (a procedural Web Audio
   engine: `audio.bus('sfx' | 'music' | 'amb')`), `camera/autopilot`, `particles`. Each module's header comment explains

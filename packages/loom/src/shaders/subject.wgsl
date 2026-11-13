@@ -8,31 +8,44 @@
 // The including file binds a `Subject` uniform, the depth map (texture_depth_2d) and, with layers, the layers map
 // (texture_2d<f32>), and passes them in: the group and bindings are the app's. Sampled with weft's samp_shadow.
 // Phones: `subjectShapes` — the subject as a few ellipsoids (a body, two wings), no map at all.
+//
+// Camera-relative: `m` takes a position relative to the scene's eye (render/subjectshadow.ts takes the two eyes'
+// difference in doubles), so the map holds its texel far from the world's origin. The world-position forms
+// (subjectAt, subjectVis, subjectLayers) go through fromEye and must run in the view fit() was given (the main
+// view); the ...Rel forms take the eye-relative position an app already has. Casters in the depth and layers passes
+// write clipAt(world) (their frame is the light's) or subjectClipRel(S, r) with r relative to the scene's eye.
 #include "weft/frame"
 
 struct Subject {
-  m: mat4x4f,     // world → the light's clip space (orthographic, reversed-Z: nearer the light is greater)
+  m: mat4x4f,     // a position relative to the scene's eye → the light's clip space (orthographic, reversed-Z: nearer the light is greater)
   k: vec4f,       // x 1 when fitted (0: everything lit), y a texel (m), z metres per unit of depth, w bias (m)
   s: vec4f,       // the four slices' far ends behind the first surface (m), for the layers
 }
 
-/** a world position in the map: uv (0..1, y down) and its depth */
-fn subjectAt(S: Subject, p: vec3f) -> vec3f {
-  let c = S.m * vec4f(p, 1.0);
+/** the light's clip position of a point at r from the scene's eye: a caster's @builtin(position) in the subject's
+ *  depth and layers passes when it has eye-relative positions (else clipAt(world) there) */
+fn subjectClipRel(S: Subject, r: vec3f) -> vec4f { return S.m * vec4f(r, 1.0); }
+
+/** a position relative to the scene's eye in the map: uv (0..1, y down) and its depth */
+fn subjectAtRel(S: Subject, r: vec3f) -> vec3f {
+  let c = S.m * vec4f(r, 1.0);
   return vec3f(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5, c.z);
 }
+/** a world position in the map (through fromEye: in the view fit() was given) */
+fn subjectAt(S: Subject, p: vec3f) -> vec3f { return subjectAtRel(S, fromEye(p)); }
 
 /** whether p is inside the map's square and depth range (outside: the cascades' business) */
-fn subjectCovers(S: Subject, p: vec3f) -> bool {
-  let a = subjectAt(S, p);
+fn subjectCoversRel(S: Subject, r: vec3f) -> bool {
+  let a = subjectAtRel(S, r);
   return S.k.x > 0.5 && all(a.xy > vec2f(0.0)) && all(a.xy < vec2f(1.0)) && a.z > 0.0 && a.z < 1.0;
 }
+fn subjectCovers(S: Subject, p: vec3f) -> bool { return subjectCoversRel(S, fromEye(p)); }
 
 /** the sun's visibility at p past the subject (1 lit, 0 in its shadow; 1 outside the map): 3x3 taps, hardware-
  *  filtered; n pushes the tap off the surface by a texel and a half (its own surface never shades itself) */
-fn subjectVis(S: Subject, map: texture_depth_2d, p: vec3f, n: vec3f) -> f32 {
+fn subjectVisRel(S: Subject, map: texture_depth_2d, r: vec3f, n: vec3f) -> f32 {
   if (S.k.x < 0.5) { return 1.0; }
-  let a = subjectAt(S, p + n * S.k.y * 1.5);
+  let a = subjectAtRel(S, r + n * S.k.y * 1.5);
   if (any(a.xy <= vec2f(0.0)) || any(a.xy >= vec2f(1.0)) || a.z <= 0.0 || a.z >= 1.0) { return 1.0; }
   let dim = vec2f(textureDimensions(map));
   let z = a.z + S.k.w / S.k.z;
@@ -44,23 +57,25 @@ fn subjectVis(S: Subject, map: texture_depth_2d, p: vec3f, n: vec3f) -> f32 {
   }
   return s / 9.0;
 }
+fn subjectVis(S: Subject, map: texture_depth_2d, p: vec3f, n: vec3f) -> f32 { return subjectVisRel(S, map, fromEye(p), n); }
 
 /** how far behind the first surface the light meets p lies (m; 0 at or in front of it, -1 outside the map) */
-fn subjectBehind(S: Subject, map: texture_depth_2d, p: vec3f) -> f32 {
+fn subjectBehindRel(S: Subject, map: texture_depth_2d, r: vec3f) -> f32 {
   if (S.k.x < 0.5) { return -1.0; }
-  let a = subjectAt(S, p);
+  let a = subjectAtRel(S, r);
   if (any(a.xy <= vec2f(0.0)) || any(a.xy >= vec2f(1.0)) || a.z <= 0.0 || a.z >= 1.0) { return -1.0; }
   let dim = vec2i(textureDimensions(map));
   let z0 = textureLoad(map, clamp(vec2i(a.xy * vec2f(dim)), vec2i(0), dim - 1), 0);
   return max(0.0, (z0 - a.z) * S.k.z);
 }
+fn subjectBehind(S: Subject, map: texture_depth_2d, p: vec3f) -> f32 { return subjectBehindRel(S, map, fromEye(p)); }
 
 /** how many layers of the subject lie between p and the sun (the deep opacity map: the slices before p's, and the
  *  share of its own that's in front of it). 0 outside the map */
-fn subjectLayers(S: Subject, map: texture_depth_2d, layers: texture_2d<f32>, p: vec3f) -> f32 {
-  let b = subjectBehind(S, map, p);
+fn subjectLayersRel(S: Subject, map: texture_depth_2d, layers: texture_2d<f32>, r: vec3f) -> f32 {
+  let b = subjectBehindRel(S, map, r);
   if (b < 0.0) { return 0.0; }
-  let a = subjectAt(S, p);
+  let a = subjectAtRel(S, r);
   let L = textureSampleLevel(layers, samp_linear, a.xy, 0.0);
   let e = S.s;
   // (the slices' starts: 0, then each one's end)
@@ -69,6 +84,7 @@ fn subjectLayers(S: Subject, map: texture_depth_2d, layers: texture_2d<f32>, p: 
   // (the first layer is the surface the light meets: p on it has none in front of it)
   return max(0.0, dot(L, share) - 0.5);
 }
+fn subjectLayers(S: Subject, map: texture_depth_2d, layers: texture_2d<f32>, p: vec3f) -> f32 { return subjectLayersRel(S, map, layers, fromEye(p)); }
 
 /** the layers pass's fragment output for a fragment at light depth z (its @builtin(position).z) at map texel px: 1 in
  *  the slice it falls in behind the first surface there (added up by the pass's blend) */

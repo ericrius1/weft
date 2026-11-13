@@ -4,10 +4,18 @@
 // between a point and the sun (light through feathers, hair, leaves).
 //
 //   const sub = new SubjectShadow(kit, { size: 256, layers: true });
-//   bird.drawCasters(sub.depthPass);                    // a vertex entry: frame.viewProj * world (the pass's view is the light's)
+//   bird.drawCasters(sub.depthPass);                    // a vertex entry: clipAt(world) (the pass's view is the light's),
+//                                                       //   or subjectClipRel(S, r) for r relative to the scene's eye
 //   bird.drawLayers(sub.layerPass);                     // (with layers) the same, fragment: subjectLayerOut(...) — see below
-//   each frame: sub.fit(centre, radius, sunDir); kit.run([...sub.passes(), scene, ...])
-//   receivers bind sub.uniform, sub.depth (and sub.layers) and call subjectVis / subjectLayers (subject.wgsl)
+//   each frame, once the scene's camera is placed: sub.fit(centre, radius, sunDir); kit.run([...sub.passes(), scene, ...])
+//   receivers bind sub.uniform, sub.depth (and sub.layers) and call subjectVis / subjectLayers (subject.wgsl), or the
+//   ...Rel forms with positions relative to the eye
+//
+// Camera-relative, as weft's clipAt / clipRel are: the light's camera has its eye in doubles (no view override, whose
+// eye a float32 inverse reads back), and the receivers' matrix takes positions relative to the scene's eye (the
+// difference of the two eyes taken in doubles here), so the map's 5 mm texel holds 6,000 km from the world's origin
+// as beside it (test/subjectshadow.test.mjs). Receivers must draw in the view whose eye fit() was given (the main
+// view by default), and be fitted after that camera has moved for the frame.
 //
 // The map is fitted to the subject, not snapped to a world grid (the cascades' way): it moves with the subject, so its
 // texels stay where they are on it and its self-shadow doesn't crawl as it flies. Its depth reaches `reach` metres past
@@ -15,8 +23,9 @@
 // the depth map bound as a texture (`subjectLayerOut(S, map, position.xy, position.z)`), each fragment adding one to the
 // slice behind the first surface it falls in; its draws want `blend: 'add'`, `depthWrite: false`, `cull: 'none'`.
 import type { Kit, RenderPass, RunEntry, Texture, UniformBuffer, V3 } from '@ericrius1/weft';
-import { Camera, lookAt } from '@ericrius1/weft';
+import { Camera } from '@ericrius1/weft';
 import subjectShader from '../shaders/subject.wgsl';
+import { fitSubject } from './subjectfit';
 
 export interface SubjectShadowOptions {
   /** the map's side in texels (256 a desktop, 128 a small laptop) */
@@ -43,6 +52,8 @@ export class SubjectShadow {
   readonly size: number;
   /** fitted this frame (fit() called since the last run): else the passes don't run and receivers see everything lit */
   fitted = false;
+  /** the receivers' matrix (the uniform's m): scene-eye-relative position → the light's clip space */
+  readonly m = new Float32Array(16);
   private o: Required<Omit<SubjectShadowOptions, 'label'>>;
 
   constructor(private kit: Kit, opts: SubjectShadowOptions = {}) {
@@ -60,23 +71,15 @@ export class SubjectShadow {
   }
 
   /** fit the map round a sphere (world centre, radius in m) seen from the sun (the direction toward it, normalised);
-   *  call each frame the subject moves or the sun turns, before the run. `reach`: how far past the sphere, away from
-   *  the sun, its shadow should still fall (m; the options' by default) — a bird 25 m up under a sun 20 degrees high
-   *  shades the ground 73 m along the ray */
-  fit(c: ArrayLike<number>, r: number, sun: ArrayLike<number>, reach = this.o.reach) {
-    const R = Math.max(r, 1e-3);
-    const up: V3 = Math.abs(sun[1]) > 0.99 ? [0, 0, -1] : [0, 1, 0];
-    const D = R + 1;
-    const eye: V3 = [c[0] + sun[0] * D, c[1] + sun[1] * D, c[2] + sun[2] * D];
-    const cam = this.camera;
-    cam.viewOverride = lookAt(eye, [c[0], c[1], c[2]], up);
-    cam.ortho = { halfWidth: R, halfHeight: R };
-    cam.near = 0.5;
-    cam.far = D + R + reach;
-    cam.update(this.size, this.size);
+   *  call each frame the subject moves, the sun turns or the scene's camera moves, after that camera is placed and
+   *  before the run. `reach`: how far past the sphere, away from the sun, its shadow should still fall (m; the options'
+   *  by default) — a bird 25 m up under a sun 20 degrees high shades the ground 73 m along the ray. `eye`: the scene
+   *  camera's position (doubles) the receivers' positions are relative to: the kit's main camera by default */
+  fit(c: ArrayLike<number>, r: number, sun: ArrayLike<number>, reach = this.o.reach, eye: ArrayLike<number> = this.kit.camera.position) {
+    const range = fitSubject(this.camera, c, r, sun, reach, this.size, eye, this.m);
     this.uniform.set({
-      m: new Float32Array(cam.viewProj),
-      k: [1, (2 * R) / this.size, cam.far - cam.near, this.o.bias],
+      m: this.m,
+      k: [1, (2 * Math.max(r, 1e-3)) / this.size, range, this.o.bias],
       s: this.o.slices,
     });
     this.fitted = true;

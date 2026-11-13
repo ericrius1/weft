@@ -1,7 +1,7 @@
 {
   "name": "@ericrius1/loom",
   "version": "0.1.15",
-  "description": "A cinematic WebGPU renderer on weft: physically based atmosphere, volumetric clouds and storm cells, the sea, rain, light in the air, GTAO, bloom, eye adaptation and an AgX film grade â€” plus GPU particles, paint, ink and toon light, breakable rubble on box3d, and a procedural audio engine.",
+  "description": "A cinematic WebGPU renderer on weft: physically based atmosphere, volumetric clouds and storm cells, the sea, rain, light in the air, GTAO, bloom, eye adaptation and an AgX film grade — plus GPU particles, paint, ink and toon light, breakable rubble on box3d, and a procedural audio engine.",
   "type": "module",
   "license": "MIT",
   "author": "Eric Levin",
@@ -47,7 +47,8 @@
   ],
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && node scripts/declare.mjs && tsc -p tsconfig.json && node scripts/copy-shaders.mjs",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "box3d.js": "^0.1.1",

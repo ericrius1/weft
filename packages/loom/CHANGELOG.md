@@ -6,7 +6,11 @@
   map fitted round one subject's sphere along the sun, moving with it, its depth reaching past it to the ground; an
   optional layers map (a deep opacity map: the surfaces behind the first, four slices) for light through feathers,
   hair, leaves. `subjectVis`, `subjectBehind`, `subjectLayers`, `subjectLayerOut`; `subjectShapes` (a few ellipsoids,
-  no map) for a phone. New files only: nothing that exists changes.
+  no map) for a phone. Camera-relative: the light's camera has its eye in doubles and the receivers' matrix takes
+  positions relative to the scene's eye, so its 5 mm texel holds far from the origin (`test/subjectshadow.test.mjs`:
+  2e-4 of a texel at the origin, 1,000 km and 6,000 km; the first draft's world-space float32 map was 20 texels off at
+  1,000 km). Casters write `clipAt(world)` or `subjectClipRel(S, r)`; receivers `subjectVis` / `subjectLayers` or their
+  `...Rel` forms. `fit(c, r, sun, reach?, eye?)`. New files only: nothing that exists changes.
 
 ## Unreleased
 
