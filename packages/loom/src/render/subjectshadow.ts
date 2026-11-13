@@ -60,9 +60,11 @@ export class SubjectShadow {
   }
 
   /** fit the map round a sphere (world centre, radius in m) seen from the sun (the direction toward it, normalised);
-   *  call each frame the subject moves or the sun turns, before the run */
-  fit(c: ArrayLike<number>, r: number, sun: ArrayLike<number>) {
-    const R = Math.max(r, 1e-3), reach = this.o.reach;
+   *  call each frame the subject moves or the sun turns, before the run. `reach`: how far past the sphere, away from
+   *  the sun, its shadow should still fall (m; the options' by default) — a bird 25 m up under a sun 20 degrees high
+   *  shades the ground 73 m along the ray */
+  fit(c: ArrayLike<number>, r: number, sun: ArrayLike<number>, reach = this.o.reach) {
+    const R = Math.max(r, 1e-3);
     const up: V3 = Math.abs(sun[1]) > 0.99 ? [0, 0, -1] : [0, 1, 0];
     const D = R + 1;
     const eye: V3 = [c[0] + sun[0] * D, c[1] + sun[1] * D, c[2] + sun[2] * D];
