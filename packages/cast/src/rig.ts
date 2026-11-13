@@ -2516,7 +2516,8 @@ export class HeroRig {
     const t = side > 0 ? 'L' : 'R';
     // (holding something: the goal's grip; else the keys' resting curve below)
     const holds = !!goal && goal.grip !== undefined && goalW > 0.001;
-    if (holds) grip = lerp(grip, goal!.grip!, goalW);
+    // (a grip that isn't a number — a malformed goal — left out: it made every finger's bones NaN)
+    if (holds && Number.isFinite(goal!.grip)) grip = lerp(grip, goal!.grip!, goalW);
     const hi = side > 0 ? 0 : 1;
     const hb = this.bi['hand' + t];
     const Bn = this.B, H = Bn[hb];
@@ -2972,7 +2973,7 @@ export class HeroRig {
     for (let f = 1; f <= 4; f++) for (let j = 1; j <= 3; j++) open[hpOf(f) + j] = Math.max(M.lo[hpOf(f) + j], 0);
     open[23] = Math.max(M.lo[23], -0.3); open[24] = Math.min(M.hi[24], 0.3); open[25] = 0; open[26] = 0;
     // (put back the grip's rests and weights for anything that reads them after)
-    this.askHand(hi, c, goal.grip ?? 0, true, goal, goalW, 0, () => { /* no targets */ });
+    this.askHand(hi, c, Number.isFinite(goal.grip) ? goal.grip! : 0, true, goal, goalW, 0, () => { /* no targets */ });
     void dt;
     const P = this.fkP2, U = null, K = this.fkK, Zf = this.fkZ;
     const pad = (f: number) => o[8] * (f === 0 ? 1.15 : f === 4 ? 0.85 : 1);

@@ -101,3 +101,33 @@ test('on a clock, stopScore() takes the hands off it: the clock no longer read, 
   assert.equal(P.struck.length, 0);
   assert.equal(P.playingScore, false);
 });
+
+test('a clocked piece\'s resting hands: let go by live notes, a new seat or getting up (0.6.2 release check)', () => {
+  let s = 0;
+  const { P, I } = seated(() => s);
+  s = 7; P.update(1 / 60, 0);
+  P.stopScore();
+  assert.ok(P.after !== null, 'resting after the piece');
+  // (a live key: the live plan takes the hands and keeps them once it is let go)
+  const k = 69 - I.low;
+  I.state[k] = 1; P.update(1 / 60, 0);
+  assert.equal(P.after, null, 'live notes let the piece go');
+  I.state[k] = 0; P.update(1 / 60, 0);
+  assert.equal(P.after, null, 'and it does not come back when they end');
+  // (a new seat starts from the live plan)
+  const b = seated(() => s);
+  b.P.update(1 / 60, 0); s = 7; b.P.update(1 / 60, 0); b.P.stopScore();
+  assert.ok(b.P.after !== null);
+  b.P.sit(b.I, b.I.stand, b.I.seat.yaw);
+  assert.equal(b.P.after, null);
+});
+
+test('stopScore on a long piece: no spread of every note into one call (0.6.2 release check)', () => {
+  let s = 0;
+  const { P } = seated(() => s);
+  s = 2; P.update(1 / 60, 0);
+  const last = Math.max(...P.struck.map((x) => x.up));
+  for (let i = 0; i < 300000; i++) P.struck.push({ ...P.struck[0], up: 1 + (i % 1000) * 1e-4 });
+  assert.doesNotThrow(() => P.stopScore());
+  assert.ok(P.after > last, `rests after the last let-go (${P.after})`);
+});
