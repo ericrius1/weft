@@ -236,6 +236,7 @@ export class Taau {
       k: [P.feedback, P.clip, P.antiFlicker, P.debug ? 1 : 0],
       o: [this.velocity ? 1 : 0, E > 0 && isFinite(E) ? E : 1, cam.ortho ? 1 : 0, Math.max(0, P.depthReject)],
       m: [Math.max(0, P.motionMatch), 0, 0, 0],
+      iw: [iPj[3], iPj[7], iPj[11], iPj[15]],
     });
     // (uploaded now: the encoder's commands are submitted after this write)
     this.u.upload();

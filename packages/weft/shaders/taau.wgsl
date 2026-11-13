@@ -19,6 +19,8 @@ struct Taau {
                       // y exposure; z 1 orthographic; w the depth mismatch that drops the history (relative; 0 never)
   m: vec4f,           // (taaumotion.wgsl's entries) x how near a motion texel's distance must be the depth's to be the visible
                       // surface's (relative)
+  iw: vec4f,          // (taaumotion.wgsl's entries) the jittered projection's inverse, its w row: a texel's view distance is
+                      // 1 / dot(iw, ndc) (perspective)
 }
 @group(3) @binding(0) var<uniform> T: Taau;
 @group(3) @binding(1) var taauSrc: texture_2d<f32>;

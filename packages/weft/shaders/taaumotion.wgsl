@@ -113,11 +113,14 @@ fn resolveAtObj(p: vec2i, outDim: vec2i, inDim: vec2i, zIn: array<f32, 9>, mv: v
   var reset = T.jitter.z > 0.5;
   var huv = uv;
   // (a moving draw's own motion, where the surface that wrote it is the one in the depth buffer: a static draw in
-  // front of it writes nothing and is reprojected by the camera)
-  let own = !sky && mv.w > 0.0 && abs(mv.w - dNow) <= T.m.x * max(dNow, 1e-4);
+  // front of it writes nothing and is reprojected by the camera. The depth test's measure is the camera path's: in
+  // perspective a point's distance last frame over its distance now (dNow is 1 there: cc.w is the homogeneous 1 this
+  // frame's ndc carries), its depth in orthographic; the motion texel's distances are metres)
+  let dist = select(1.0 / max(dot(T.iw, ndc), 1e-9), dNow, ortho);
+  let own = !sky && mv.w > 0.0 && abs(mv.w - dist) <= T.m.x * max(dist, 1e-4);
   if (own) {
     huv = uv - mv.xy;
-    dWas = select(min(mv.z, 6.0e4), mv.z, ortho);
+    dWas = select(min(mv.z / mv.w, 6.0e4), mv.z, ortho);
   } else if (pc.w <= 1e-6 || cc.w <= 1e-6) { reset = true; }
   else {
     let cu = vec2f(cc.x / cc.w * 0.5 + 0.5, 0.5 - cc.y / cc.w * 0.5);
