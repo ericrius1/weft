@@ -10,11 +10,16 @@ export interface HeroHeader {
     version: number;
     height: number;
     scale: number;
+    /** what body it is: absent (or 'human') a person, rigged by HeroRig, with the CORE bones; anything else ('bird',
+     *  'dog', …) a body of its own: no bone is required by name, each bone names its parent (an earlier bone's name or
+     *  index; null or -1 the root's), and posing it is the caller's (skin matrices through matToDQ, as HeroRig does) */
+    kind?: string;
     bones: {
         name: string;
         head: number[];
         tail: number[];
         up: number[];
+        parent?: number | string | null;
     }[];
     chains: Record<string, number[][]>;
     chainParents?: Record<string, string>;
@@ -66,7 +71,12 @@ export interface HeroAsset {
     chains: Record<string, V3[]>;
     verts: Uint8Array<ArrayBuffer>;
     idx: Uint32Array<ArrayBuffer>;
+    /** each bone's parent (-1 the root): from the header for a body of its own kind (header.kind); empty for a person,
+     *  whose hierarchy HeroRig knows by name */
+    parents: Int16Array;
 }
+/** a body that isn't a person (header.kind set and not 'human'): no CORE bones, its own hierarchy */
+export declare const isOwnBody: (h: HeroHeader) => boolean;
 export declare const VBYTES = 24;
 /** the bones a rig's arrays hold (HeroRig.bones, .dq): a body's own and what's added after them (Drake's robe adds
  *  its chains' segments: 220). A project's GPU buffer may hold fewer (Boulder's, Seven Havens', San Francisco's:

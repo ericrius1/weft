@@ -12,7 +12,11 @@ import { fitGarments } from './garment.js';
 export interface BoneDef { name: string; head: V3; tail: V3; up: V3 }
 export interface HeroHeader {
   char: string; version: number; height: number; scale: number;
-  bones: { name: string; head: number[]; tail: number[]; up: number[] }[];
+  /** what body it is: absent (or 'human') a person, rigged by HeroRig, with the CORE bones; anything else ('bird',
+   *  'dog', …) a body of its own: no bone is required by name, each bone names its parent (an earlier bone's name or
+   *  index; null or -1 the root's), and posing it is the caller's (skin matrices through matToDQ, as HeroRig does) */
+  kind?: string;
+  bones: { name: string; head: number[]; tail: number[]; up: number[]; parent?: number | string | null }[];
   chains: Record<string, number[][]>;
   chainParents?: Record<string, string>;
   eye: { x: number; y: number; z: number; r: number };
@@ -41,7 +45,13 @@ export interface HeroAsset {
   chains: Record<string, V3[]>;
   verts: Uint8Array<ArrayBuffer>;
   idx: Uint32Array<ArrayBuffer>;
+  /** each bone's parent (-1 the root): from the header for a body of its own kind (header.kind); empty for a person,
+   *  whose hierarchy HeroRig knows by name */
+  parents: Int16Array;
 }
+
+/** a body that isn't a person (header.kind set and not 'human'): no CORE bones, its own hierarchy */
+export const isOwnBody = (h: HeroHeader) => h.kind !== undefined && h.kind !== 'human';
 
 export const VBYTES = 24;
 /** the bones a rig's arrays hold (HeroRig.bones, .dq): a body's own and what's added after them (Drake's robe adds
@@ -79,12 +89,23 @@ export async function parseHero(bytes: ArrayBuffer, name = 'hero', maxBones = MA
   const bones: BoneDef[] = header.bones.map((b) => ({ name: b.name, head: b.head as V3, tail: b.tail as V3, up: b.up as V3 }));
   const index: Record<string, number> = {};
   bones.forEach((b, i) => { index[b.name] = i; });
-  for (const n of CORE) if (index[n] === undefined) throw new Error(`${name}: missing bone ${n}`);
+  const own = isOwnBody(header);
+  let parents = new Int16Array(0);
+  if (own) {
+    // (a body of its own: every bone's parent given, before it; one root)
+    parents = new Int16Array(bones.length);
+    header.bones.forEach((b, i) => {
+      const p = b.parent === null || b.parent === -1 ? -1 : typeof b.parent === 'string' ? (index[b.parent] ?? NaN) : b.parent;
+      if (typeof p !== 'number' || !Number.isInteger(p) || p < -1 || p >= i) throw new Error(`${name}: bone ${b.name}'s parent ${b.parent} (each bone names an earlier one, or null)`);
+      parents[i] = p;
+    });
+    if (parents.filter((p) => p < 0).length !== 1) throw new Error(`${name}: ${parents.filter((p) => p < 0).length} roots`);
+  } else for (const n of CORE) if (index[n] === undefined) throw new Error(`${name}: missing bone ${n}`);
   const chains: Record<string, V3[]> = {};
   for (const [k, v] of Object.entries(header.chains ?? {})) chains[k] = v.map((p) => [p[0], p[1], p[2]] as V3);
-  const a: HeroAsset = { header, bones, index, chains, verts, idx };
-  // (the clothes under the hips hung from the hips' hanging frame: garment.ts)
-  fitGarments(a);
+  const a: HeroAsset = { header, bones, index, chains, verts, idx, parents };
+  // (the clothes under the hips hung from the hips' hanging frame: garment.ts — a person's alone)
+  if (!own) fitGarments(a);
   if (bones.length > maxBones) throw new Error(`${name}: ${bones.length} bones > ${maxBones}`);
   return a;
 }

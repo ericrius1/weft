@@ -31,7 +31,7 @@
 // walking clock hurried by a foot left far behind; the breath; holds anchored to a bone; forearm twist limits; chains
 // whose constraints can't fling them: MAX_KICK). See MIGRATION.md for what each project's copy differs by.)
 import { add, sub, scale, norm, cross, dot, len, clamp, lerp, lerp3, smoothstep, rotateAxis, damp, drotateAxis, ddamp, q30, angDiff, ease, minJerk, rej, cdSpring, Spring3, bump } from './math.js';
-import { MAX_BONES } from './asset.js';
+import { MAX_BONES, isOwnBody } from './asset.js';
 import { poseHang, hang, hangBone, HOLD } from './garment.js';
 import { Face, fromLegacy, toLegacy, blank } from './face.js';
 import { HandModel, HandSolve, handAsk, solveHand, hpOf, priorLetGo, HP_ARCH, HAND_N } from './fingers.js';
@@ -972,6 +972,8 @@ export class HeroRig {
     get faceState() { return { gaze: this.gaze, blink: this.blink, face: this.fx, s: this.face.state }; }
     constructor(asset) {
         this.asset = asset;
+        if (isOwnBody(asset.header))
+            throw new Error(`HeroRig: ${asset.header.char} is a ${asset.header.kind}, not a person (pose it through its own rig)`);
         this.B = asset.bones;
         this.bi = asset.index;
         this.female = asset.header.char === 'hero';
