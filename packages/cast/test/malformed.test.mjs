@@ -39,3 +39,18 @@ test('a state that went NaN is started again from the rests, not kept', () => {
   solveHand(M, S, Q, 8);
   assert.ok(finite(S));
 });
+
+test('the term readout is per hand solve, a copy, and empty once the watch is off (0.6.1 release check)', async () => {
+  const { setTermWatch, termPulls } = await import('../dist/fingers.js');
+  setTermWatch([8, 9, 10]);
+  const A = new HandSolve(), B = new HandSolve(), QA = ask(), QB = ask();
+  QB.rest[hpOf(1) + 1] = 1.2;
+  solveHand(M, A, QA, 4); solveHand(M, B, QB, 4);
+  const a = termPulls(A), b = termPulls(B);
+  assert.ok(Object.keys(a).length > 0 && Object.keys(b).length > 0, 'both hands read');
+  assert.notDeepEqual(a.rest, b.rest, "each hand's own reading");
+  a.rest[0] = 999;
+  assert.notEqual(termPulls(A).rest[0], 999, 'a copy');
+  setTermWatch(null);
+  assert.deepEqual(termPulls(), {}); assert.deepEqual(termPulls(A), {});
+});

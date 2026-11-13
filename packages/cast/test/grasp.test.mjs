@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { HandModel, hpOf, HAND_N } from '../dist/fingers.js';
-import { grasp, graspGoal, heldWorld, heldSd, GRASPS } from '../dist/grasp.js';
+import { grasp, graspGoal, heldWorld, heldSd, GRASPS, BOWREST } from '../dist/grasp.js';
 
 const fx = JSON.parse(readFileSync(new URL('./fixtures/hands-built.json', import.meta.url), 'utf8'));
 const asset = { bones: fx.bones, index: Object.fromEntries(fx.bones.map((b, i) => [b.name, i])) };
@@ -76,6 +76,21 @@ test('a wider glass opens the hand: the fingers bend less round a pint than roun
   const bend = (g) => [1, 2, 3, 4].reduce((s, f) => s + g.x[hpOf(f) + 1] + g.x[hpOf(f) + 2] + g.x[hpOf(f) + 3], 0);
   const slim = grasp(R, 'wrap', { r: 0.026 }), pint = grasp(R, 'wrap', { r: 0.043 }), handle = grasp(R, 'power', { r: 0.014 });
   assert.ok(bend(handle) > bend(slim) && bend(slim) > bend(pint), `bends: handle ${bend(handle).toFixed(2)}, slim ${bend(slim).toFixed(2)}, pint ${bend(pint).toFixed(2)}`);
+});
+
+test("the bow's hold reaches its rests from real holds, no skin in the stick (Checkpoint T)", () => {
+  // (0.6.1's grasp stopped at knuckles 21/43/44/20 deg where 13/41/58/66 were asked: the stick, placed from the middle
+  // finger alone at a fixed slant, ran out of the ring and little fingers' reach. Now placed where fitted photographs of
+  // real holds put it, with the rests from the same fits: every joint within 13 deg of its rest)
+  for (const size of [{}, { r: 0.0045, len: 0.75 }]) {
+    const g = grasp(R, 'bow', size), deg = (v) => (v * 180) / Math.PI;
+    for (let f = 1; f <= 4; f++) for (let j = 0; j < 3; j++) {
+      const d = deg(g.x[hpOf(f) + 1 + j] - BOWREST[f - 1][j]);
+      assert.ok(Math.abs(d) < 13, `finger ${f} joint ${j}: ${d.toFixed(0)} deg from its rest`);
+    }
+    assert.ok(g.into < 5e-5, `skin ${mm(g.into)} mm into the stick`);
+    assert.ok(g.miss.every((m) => m < 0.0012), `touches ${g.miss.map(mm)}`);
+  }
 });
 
 test("the left hand's grasp is the right's", () => {
