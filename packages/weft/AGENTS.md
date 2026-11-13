@@ -405,14 +405,6 @@ feature without any error.
 - **Options** (`RendererOptions`): `msaa: 1 | 4`, `clouds: 'volumetric' | 'sprites' | 'none'`, `shadowSize`, `taau`,
   `lights: { max }` (more than 32 lights are clustered), `gi: { min, max, spacing }` (irradiance probes) and `ripples`.
   Point lights are set with `r.setPointLights(list, camPos)`.
-- **A subject's own shadow** (`@ericrius1/loom/render/subjectshadow`, `loom/subject`): one small map fitted round one
-  subject (a flown bird, a face under a hat) for detail no cascade has: `const s = new SubjectShadow(kit, { size: 256,
-  layers: true })`; each frame `s.fit(centre, radius, sunDir)` (or `s.off()`) and `kit.run([...s.passes(), …])`; draw
-  the subject's casters into `s.depthPass` (a vertex entry returning `frame.viewProj * world`) and, for light through
-  layers, into `s.layerPass` (fragment `subjectLayerOut(S, map, q.xy, q.z)`, `blend: 'add'`, `cull: 'none'`).
-  Receivers bind `s.uniform`, `s.depth`, `s.layers` and call `subjectVis(S, map, p, n)` (1 lit) and
-  `subjectLayers(S, map, layers, p)` (surfaces between p and the sun). `subjectShapes` shades from a few ellipsoids
-  where there's no map (a phone).
 - Other modules are imported by path: `@ericrius1/loom/terrain/clipmap`, `world/forest`, `weather/rainfall`,
   `render/volume`, `render/film`, `render/clouds`, `destruct/rubble`, `physics/box3d`, `audio` (a procedural Web Audio
   engine: `audio.bus('sfx' | 'music' | 'amb')`), `camera/autopilot`, `particles`. Each module's header comment explains

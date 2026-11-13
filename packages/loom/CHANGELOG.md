@@ -1,13 +1,5 @@
 # Changelog
 
-## Unreleased (world/motion)
-
-- **A subject's own shadow** (`render/subjectshadow.ts` `SubjectShadow`, `shaders/subject.wgsl`): one orthographic
-  map fitted round one subject's sphere along the sun, moving with it, its depth reaching past it to the ground; an
-  optional layers map (a deep opacity map: the surfaces behind the first, four slices) for light through feathers,
-  hair, leaves. `subjectVis`, `subjectBehind`, `subjectLayers`, `subjectLayerOut`; `subjectShapes` (a few ellipsoids,
-  no map) for a phone. New files only: nothing that exists changes.
-
 ## Unreleased
 
 - **Rainfall falls down**: `rainPlaced` took the fall away from each drop's spot instead of adding it, so the drops
