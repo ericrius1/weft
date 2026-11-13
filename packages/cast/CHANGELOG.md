@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+Against 0.7.0.
+
+- **A JSON `"kind": null` is a person** (`isOwnBody`: `kind != null`), as a file with no kind is: 0.7.0 read it as a
+  body of its own kind and dropped the CORE bones' check. `test/body.test.mjs`.
+
 ## 0.7.0
 
 Against 0.6.3.

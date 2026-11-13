@@ -330,7 +330,7 @@ wind). Give the scene pass a second colour target and hand it to the TAAU; only 
 ```ts
 const motion = kit.texture({ label: 'motion', format: 'rgba16float', size: 'render', samples, usage: ['render', 'sample'] });
 const scene = kit.pass({ color: [{ target: hdr, clear: [0, 0, 0, 0] }, { target: motion, clear: [0, 0, 0, 0] }], depth: { target: depth, clear: 0 } });
-const taau = new Taau(kit, hdr, depth, { motion });
+const taau = new Taau(kit, hdr, depth, { motion });   // (motion at the depth's sample count: one pass, one count)
 ```
 ```wgsl
 #include "weft/motion"

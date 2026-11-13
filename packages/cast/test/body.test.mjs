@@ -46,4 +46,6 @@ test('a person: the CORE bones still required, parents empty', async () => {
   assert.equal(a.parents.length, 0);
   await assert.rejects(parseHero(dnc1({ char: 'p', version: 1, height: 1.7, scale: 1, bones: bones.slice(1) }), 'p'), /missing bone root/);
   await assert.rejects(parseHero(dnc1({ char: 'p', kind: 'human', version: 1, height: 1.7, scale: 1, bones: bones.slice(1) }), 'p'), /missing bone root/);
+  // (a JSON null kind is a person, as no kind is)
+  await assert.rejects(parseHero(dnc1({ char: 'p', kind: null, version: 1, height: 1.7, scale: 1, bones: bones.slice(1) }), 'p'), /missing bone root/);
 });

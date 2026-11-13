@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.10
+
+Against 0.2.9. No shader an app is given changes but `weft/motion`'s comment.
+
+- **The TAAU's motion target must be at the depth's sample count**: `new Taau(..., { motion })` throws, naming both
+  counts, when they differ (the target is a colour attachment of the scene pass, where WebGPU wants one count; 0.2.9
+  bound it and failed at the first resolve with a bind-group error). The option's doc and `weft/motion`'s said "the
+  scene's sample count or 1": they now say the depth's.
+
 ## 0.2.9
 
 Against 0.2.8. Additions only: an app that sets neither `View.globals` nor the TAAU's `motion` is given the same

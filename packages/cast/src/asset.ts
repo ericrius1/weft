@@ -15,7 +15,7 @@ export interface HeroHeader {
   /** what body it is: absent (or 'human') a person, rigged by HeroRig, with the CORE bones; anything else ('bird',
    *  'dog', …) a body of its own: no bone is required by name, each bone names its parent (an earlier bone's name or
    *  index; null or -1 the root's), and posing it is the caller's (skin matrices through matToDQ, as HeroRig does) */
-  kind?: string;
+  kind?: string | null;
   bones: { name: string; head: number[]; tail: number[]; up: number[]; parent?: number | string | null }[];
   chains: Record<string, number[][]>;
   chainParents?: Record<string, string>;
@@ -50,8 +50,8 @@ export interface HeroAsset {
   parents: Int16Array;
 }
 
-/** a body that isn't a person (header.kind set and not 'human'): no CORE bones, its own hierarchy */
-export const isOwnBody = (h: HeroHeader) => h.kind !== undefined && h.kind !== 'human';
+/** a body that isn't a person (header.kind set and not 'human'; a JSON null is a person, as no kind is): no CORE bones, its own hierarchy */
+export const isOwnBody = (h: HeroHeader) => h.kind != null && h.kind !== 'human';
 
 export const VBYTES = 24;
 /** the bones a rig's arrays hold (HeroRig.bones, .dq): a body's own and what's added after them (Drake's robe adds

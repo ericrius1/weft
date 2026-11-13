@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased (world/motion)
+## 0.1.16
+
+Against 0.1.15. Needs weft 0.2.8 (its camera-relative frame). One fix changes a picture (the rain); the rest is new.
 
 - **A subject's own shadow** (`render/subjectshadow.ts` `SubjectShadow`, `shaders/subject.wgsl`): one orthographic
   map fitted round one subject's sphere along the sun, moving with it, its depth reaching past it to the ground; an
@@ -11,8 +13,6 @@
   2e-4 of a texel at the origin, 1,000 km and 6,000 km; the first draft's world-space float32 map was 20 texels off at
   1,000 km). Casters write `clipAt(world)` or `subjectClipRel(S, r)`; receivers `subjectVis` / `subjectLayers` or their
   `...Rel` forms. `fit(c, r, sun, reach?, eye?)`. New files only: nothing that exists changes.
-
-## Unreleased
 
 - **Rainfall falls down**: `rainPlaced` took the fall away from each drop's spot instead of adding it, so the drops
   (their streaks drawn the right way up) rose from the ground and drifted upwind.

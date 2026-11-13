@@ -5,8 +5,8 @@
 // scene pass changes, and a static draw in front of a moving one needs no motion of its own: the TAAU takes a texel's
 // motion only where the distance written with it is the distance in the depth buffer there.
 //
-// The target: rgba16float at the render size (multisampled like the scene, or not; the TAAU reads its first sample,
-// as it reads the depth's), cleared to 0. Its texel:
+// The target: rgba16float at the render size, at the scene pass's sample count (it is one of that pass's targets: the
+// Taau throws otherwise; it reads the first sample, as it reads the depth's), cleared to 0. Its texel:
 //   xy  the point's screen uv now minus its uv last frame (uv: 0..1, y down), both without their frame's jitter
 //   z   its view distance last frame, from last frame's eye (clip w; an orthographic camera's depth instead)
 //   w   its view distance now (the same measure): 0 is "nothing written here"
