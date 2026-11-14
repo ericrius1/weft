@@ -1,7 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.1.16
 
+Needs weft 0.2.9. Without the new fields nothing renders differently.
+
+- **Snow** (`RainWeather.snowing`, 0..1, the share of what falls that's snow): flakes about a metre a second, riding
+  the wind and fluttering, round and soft (a short shutter, no streak), no splashes; the veil thicker (snow hides the
+  distance at a tenth of the rain's water). Absent, it's rain exactly as before.
+- **The cloud base over the ground** (`RainWeather.ground`, world y of the ground under the eye; absent, 0): a high
+  town's rain and snow fell above its cloud base, so none was drawn.
 - **Rainfall falls down**: `rainPlaced` took the fall away from each drop's spot instead of adding it, so the drops
   (their streaks drawn the right way up) rose from the ground and drifted upwind.
 
