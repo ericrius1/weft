@@ -53,18 +53,25 @@ export class Rainfall {
         this.time += dt;
         // (the weather's 0..1 as millimetres an hour: a drizzle's half to a storm's dozen and more)
         const R = under ? 0 : w.rain > 0.01 ? 14 * Math.pow(w.rain, 1.6) : 0;
+        const snow = Math.min(1, Math.max(0, w.snowing ?? 0));
         const sh = this.shares;
-        sh.rain = R > 0.01 ? 1 - Math.exp(-R / 3.5) : 0;
-        sh.splash = sh.rain;
-        // the visibility in rain (Koschmieder: extinction = 3.9 / visibility)
-        const vis = R > 0.01 ? 20000 * Math.pow(R, -0.65) : Infinity;
+        // (snow: more flakes than drops for the same water, each far bigger and slower)
+        sh.rain = R > 0.01 ? Math.min(1, (1 - Math.exp(-R / 3.5)) * (1 + 2.6 * snow)) : 0;
+        sh.splash = sh.rain * (1 - snow);
+        // the visibility (Koschmieder: extinction = 3.9 / visibility): in rain by its rate; in snow far less, a moderate
+        // fall (R ~1 mm/h of water) a kilometre or so
+        const visRain = R > 0.01 ? 20000 * Math.pow(R, -0.65) : Infinity;
+        const visSnow = R > 0.01 ? 1400 * Math.pow(R, -0.8) : Infinity;
+        const vis = snow > 0 ? 1 / ((1 - snow) / visRain + snow / visSnow) : visRain;
         sh.veil = 3.912 / vis;
-        // the cloud base: low in a storm, higher in showers
-        this.top = 1400 - 900 * smooth(0.2, 0.9, w.cloud);
+        // the cloud base: low in a storm, higher in showers; over the ground under the eye (a town 1,600 m up has its
+        // storms' bases over it, not under it)
+        this.top = (w.ground ?? 0) + 1400 - 900 * smooth(0.2, 0.9, w.cloud);
         // the drops: drizzle fine and slow, a downpour big and fast; the wind carries them
-        const fall = 3 + 6 * smooth(0.2, 8, R);
-        // (near the ground the drops take only part of the wind's speed: a gale slants them, it doesn't fling them flat)
-        const push = Math.min(w.wind * 0.55, 7);
+        const fall = (3 + 6 * smooth(0.2, 8, R)) * (1 - snow) + (0.9 + 0.3 * smooth(0.5, 5, R)) * snow;
+        // (near the ground the drops take only part of the wind's speed: a gale slants them, it doesn't fling them flat;
+        // a flake rides it nearly whole)
+        const push = Math.min(w.wind * (0.55 + 0.3 * snow), 7 + 3 * snow);
         const v = [w.windDir[0] * push, -fall, w.windDir[1] * push];
         for (let k = 0; k < BOXES.length; k++) {
             const B = BOXES[k];
@@ -75,11 +82,11 @@ export class Rainfall {
             return;
         let acc = 0;
         this.u.set({
-            rain: [sh.rain, 1 / 45, 0.0016 + 0.0016 * smooth(0.5, 20, R), 0.62],
+            rain: [sh.rain, (1 / 45) * (1 - 0.85 * snow), (0.0016 + 0.0016 * smooth(0.5, 20, R)) * (1 - snow) + 0.014 * snow, 0.62 + 0.3 * snow],
             vel: [...v, this.top],
             fall: this.fall.map((f) => [...f, 0]),
             box: BOXES.map((b) => { acc += b[3]; return [b[0], b[1], b[2], acc]; }),
-            veil: [sh.veil, 0, sh.splash, this.time],
+            veil: [sh.veil, snow, sh.splash, this.time],
         });
         if (this.lit) {
             const L = this.light;

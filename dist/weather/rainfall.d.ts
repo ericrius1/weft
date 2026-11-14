@@ -4,7 +4,9 @@ export interface RainWeather {
     rain: number;
     cloud: number;
     wind: number;
-    windDir: ArrayLike<number>;
+    windDir: ArrayLike<number>; /** the share falling as snow (0..1): absent, rain */
+    snowing?: number; /** the ground under the eye (world y, m): the cloud base is over it (absent: 0, a world at the sea) */
+    ground?: number;
 }
 /** the default shader's light (loom/rainfall_lit): linear rgb, as the scene's */
 export interface RainLight {
