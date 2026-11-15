@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.10
+
+- GPU error banners open by touch or keyboard, with wrapped, scrollable details, frame/device context, a copy button and a 44px close control. Inspecting an error does not enable the GPU profiler. The diagnostics overlay also fits narrow screens and has a close button.
+
 ## 0.2.9
 
 Against 0.2.8. Additions only: an app that sets neither `View.globals` nor the TAAU's `motion` is given the same
