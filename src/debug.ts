@@ -9,7 +9,7 @@ import type { Draw, RenderPass } from './passes';
 import viewerShader from '../shaders/viewer.wgsl';
 
 const css = `
-.weft-ov{position:fixed;top:8px;left:8px;z-index:99999;max-height:calc(100vh - 16px);overflow:auto;width:340px;
+.weft-ov{position:fixed;top:8px;left:8px;z-index:99999;max-height:calc(100dvh - 16px);overflow:auto;width:340px;max-width:calc(100vw - 16px);box-sizing:border-box;
   font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;color:#dfe6ee;background:rgba(12,14,20,.86);
   border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:8px 10px;backdrop-filter:blur(6px);user-select:none}
 .weft-ov h4{margin:8px 0 4px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8fa3b8;font-weight:600}
@@ -18,10 +18,13 @@ const css = `
 .weft-ov input[type=range]{width:120px;height:12px;vertical-align:middle}
 .weft-ov select,.weft-ov button{font:inherit;background:#232833;color:#dfe6ee;border:1px solid #3a4150;border-radius:4px;padding:1px 4px}
 .weft-ov .row{display:flex;gap:6px;align-items:center;margin:2px 0}.weft-ov .row span.k{flex:1;overflow:hidden;text-overflow:ellipsis}
-.weft-err{position:fixed;left:8px;bottom:8px;z-index:99999;max-width:min(860px,calc(100vw - 16px));max-height:45vh;overflow:auto;
+.weft-err{position:fixed;left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));bottom:max(8px,env(safe-area-inset-bottom));z-index:100000;max-width:860px;max-height:65dvh;overflow:auto;box-sizing:border-box;overscroll-behavior:contain;touch-action:pan-y;
   font:11px/1.4 ui-monospace,Menlo,monospace;color:#ffd9d9;background:rgba(60,8,12,.92);border:1px solid #ff6b6b;
-  border-radius:8px;padding:8px 10px;white-space:pre-wrap}
-.weft-err b{color:#fff}.weft-err button{float:right;font:inherit;background:none;color:#fff;border:0;cursor:pointer}`;
+  border-radius:8px;padding:8px 10px;white-space:pre-wrap;overflow-wrap:anywhere}
+.weft-err b{color:#fff}.weft-err button{font:inherit;background:none;color:#fff;border:1px solid #a85c65;border-radius:5px;cursor:pointer;min-height:44px;padding:6px 10px;touch-action:manipulation}
+.weft-err .weft-err-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;white-space:normal}
+.weft-err .weft-err-summary{width:100%;text-align:left;border:0}
+.weft-err pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;margin:0}`;
 
 export class DebugOverlay {
   open = false;
@@ -39,6 +42,7 @@ export class DebugOverlay {
   private viewerDraws: Record<string, Draw<any>> = {};
   private viewerU: UniformBuffer<any> | null = null;
   private errorsDismissed = false;
+  private errorsExpanded = false;
 
   /** `toggles`: opened with ` (and by kit.debug); without it (a sibling kit) only its errors ever show */
   constructor(private kit: Kit, toggles = true) {
@@ -79,15 +83,30 @@ export class DebugOverlay {
       this.ensureStyle();
       this.errBox = document.createElement('div');
       this.errBox.className = 'weft-err';
+      this.errBox.setAttribute('aria-label', 'GPU errors');
+      // A tap/scroll in diagnostics must not also become a game input.
+      for (const event of ['pointerdown', 'pointerup', 'click', 'keydown', 'keyup']) {
+        this.errBox.addEventListener(event, (e) => e.stopPropagation());
+      }
       document.body.appendChild(this.errBox);
     }
     const prod = (import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD;
-    if (prod && !this.open) {
-      this.errBox.textContent = `⚠ ${errs.length} GPU error${errs.length > 1 ? 's' : ''} — press \` for details`;
+    if (prod && !this.open && !this.errorsExpanded) {
+      this.errBox.innerHTML = `<button type="button" class="weft-err-summary" aria-expanded="false">⚠ ${errs.length} GPU error${errs.length > 1 ? 's' : ''} — tap for details</button>`;
+      this.errBox.querySelector('button')!.onclick = () => { this.errorsExpanded = true; this.renderErrors(); };
       return;
     }
-    this.errBox.innerHTML = '<button title="dismiss">✕</button>' + errs.map((e) => `<b>${esc(e.kind)} · ${esc(e.label)}</b>\n${esc(e.message)}`).join('\n\n');
-    this.errBox.querySelector('button')!.onclick = () => { this.errorsDismissed = true; this.renderErrors(); };
+    const size = this.kit.size;
+    const context = `${errs.length} GPU error${errs.length > 1 ? 's' : ''} · ${(1000 / this.cpuMs).toFixed(0)} fps · ${size.render[0]}×${size.render[1]}\n${navigator.userAgent}`;
+    const report = context + '\n\n' + errs.map((e) => `${e.kind} · ${e.label}\n${e.message}`).join('\n\n');
+    this.errBox.innerHTML = '<div class="weft-err-actions"><button type="button" data-copy>Copy details</button><button type="button" data-dismiss>Close errors</button></div>' +
+      `<pre>${esc(report)}</pre>`;
+    this.errBox.querySelector<HTMLButtonElement>('[data-dismiss]')!.onclick = () => { this.errorsDismissed = true; this.renderErrors(); };
+    this.errBox.querySelector<HTMLButtonElement>('[data-copy]')!.onclick = async (e) => {
+      const b = e.currentTarget as HTMLButtonElement;
+      try { await navigator.clipboard.writeText(report); b.textContent = 'Copied'; }
+      catch { b.textContent = 'Select text to copy'; }
+    };
   }
 
   private ensureStyle() {
@@ -110,7 +129,7 @@ export class DebugOverlay {
       this.root.addEventListener('keydown', (e) => e.stopPropagation());
     }
     const r = this.root;
-    r.innerHTML = `<div class="row"><b>weft</b><span class="k"></span><span id="wo-stats"></span></div>
+    r.innerHTML = `<div class="row"><b>weft</b><span class="k"></span><button type="button" id="wo-close" aria-label="Close GPU diagnostics" style="min-height:44px;min-width:44px">✕</button></div><div id="wo-stats"></div>
       <div class="row"><span id="wo-mem"></span></div>
       <div id="wo-custom"></div>
       <h4>passes <span style="text-transform:none;font-weight:400">(click to switch off)</span></h4><table id="wo-passes"></table>
@@ -119,6 +138,7 @@ export class DebugOverlay {
         <select id="wo-ch"><option value="0">rgb</option><option value="1">r</option><option value="2">g</option><option value="3">b</option><option value="4">a</option></select></div>
       <div class="row">range <input id="wo-lo" type="number" step="0.1" value="${this.viewer.lo}" style="width:54px"> <input id="wo-hi" type="number" step="0.1" value="${this.viewer.hi}" style="width:54px"> mip <input id="wo-mip" type="number" min="0" value="${this.viewer.mip}" style="width:36px"></div>
       <div id="wo-tweaks"></div>`;
+    r.querySelector<HTMLButtonElement>('#wo-close')!.onclick = () => { this.open = false; this.render(); };
     const sel = r.querySelector<HTMLSelectElement>('#wo-tex')!;
     const texs = [...this.kit.textures].filter((t) => t.samples === 1 && (t.desc.dimension ?? '2d') === '2d');
     texs.forEach((t, i) => {

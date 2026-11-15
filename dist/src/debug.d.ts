@@ -16,6 +16,7 @@ export declare class DebugOverlay {
     private viewerDraws;
     private viewerU;
     private errorsDismissed;
+    private errorsExpanded;
     /** `toggles`: opened with ` (and by kit.debug); without it (a sibling kit) only its errors ever show */
     constructor(kit: Kit, toggles?: boolean);
     isEnabled(label: string): boolean;
