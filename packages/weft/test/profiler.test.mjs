@@ -63,6 +63,8 @@ test('timestamps that add up stay trusted', async () => {
   for (let i = 0; i < 40; i++) await frame(p, ['shadow', 'scene', 'post']);
   assert.equal(p.trusted, true);
   assert.ok(Math.abs(p.lastFrameMs - 5) < 1e-9, `a frame of 5 ms (${p.lastFrameMs})`);
+  assert.ok(Math.abs(p.lastPassSumMs - 3) < 1e-9, `sum of 3 passes = 3 ms (${p.lastPassSumMs})`);
+  assert.ok(Math.abs(p.passSumMs - 3) < 1e-6, `smoothed pass sum = 3 ms (${p.passSumMs})`);
 });
 
 test('frames far longer than the time between them: the timestamps not trusted', async () => {

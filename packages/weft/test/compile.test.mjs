@@ -41,3 +41,21 @@ test('one needed now is made on the spot', () => {
   assert.equal(rec.pipeline, 'made');
   assert.equal(c.stats.now, 1);
 });
+
+test('urge() promotes a queued pipeline ahead of background compiles', async () => {
+  const c = new SerialCompiler({ moduleNow: () => null }, 1);
+  const order = [];
+  const recs = ['a', 'b', 'c', 'd'].map((n) => ({ label: n }));
+  const start = (name) => async () => {
+    order.push(name);
+    await new Promise((r) => setTimeout(r, 4));
+    return name;
+  };
+  const ps = recs.map((r) => c.compile(r, start(r.label)));
+  // 'a' has already started waiting for its frame; promote 'd' ahead of 'b' and 'c'
+  c.urge(recs[3]);
+  const got = await Promise.all(ps);
+  assert.deepEqual(got, ['a', 'b', 'c', 'd']);
+  assert.deepEqual(order, ['a', 'd', 'b', 'c']);
+  assert.equal(c.stats.urged, 1);
+});

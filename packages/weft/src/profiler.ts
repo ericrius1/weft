@@ -21,6 +21,10 @@ export class Profiler {
   frameMs = 0;
   /** the newest completed frame's GPU time, raw */
   lastFrameMs = 0;
+  /** sum of our own passes' durations in the frame (excludes inter-pass GPU contention from other processes), smoothed */
+  passSumMs = 0;
+  /** the newest completed frame's sum of our own passes' durations, raw */
+  lastPassSumMs = 0;
   /** the newest completed frame's ms per pass label, raw */
   lastMs = new Map<string, number>();
   /** bumped with each completed frame's raw numbers (a frame read back is counted once) */
@@ -102,7 +106,7 @@ export class Profiler {
       const t = new BigUint64Array(rb.getMappedRange(0, n * 8).slice(0));
       rb.unmap();
       this.pending = false;
-      let first = Infinity, last = 0;
+      let first = Infinity, last = 0, passSum = 0;
       const frame = new Map<string, number>();
       for (let p = 0; p < labels.length; p++) {
         const a = Number(t[p * 2]), b = Number(t[p * 2 + 1]);
@@ -110,6 +114,7 @@ export class Profiler {
         const ms = (b - a) / 1e6;
         if (ms > 1000) continue;
         frame.set(labels[p], (frame.get(labels[p]) ?? 0) + ms);
+        passSum += ms;
         first = Math.min(first, a);
         last = Math.max(last, b);
       }
@@ -121,8 +126,10 @@ export class Profiler {
         const total = (last - first) / 1e6;
         this.judge(total);
         this.lastFrameMs = total;
+        this.lastPassSumMs = passSum;
         this.serial++;
         this.frameMs = this.frameMs ? this.frameMs * 0.9 + total * 0.1 : total;
+        this.passSumMs = this.passSumMs ? this.passSumMs * 0.9 + passSum * 0.1 : passSum;
       }
     }).catch(() => { this.pending = false; });
   }

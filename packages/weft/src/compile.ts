@@ -18,18 +18,55 @@ const nextFrame = () => new Promise<void>((r) => {
   requestAnimationFrame(() => { clearTimeout(t); r(); });
 });
 
+interface Queued {
+  rec: AnyPipelineRecord;
+  start: () => Promise<unknown>;
+  ok: (v: unknown) => void;
+  fail: (e: unknown) => void;
+  urgent: boolean;
+}
+
 export class SerialCompiler implements Compiler {
   readonly holding = false;
-  /** compiles asked of the GPU so far, and made on the spot */
-  readonly stats = { compiled: 0, now: 0 };
-  private chain: Promise<unknown> = Promise.resolve();
+  /** compiles asked of the GPU so far, made on the spot, and promoted via urge() */
+  readonly stats = { compiled: 0, now: 0, urged: 0 };
+  private queue: Queued[] = [];
+  private busy = false;
   /** `frames`: frames waited between compiles (1) */
   constructor(private kit: Kit, private frames = 1) {}
 
-  compile(_rec: AnyPipelineRecord, start: () => Promise<unknown>): Promise<unknown> {
-    const p = this.chain.then(async () => { for (let i = 0; i < this.frames; i++) await nextFrame(); }).then(() => { this.stats.compiled++; return start(); });
-    this.chain = p.catch(() => {});
-    return p;
+  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>): Promise<unknown> {
+    return new Promise((ok, fail) => {
+      this.queue.push({ rec, start, ok, fail, urgent: false });
+      if (!this.busy) void this.pump();
+    });
+  }
+
+  /** promote a queued pipeline (e.g. a site the camera is approaching) ahead of background compiles */
+  urge(rec: AnyPipelineRecord) {
+    const i = this.queue.findIndex((q) => q.rec === rec);
+    if (i < 0 || this.queue[i].urgent) return;
+    const [item] = this.queue.splice(i, 1);
+    item.urgent = true;
+    const at = this.queue.findIndex((q) => !q.urgent);
+    if (at < 0) this.queue.push(item);
+    else this.queue.splice(at, 0, item);
+    this.stats.urged++;
+  }
+
+  private async pump() {
+    this.busy = true;
+    while (this.queue.length) {
+      const item = this.queue.shift()!;
+      for (let i = 0; i < this.frames; i++) await nextFrame();
+      this.stats.compiled++;
+      try {
+        item.ok(await item.start());
+      } catch (e) {
+        item.fail(e);
+      }
+    }
+    this.busy = false;
   }
 
   now(rec: AnyPipelineRecord) {

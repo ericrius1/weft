@@ -252,13 +252,19 @@ the kit's.
    maxSampledTexturesPerShaderStage: 16, maxStorageBuffersPerShaderStage: 8, maxStorageTexturesPerShaderStage: 4 } })`.
 8. **WebKit (every iPhone browser) compiles pipelines one at a time.** Asking for hundreds at once froze an iPhone for
    about 10 s. While building a world there, set `kit.compiler = new SerialCompiler(kit)` (when `isWebKit()`), and
-   put back the previous compiler after `await kit.ready()`. Don't trust its GPU
-   timestamps: `FrameBudget` paces by frame intervals instead.
+   put back the previous compiler after `await kit.ready()`; call `compiler.urge(rec)` to promote a nearby site's
+   pipelines ahead of background compiles. Don't trust its GPU timestamps: `FrameBudget` paces by frame intervals
+   instead. On macOS Metal, Tint copies runtime-indexed function-local constant tables into thread memory, which can
+   stall or interrupt Metal's compiler service — keep large lookup tables in storage or uniform buffers.
 9. **`r32float` textures are unfilterable** unless the device has `float32-filterable`, which weft requests when it's
    available. weft builds the layout to match, but in WGSL read them with `textureLoad` or a non-filtering sampler.
    Depth textures are the same unless the shader declares `texture_depth_2d`.
-10. **Free what you stream out** with `kit.release(...)`. A texture that's merely dropped stays in `kit.textures`, and
-    a resize reallocates it.
+10. **Free what you stream out** with `kit.release(...)` (and `vol.dispose()` for `LowResVolume`). A texture that's
+    merely dropped stays in `kit.textures`, and a resize reallocates it. When updating one slice of a `2d-array`
+    texture, pass the slice index to `generateMips(kit, tex, layer)` so the other layers aren't re-mipped.
+11. **Shared helpers & diagnostics.** `#include "loom/recess"` provides parallax opening reveals (`recess`, `recessLit`,
+    `recessNormal`). Under shared-GPU contention, compare `kit.profiler.lastPassSumMs` / `passSumMs` (sum of our own
+    passes) against `lastFrameMs` / `frameMs` (first-to-last pass span).
 11. **Hot reload keeps state.** Editing a `.wgsl` file rebuilds only the pipelines made from it. Uniform values carry
     over by field name, and buffers keep their contents. You don't need to reload the page after shader edits. After
     editing TypeScript, the page reloads as usual.
