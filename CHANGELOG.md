@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.12
+
+Additions and fixes; nothing an app already does changes, and the shaders are untouched.
+
+- **`SerialCompiler.urge(rec)`**: moves a queued pipeline ahead of the background compiles, behind any already urged
+  (a site the visitor is coming near). The compiler is now a queue rather than a promise chain: still one compile at a
+  time, with the same frames between them. `stats.urged` counts the promotions.
+- **One retry for a transient compile failure**: a pipeline whose compile fails with a GPUPipelineError of reason
+  `'internal'`, or with a message from the compiler service (Metal's `XPC_ERROR_CONNECTION_INTERRUPTED`), is asked
+  for once more after 250 ms. A validation error fails at once, as before.
+- **`generateMips(kit, tex, layer?)`**: regenerates one slice of a `2d-array` texture; without `layer`, every slice
+  as before.
+- **`Profiler.passSumMs` / `lastPassSumMs`**: the sum of the frame's own passes. Unlike the first-to-last span
+  (`frameMs` / `lastFrameMs`), it leaves out other processes' GPU work between them; compare the two under
+  contention.
+- AGENTS.md: `urge`, `vol.dispose()`, single-layer mips, `loom/recess` and `passSumMs` in the pitfalls; Tint's
+  copy of a runtime-indexed function-local constant table into thread memory, which Metal's compiler handles badly
+  (keep such tables in buffers).
+
 ## 0.2.11
 
 - **Every statement of a `switch` case is reflected.** wgsl_reflect 1.6.0 (the latest) keeps only the first two

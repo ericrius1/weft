@@ -12,19 +12,51 @@ export class SerialCompiler {
     kit;
     frames;
     holding = false;
-    /** compiles asked of the GPU so far, and made on the spot */
-    stats = { compiled: 0, now: 0 };
-    chain = Promise.resolve();
+    /** compiles asked of the GPU so far, made on the spot, and promoted via urge() */
+    stats = { compiled: 0, now: 0, urged: 0 };
+    queue = [];
+    busy = false;
     /** `frames`: frames waited between compiles (1) */
     constructor(kit, frames = 1) {
         this.kit = kit;
         this.frames = frames;
     }
-    compile(_rec, start) {
-        const p = this.chain.then(async () => { for (let i = 0; i < this.frames; i++)
-            await nextFrame(); }).then(() => { this.stats.compiled++; return start(); });
-        this.chain = p.catch(() => { });
-        return p;
+    compile(rec, start) {
+        return new Promise((ok, fail) => {
+            this.queue.push({ rec, start, ok, fail, urgent: false });
+            if (!this.busy)
+                void this.pump();
+        });
+    }
+    /** promote a queued pipeline (e.g. a site the camera is approaching) ahead of background compiles */
+    urge(rec) {
+        const i = this.queue.findIndex((q) => q.rec === rec);
+        if (i < 0 || this.queue[i].urgent)
+            return;
+        const [item] = this.queue.splice(i, 1);
+        item.urgent = true;
+        const at = this.queue.findIndex((q) => !q.urgent);
+        if (at < 0)
+            this.queue.push(item);
+        else
+            this.queue.splice(at, 0, item);
+        this.stats.urged++;
+    }
+    async pump() {
+        this.busy = true;
+        while (this.queue.length) {
+            const item = this.queue.shift();
+            for (let i = 0; i < this.frames; i++)
+                await nextFrame();
+            this.stats.compiled++;
+            try {
+                item.ok(await item.start());
+            }
+            catch (e) {
+                item.fail(e);
+            }
+        }
+        this.busy = false;
     }
     now(rec) {
         if (rec._pipe)

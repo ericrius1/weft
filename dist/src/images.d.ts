@@ -21,8 +21,9 @@ export declare function loadImageTexture(kit: Kit, url: string, o?: ImageTexture
 export declare function loadImageArray(kit: Kit, urls: string[], o?: ImageTextureOptions, init?: RequestInit): Promise<Texture>;
 /** compile the mip pipelines of the common formats in the background (generateMips does it the first time) */
 export declare function warmMips(kit: Kit): void;
-/** fill every mip of every layer from the one above, box-filtered, now (render passes: the format must be renderable) */
-export declare function generateMips(kit: Kit, t: Texture): void;
+/** fill every mip from the one above, box-filtered, now (render passes: the format must be renderable).
+ *  `layer`: regenerate only one array slice (for 2d-array textures updated one layer at a time); omitted: every layer */
+export declare function generateMips(kit: Kit, t: Texture, layer?: number): void;
 /** a small constant texture (layers > 1: a 2D array) */
 export declare function solidTexture(kit: Kit, rgba: [number, number, number, number], layers?: number, label?: string): Texture;
 //# sourceMappingURL=images.d.ts.map

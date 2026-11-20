@@ -83,15 +83,18 @@ export function warmMips(kit) {
             pipes.set(f, p); }, () => { });
     }
 }
-/** fill every mip of every layer from the one above, box-filtered, now (render passes: the format must be renderable) */
-export function generateMips(kit, t) {
+/** fill every mip from the one above, box-filtered, now (render passes: the format must be renderable).
+ *  `layer`: regenerate only one array slice (for 2d-array textures updated one layer at a time); omitted: every layer */
+export function generateMips(kit, t, layer) {
     const dev = kit.device, pipes = pipesOf(dev);
     let pipe = pipes.get(t.format);
     if (!pipe)
         pipes.set(t.format, pipe = dev.createRenderPipeline(mipDesc(dev, t.format)));
     warmMips(kit);
     const enc = dev.createCommandEncoder({ label: `${t.label}.mips` });
-    for (let l = 0; l < t.layers; l++) {
+    const l0 = layer !== undefined ? Math.max(0, Math.min(t.layers - 1, layer)) : 0;
+    const l1 = layer !== undefined ? l0 + 1 : t.layers;
+    for (let l = l0; l < l1; l++) {
         for (let m = 1; m < t.mips; m++) {
             const src = t.gpu.createView({ dimension: '2d', baseMipLevel: m - 1, mipLevelCount: 1, baseArrayLayer: l, arrayLayerCount: 1 });
             const dst = t.gpu.createView({ dimension: '2d', baseMipLevel: m, mipLevelCount: 1, baseArrayLayer: l, arrayLayerCount: 1 });

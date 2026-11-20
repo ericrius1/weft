@@ -13,6 +13,10 @@ export declare class Profiler {
     frameMs: number;
     /** the newest completed frame's GPU time, raw */
     lastFrameMs: number;
+    /** sum of our own passes' durations in the frame (excludes inter-pass GPU contention from other processes), smoothed */
+    passSumMs: number;
+    /** the newest completed frame's sum of our own passes' durations, raw */
+    lastPassSumMs: number;
     /** the newest completed frame's ms per pass label, raw */
     lastMs: Map<string, number>;
     /** bumped with each completed frame's raw numbers (a frame read back is counted once) */
