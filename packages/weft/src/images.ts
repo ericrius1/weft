@@ -56,11 +56,17 @@ export function textureFromBitmaps(kit: Kit, bitmaps: ImageBitmap[], o: ImageTex
 
 /** an image as a texture (`label` defaults to its URL) */
 export async function loadImageTexture(kit: Kit, url: string, o: ImageTextureOptions = {}, init?: RequestInit) {
-  return textureFromBitmaps(kit, [await loadBitmap(url, init)], { label: url, ...o });
+  const mip = o.mips ? warmMips(kit, [o.srgb ? 'rgba8unorm-srgb' : 'rgba8unorm']) : null;
+  const bm = await loadBitmap(url, init);
+  if (mip) await mip;
+  return textureFromBitmaps(kit, [bm], { label: url, ...o });
 }
 /** images as one 2D array texture, a layer each */
 export async function loadImageArray(kit: Kit, urls: string[], o: ImageTextureOptions = {}, init?: RequestInit) {
-  return textureFromBitmaps(kit, await Promise.all(urls.map((u) => loadBitmap(u, init))), o);
+  const mip = o.mips ? warmMips(kit, [o.srgb ? 'rgba8unorm-srgb' : 'rgba8unorm']) : null;
+  const bms = await Promise.all(urls.map((u) => loadBitmap(u, init)));
+  if (mip) await mip;
+  return textureFromBitmaps(kit, bms, o);
 }
 
 // (a tiny pipeline made synchronously the first time a format's asked for: the kit's own compile asynchronously, so a
@@ -69,7 +75,7 @@ export async function loadImageArray(kit: Kit, urls: string[], o: ImageTextureOp
 // compile, tens of ms with the page held)
 const pipeSets = new WeakMap<GPUDevice, Map<string, GPURenderPipeline>>();
 const modules = new WeakMap<GPUDevice, GPUShaderModule>();
-const warmed = new WeakSet<GPUDevice>();
+const warmed = new WeakMap<GPUDevice, Map<string, Promise<void>>>();
 const pipesOf = (dev: GPUDevice) => { let m = pipeSets.get(dev); if (!m) pipeSets.set(dev, (m = new Map())); return m; };
 const MIP_FORMATS: GPUTextureFormat[] = ['rgba8unorm', 'rgba8unorm-srgb', 'rgba16float', 'bgra8unorm', 'r8unorm', 'rg8unorm'];
 function mipDesc(dev: GPUDevice, format: GPUTextureFormat): GPURenderPipelineDescriptor {
@@ -89,23 +95,37 @@ function mipDesc(dev: GPUDevice, format: GPUTextureFormat): GPURenderPipelineDes
     primitive: { topology: 'triangle-list' },
   };
 }
-/** compile the mip pipelines of the common formats in the background (generateMips does it the first time) */
-export function warmMips(kit: Kit) {
+/** compile the mip pipelines asynchronously for `formats` (defaults to common formats); each format warmed at most once per device */
+export function warmMips(kit: Kit, formats: readonly GPUTextureFormat[] = MIP_FORMATS): Promise<void> {
   const dev = kit.device, pipes = pipesOf(dev);
-  if (warmed.has(dev)) return;
-  warmed.add(dev);
-  for (const f of MIP_FORMATS) {
+  let seen = warmed.get(dev);
+  if (!seen) warmed.set(dev, (seen = new Map()));
+  const wait: Promise<void>[] = [];
+  for (const f of formats) {
     if (pipes.has(f)) continue;
-    void dev.createRenderPipelineAsync(mipDesc(dev, f)).then((p) => { if (!pipes.has(f)) pipes.set(f, p); }, () => {});
+    let p = seen.get(f);
+    if (!p) {
+      p = dev.createRenderPipelineAsync(mipDesc(dev, f)).then((pipe) => { if (!pipes.has(f)) pipes.set(f, pipe); }, () => {});
+      seen.set(f, p);
+    }
+    wait.push(p);
   }
+  return wait.length ? Promise.all(wait).then(() => {}) : Promise.resolve();
 }
+const idleWarmed = new WeakSet<GPUDevice>();
 /** fill every mip from the one above, box-filtered, now (render passes: the format must be renderable).
  *  `layer`: regenerate only one array slice (for 2d-array textures updated one layer at a time); omitted: every layer */
 export function generateMips(kit: Kit, t: Texture, layer?: number) {
   const dev = kit.device, pipes = pipesOf(dev);
   let pipe = pipes.get(t.format);
   if (!pipe) pipes.set(t.format, pipe = dev.createRenderPipeline(mipDesc(dev, t.format)));
-  warmMips(kit);
+  // Defer warming the remaining unused mip formats until after boot so they don't compete with first-frame compiles
+  if (!idleWarmed.has(dev)) {
+    idleWarmed.add(dev);
+    const go = () => warmMips(kit);
+    if (typeof requestIdleCallback !== 'undefined') requestIdleCallback(go, { timeout: 5000 });
+    else setTimeout(go, 4000);
+  }
   const enc = dev.createCommandEncoder({ label: `${t.label}.mips` });
   const l0 = layer !== undefined ? Math.max(0, Math.min(t.layers - 1, layer)) : 0;
   const l1 = layer !== undefined ? l0 + 1 : t.layers;

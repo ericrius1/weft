@@ -193,6 +193,7 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         if (b !== this.serial) return;
         this.error = (e as Error).message ?? String(e);
         this.kit.report('pipeline', this.label, this.error);
+        void (this.kit as { diagnoseShader?: (s: Shader) => Promise<void> }).diagnoseShader?.(this.shader);
       }
     })();
     this.pending = p.finally(() => { if (this.pending === wrapped) this.pending = null; });

@@ -34,11 +34,22 @@ export interface AssetsOptions {
 /** a content-addressed object's URL: objects/<sha256>/<name> (it never changes, so it can be kept) */
 export const isLasting = (url: string) => /\/objects\/[0-9a-f]{64}\//.test(url);
 
+const openCaches = new Map<string, Promise<Cache | null>>();
+function openCache(name: string): Promise<Cache | null> {
+  let p = openCaches.get(name);
+  if (!p) {
+    p = caches.open(name).catch(() => { openCaches.delete(name); return null; });
+    openCaches.set(name, p);
+  }
+  return p;
+}
+
 /** fetch, through Cache Storage `cache` for a content-addressed object (any other URL, or no Cache Storage: as usual) */
 export async function fetchKept(url: string, init: RequestInit | undefined, cache: string | null): Promise<Response> {
   if (!cache || !isLasting(url) || typeof caches === 'undefined' || (init?.headers && new Headers(init.headers).has('range'))) return fetch(url, init);
   try {
-    const c = await caches.open(cache);
+    const c = await openCache(cache);
+    if (!c) return fetch(url, init);
     const hit = await c.match(url);
     if (hit) return hit;
     const r = await fetch(url, init);
@@ -161,7 +172,7 @@ export class Pack<I extends PackIndex = TileIndex> {
   async range(a: number, n: number, signal?: AbortSignal): Promise<ArrayBuffer> {
     for (let tries = 0; ; tries++) {
       try {
-        const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, signal });
+        const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, cache: 'no-store', signal });
         if (res.status === 206) return await res.arrayBuffer();
         // (a server that ignores the range sends the whole pack: take our part of it)
         if (res.ok) return (await res.arrayBuffer()).slice(a, a + n);
