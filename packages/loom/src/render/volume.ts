@@ -27,8 +27,9 @@ export class LowResVolume {
   readonly scale: number;
   readonly far: number;
   readonly label: string;
-  private list: RunEntry[] = [];
+  private list: RenderPass[] = [];
   private hist: Texture[] = [];
+  private owned: Texture[] = [];
   private accPasses: RenderPass[] = [];
   private frame = 0;
   private flip = 0;
@@ -48,6 +49,7 @@ export class LowResVolume {
     const volNew = kit.texture({ label: `${L}.new`, format: 'rgba16float', size: 'render', scale: s });
     const volNewZ = kit.texture({ label: `${L}.z`, format: 'r32float', size: 'render', scale: s, usage: ['render', 'sample'] });
     this.hist = [0, 1].map((i) => kit.texture({ label: `${L}.acc${i}`, format: 'rgba16float', size: 'render', scale: s }));
+    this.owned = [volNew, volNewZ, ...this.hist];
     const march = kit.pass({ label: `${L}.march`, color: [{ target: volNew, clear: [0, 0, 0, 1] }, { target: volNewZ, clear: [1e9, 0, 0, 0] }] });
     march.fullscreen(shader, { label: `${L}.march`, fragment: 'march', bind: { ...extra, V: this.u, volSceneZ: sceneZ } as never });
     this.accPasses = [0, 1].map((i) => {
@@ -79,5 +81,15 @@ export class LowResVolume {
     if (!this.on()) return [];
     const on = this.flip;
     return this.list.map((p) => (p === this.accPasses[0] || p === this.accPasses[1] ? (p === this.accPasses[on] ? p : null) : p));
+  }
+
+  /** release all internal textures, uniform buffer, and passes/draws owned by this volume */
+  dispose() {
+    for (const p of this.list) p.dispose();
+    this.list = [];
+    this.accPasses = [];
+    this.kit.release(this.u, ...this.owned);
+    this.owned = [];
+    this.hist = [];
   }
 }
