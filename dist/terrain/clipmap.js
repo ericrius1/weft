@@ -260,8 +260,10 @@ export class ClipLevel {
         const ix = Math.floor(gx), iz = Math.floor(gz), fx = gx - ix, fz = gz - iz;
         const at = (cx, cz) => {
             const tc = Math.floor(cx / T), tr = Math.floor(cz / T);
+            if (tc < 0 || tc >= g || tr < 0 || tr >= g)
+                return NaN;
             const s = this.slots[(((tr % n) + n) % n) * n + (((tc % n) + n) % n)];
-            if (!s.data || s.res !== tr * g + tc)
+            if (!s || !s.data || s.res !== tr * g + tc)
                 return NaN;
             return s.data[(cz - tr * T) * T + (cx - tc * T)];
         };

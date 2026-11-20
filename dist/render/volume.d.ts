@@ -21,6 +21,7 @@ export declare class LowResVolume {
     readonly label: string;
     private list;
     private hist;
+    private owned;
     private accPasses;
     private frame;
     private flip;
@@ -35,5 +36,7 @@ export declare class LowResVolume {
     current(): Texture | null;
     /** the passes after the scene (none while it's off): the march, this frame's history, the blend */
     passes(): RunEntry[];
+    /** release all internal textures, uniform buffer, and passes/draws owned by this volume */
+    dispose(): void;
 }
 //# sourceMappingURL=volume.d.ts.map
