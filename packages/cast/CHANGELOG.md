@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1
+
+Against 0.7.0. One addition; nothing else changes.
+
+- **`HeroRig.shift(d)`**: the world moved under a body by `d`. An app's frame was re-centred, a rigid move of
+  everything rather than a teleport. Every point the rig keeps in the world is carried by `d`: the feet's plants and
+  swings, the hands' springs, the pelvis height, the chains (cloth, hair) and their capsules. She goes on exactly as
+  she was. Re-seated instead (`snap()`), a braid started at rest in fast flight's wind was torn to 1.89x its length
+  for that frame at every re-centre (World over the Pacific at 332 m/s: 3 stretched frames in 10 re-centres, 0 with
+  `shift`).
+
 ## 0.7.0
 
 Against 0.6.3.

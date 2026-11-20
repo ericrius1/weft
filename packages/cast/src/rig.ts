@@ -1070,6 +1070,27 @@ export class HeroRig {
   /** re-seat feet, hands and hair where she is now (after moving her by hand) */
   snap() { this.first = true; }
 
+  /** the world moved under her by `d` (an app's frame re-centred: a rigid move of everything, not a teleport): every
+   *  point she keeps in the world carried by it, so she goes on exactly as she was — her feet's plants and swings, the
+   *  hands' springs, her height, and the cloth and the hair as they stream. Re-seated instead (snap), a braid started at
+   *  rest in fast flight's wind was torn out to twice its length for the frame, at every re-centre (World, 16 Nov:
+   *  "when I'm flying fast the character starts to stretch and tear"). Directions and her own axes' state don't move */
+  shift(d: V3) {
+    if (this.first) return;
+    const m = (p: V3): V3 => [p[0] + d[0], p[1] + d[1], p[2] + d[2]];
+    this.lastPos = m(this.lastPos);
+    this.pelY += d[1];
+    for (const f of this.feet) { f.p = m(f.p); f.from = m(f.from); f.to = m(f.to); }
+    for (const h of this.hands) { h.y = m(h.y); h.xp = m(h.xp); }
+    for (const c of this.chains) {
+      c.ch.shift(d);
+      if (c.prev) c.prev = c.prev.map(m);
+      if (c.last) c.last = c.last.map(m);
+    }
+    if (this.lastCaps) this.lastCaps = this.lastCaps.map((c) => ({ a: m(c.a), b: m(c.b), r: c.r }));
+    if (this.bodyS?.at) this.bodyS.at = m(this.bodyS.at);
+  }
+
   /** her arms let go of whatever of the rig's own state still holds them (a seat's or a form's weight, a grip, the
    *  arm swing's and the hands' springs, the wrists' turn): back to hanging at rest from the next frame. katara.ts
    *  calls it when nothing of hers is holding her hands up and they're up anyway */
