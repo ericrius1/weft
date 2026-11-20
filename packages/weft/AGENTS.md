@@ -203,7 +203,9 @@ the kit's.
   that lists the names it does have. Only the bindings an entry point actually uses go into its layout, so a binding
   you've commented out doesn't break anything, and a used binding that isn't provided fails loudly. The reflection
   follows every function an entry point calls, however deep. Comments in some projects say it only sees one call
-  deep; those comments are out of date.
+  deep; those comments are out of date. It also sees every statement of a `switch` case. Before 0.2.11 it saw only
+  the first two, so a binding used only after them failed its pipeline; code turned into an if-chain to avoid that
+  can be a `switch` again.
 - **Shared helpers already exist**, so don't paste new copies into each shader. `loom/common` has `sat`, `luminance`,
   hashes (`hashu`, `hash12`, `hash13`, `hash22i`, …), `fbm`, `fbm3` and `rot2`; `weft/mesh` has `srgbToLinear`;
   `weft/output` has `srgbEncode`, `srgbToP3` and `canvasEncode`; `weft/lodfade` has `ign` (interleaved gradient noise)

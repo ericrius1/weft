@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.11
+
+- **Every statement of a `switch` case is reflected.** wgsl_reflect 1.6.0 (the latest) keeps only the first two
+  statements of each `case` and `default` body (its `_case_body` keeps one statement of what its recursion
+  returns). A binding read only from a case's third statement on was left out of its entry's resources, so the
+  pipeline layout lacked the group and the pipeline failed to build ("uses bindings in group N but [PipelineLayout]
+  doesn't have a BindGroupLayout for this index"). An override read that way silently kept its default. The plugin
+  now replaces that parser method with one that reads to the case's closing brace, as a block is read. It does so only
+  while a probe at load shows the fault, so a fixed wgsl_reflect is used as it ships. No API change. The code given to
+  the browser is unchanged: World's 249 entry shaders (with weft's, loom's and cast's libraries) are byte-identical
+  once lean, and only reflections that were wrong differ. `test/reflect.test.mjs` (three tests that fail on 0.2.10).
+
 ## 0.2.10
 
 - GPU error banners open by touch or keyboard, with wrapped, scrollable details, frame/device context, a copy button and a 44px close control. Inspecting an error does not enable the GPU profiler. The diagnostics overlay also fits narrow screens and has a close button.
