@@ -2,8 +2,16 @@
 
 ## 0.1.17
 
-Needs weft 0.2.9. Nothing renders differently.
+Needs weft 0.2.9. Additions and one fix; nothing already drawn renders differently.
 
+- **Lava on a heightfield** (`sim/lava.ts` `LavaFlow`, `shaders/lava.wgsl`, `shaders/lava_common.wgsl`): a viscous,
+  cooling, freezing sheet on a grid of cells laid over a host's land. A Bingham yield (a cool flow stops while still
+  thick: steep fronts, levees), a mobility falling by orders as it cools, heat carried with the lava and lost faster the
+  thinner the sheet, rock frozen in place that the next flow runs over (and that wears away once cold), vents at their
+  rates, a lake held at its level. Its tiles listed for three indirect draws by distance (`args`, `lists`), a glow
+  texture (8x8 cells a texel: strength, heat, the surface's height) for the light it throws, and the eye's cell read
+  back (`at`). The drawing is the host's: `#include "loom/lava_common"` for `LavaU`, `LAVA_TILE`, `lavaGlowOf`.
+  From World's Vesuvius.
 - **`LowResVolume.dispose()`**: frees its passes and draws, its uniform buffer and its four textures.
 - **`ClipLevel.heightAt`** gives NaN, for a coarser level to answer, at a point whose tile falls outside the level's
   window. It used to throw (`Cannot read properties of undefined (reading 'data')`).
