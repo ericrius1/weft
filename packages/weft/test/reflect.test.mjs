@@ -71,3 +71,53 @@ fn edge(x: f32) -> f32 { return x * RAGGED; }
 @fragment fn fs() -> @location(0) vec4f { return world.lv[0] * edge(0.5); }`);
   assert.deepEqual(r.overrides, ['RAGGED']);
 });
+
+// wgsl_reflect's parser kept only the first two statements of a `case` or `default` body (plugin/wgsl.ts caseBody): a
+// binding read only from the third on fell out of the layout (World's ppie fsGlass, its sky and aerial in group 1).
+const SWITCH = `${STRUCTS}
+@group(0) @binding(1) var<uniform> world: W;
+@group(1) @binding(0) var<uniform> SKY: T;
+@group(2) @binding(0) var<uniform> TS: T;
+override GLOW: f32 = 1.0;
+fn sky() -> vec4f { return SKY.level; }`;
+
+test('a binding read only from a case body\'s third statement on', () => {
+  const r = uses(`${SWITCH}
+@fragment fn fs(@location(0) @interpolate(flat) m: u32) -> @location(0) vec4f {
+  var c = vec4f(0.0);
+  switch m {
+    case 1u: { c.x = 1.0; c.y = 2.0; c.z = 3.0; return c * TS.level; }
+    case 2u, 3u: { let a = 1.0; let b = 2.0; let d = 3.0; c = sky() * a * b * d; }
+    default: { c.x = 1.0; c.y = 2.0; c.z = GLOW; }
+  }
+  return c * world.lv[0];
+}`);
+  assert.deepEqual(r.resources, ['SKY', 'TS', 'world']);
+  assert.deepEqual(r.overrides, ['GLOW']);
+});
+
+test('a case body\'s locals still shadow, and a binding after a nested switch is still read', () => {
+  const r = uses(`${SWITCH}
+@fragment fn fs(@location(0) @interpolate(flat) m: u32) -> @location(0) vec4f {
+  var c = vec4f(0.0);
+  switch m {
+    case 1u: {
+      let a = 1.0; let b = 2.0;
+      let TS = vec4f(3.0);
+      switch m { case 0u: { c.x = 1.0; c.y = 2.0; c.z = 3.0; } default: {} }
+      c += TS * a * b + sky();
+    }
+    default: {}
+  }
+  return c * world.lv[0];
+}`);
+  assert.deepEqual(r.resources, ['SKY', 'world']);
+});
+
+test('every statement of a case body is in the syntax tree', async () => {
+  const { WgslParser } = await import('wgsl_reflect/wgsl_reflect.module.js');
+  await import('../dist/plugin/wgsl.js');
+  const ast = new WgslParser().parse('fn f(m: u32) -> i32 { var a = 0; switch m { case 1u: { a = 1; a = 2; a = 3; a = 4; } case 2u: { ; } default: { a = 5; ; a = 6; a = 7; } } return a; }');
+  const sw = ast[0].body.find((s) => s.astNodeType === 'switch');
+  assert.deepEqual(sw.cases.map((c) => c.body.length), [4, 0, 3]);
+});

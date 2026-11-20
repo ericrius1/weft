@@ -7,14 +7,15 @@
 //    bindings and overrides an entry uses is also worked out here from the syntax tree (entryNames), because
 //    wgsl_reflect misses a name read only inside an index that follows a member access or another index
 //    (`world.levels[i32(u.level.x)]` never counts `u`): the binding fell out of the pipeline layout and the pipeline
-//    failed to build, and an override fell out of the constants and silently kept its default.
+//    failed to build, and an override fell out of the constants and silently kept its default. Its parser also kept
+//    only two statements of each `case` body; that is corrected below (caseBody) before anything is parsed.
 // 3. Struct members can carry tweak annotations in a trailing comment: `// @range(0, 2)`, `// @range(0, 1, 0.01)`,
 //    `// @color`. The debug overlay builds sliders from them.
 // 4. A `.d.wgsl.ts` declaration is generated next to the shader, so `import s from './x.wgsl'` gives typed struct
 //    fields and binding names (TS `allowArbitraryExtensions`).
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, relative, sep } from 'node:path';
-import { WgslReflect, WgslParser } from 'wgsl_reflect/wgsl_reflect.module.js';
+import { WgslReflect, WgslParser, TokenTypes } from 'wgsl_reflect/wgsl_reflect.module.js';
 import { leanWgsl } from './lean.js';
 
 export interface FieldLayout {
@@ -154,6 +155,37 @@ function texInfo(typeName: string): BindingInfo['texture'] {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
+
+/** How many statements the parser keeps of a `case` body that has three. */
+function caseStatements(): number {
+  const ast: Any[] = new WgslParser().parse('fn f(m: u32) { var a = 0; switch m { default: { a = 1; a = 2; a = 3; } } }');
+  const sw = (ast[0]?.body as Any[] | undefined)?.find((s) => s?.astNodeType === 'switch');
+  return sw?.cases?.[0]?.body?.length ?? -1;
+}
+
+// wgsl_reflect (1.6.0 and before) keeps only the first two statements of a `case` or `default` body. Its _case_body
+// reads one statement, recurses for the rest, then keeps only the first of what the recursion returns
+// (`[...statement, nextStatement[0]]`). The rest of the body was missing from the syntax tree, so a binding or override
+// read only from the third statement on fell out of the entry's resources (wgsl_reflect's and entryNames' alike). The
+// pipeline layout then lacked its group and the pipeline failed to build ("uses bindings in group 1 but [PipelineLayout]
+// doesn't have a BindGroupLayout for this index"). For an override, the constant silently kept its default.
+// Here the body is read as `_compound_statement` reads a block: statement by statement up to the closing brace
+// (`fallthrough;` ends it, as before). The parser is replaced only while the probe shows the fault, so a fixed release
+// is used as it ships.
+if (caseStatements() !== 3) {
+  const P = (WgslParser as Any).prototype;
+  P._case_body = function caseBody(this: Any): Any[] {
+    const body: Any[] = [];
+    while (!this._check(TokenTypes.tokens.brace_right) && !this._isAtEnd()) {
+      if (this._match(TokenTypes.keywords.fallthrough)) { this._consume(TokenTypes.tokens.semicolon, "Expected ';'"); break; }
+      const s = this._statement();
+      if (s === null) break;
+      if (Array.isArray(s)) body.push(...s); else body.push(s);
+    }
+    return body;
+  };
+  if (caseStatements() !== 3) throw new Error('weft: wgsl_reflect\'s switch-case parsing could not be corrected (its parser changed): check plugin/wgsl.ts');
+}
 
 function fieldOf(m: Any, ann: Record<string, { range?: number[]; color?: boolean }>, structName: string): FieldLayout {
   const f: FieldLayout = { name: m.name, offset: m.offset, size: m.size, type: '' };
