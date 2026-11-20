@@ -213,9 +213,12 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         made.start = () => (p ??= made.pipeline
           ? Promise.resolve(made.pipeline)
           : (makePipeline(kit, desc, module, true) as Promise<AnyPipeline>).catch((err) => {
-            // Retry once on transient compiler-service failures (e.g. Metal XPC_ERROR_CONNECTION_INTERRUPTED)
+            // Retry once on transient compiler-service failures (e.g. Metal XPC_ERROR_CONNECTION_INTERRUPTED). A
+            // GPUPipelineError says which with its `reason`: 'internal' may pass on a second try, 'validation' never
+            // will. The message is matched only for the compiler service's own words, so an invalid shader whose
+            // message merely contains "internal" (a name, say) fails at once.
             const msg = String((err as Error)?.message ?? err);
-            if (!/XPC|CONNECTION_INTERRUPTED|internal|compiler service/i.test(msg)) throw err;
+            if ((err as { reason?: string })?.reason !== 'internal' && !/XPC|CONNECTION_INTERRUPTED|compiler service/i.test(msg)) throw err;
             return new Promise<AnyPipeline>((ok, fail) => {
               setTimeout(() => {
                 (makePipeline(kit, desc, module, true) as Promise<AnyPipeline>).then(ok, fail);

@@ -267,10 +267,10 @@ the kit's.
 11. **Shared helpers & diagnostics.** `#include "loom/recess"` provides parallax opening reveals (`recess`, `recessLit`,
     `recessNormal`). Under shared-GPU contention, compare `kit.profiler.lastPassSumMs` / `passSumMs` (sum of our own
     passes) against `lastFrameMs` / `frameMs` (first-to-last pass span).
-11. **Hot reload keeps state.** Editing a `.wgsl` file rebuilds only the pipelines made from it. Uniform values carry
+12. **Hot reload keeps state.** Editing a `.wgsl` file rebuilds only the pipelines made from it. Uniform values carry
     over by field name, and buffers keep their contents. You don't need to reload the page after shader edits. After
     editing TypeScript, the page reloads as usual.
-12. **Don't fork engine code into the project.** If weft, loom or cast is missing something, add it upstream, in the
+13. **Don't fork engine code into the project.** If weft, loom or cast is missing something, add it upstream, in the
     weft repo, so every project gets it. Several projects have carried drifting copies of the same thing, and these
     copies have since been merged back into the packages. Check the package exports (`dist/**/*.d.ts`) before writing
     a camera, sky, film grade, asset loader, frame budget, rig or audio voice of your own. What projects still carry

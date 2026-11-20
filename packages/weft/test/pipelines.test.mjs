@@ -193,6 +193,27 @@ test('a failed compile fails every record sharing it, and the next one asking tr
   assert.ok(ok.pipe.pipeline && !ok.pipe.error);
 });
 
+test('a compile the compiler service drops (reason internal) is asked once more; a validation error is not', async () => {
+  const kit = fakeKit(), sh = shader('test/retry.wgsl', FILL);
+  const real = kit.device.createComputePipelineAsync, tries = new Map();
+  kit.device.createComputePipelineAsync = (d) => {
+    const n = (tries.get(d.label) ?? 0) + 1;
+    tries.set(d.label, n);
+    if (d.label === 'flaky' && n === 1) return Promise.reject(Object.assign(new Error('XPC_ERROR_CONNECTION_INTERRUPTED'), { reason: 'internal' }));
+    // (a validation error whose message only happens to hold the word)
+    if (d.label === 'invalid') return Promise.reject(Object.assign(new Error("unresolved value 'internalGain'"), { reason: 'validation' }));
+    return real(d);
+  };
+  const flaky = new Compute(kit, sh, { label: 'flaky', entry: 'fill', bind: { data: buffer(kit) } });
+  const invalid = new Compute(kit, sh, { label: 'invalid', entry: 'clear', bind: { data: buffer(kit) } });
+  const r = await kit.ready();
+  assert.deepEqual(r, { pipelines: 2, distinct: 2, failed: 1 });
+  assert.equal(tries.get('flaky'), 2);
+  assert.ok(flaky.pipe.pipeline && !flaky.pipe.error);
+  assert.equal(tries.get('invalid'), 1);
+  assert.ok(invalid.pipe.error && !invalid.pipe.pipeline);
+});
+
 test('kit.ready(...items) waits for those alone; kit.ready() for everything', async () => {
   const kit = fakeKit(), sh = shader('test/ready.wgsl', FILL);
   const slow = new Compute(kit, sh, { label: 'slow', entry: 'clear', bind: { data: buffer(kit) } });
