@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.17
+
+Needs weft 0.2.9. Nothing renders differently.
+
+- **`LowResVolume.dispose()`**: frees its passes and draws, its uniform buffer and its four textures.
+- **`ClipLevel.heightAt`** gives NaN, for a coarser level to answer, at a point whose tile falls outside the level's
+  window. It used to throw (`Cannot read properties of undefined (reading 'data')`).
+- **`#include "loom/recess"`**: a facade opening's depth from a flat wall. `recess` follows the view ray into an
+  opening to the back pane or a reveal (the jambs, sill and head), `recessLit` gives how much sun reaches a point in it,
+  and `recessNormal` gives a reveal's normal. A few dozen ALU.
+
 ## 0.1.16
 
 Needs weft 0.2.9. Without the new fields nothing renders differently.
