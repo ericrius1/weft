@@ -130,9 +130,8 @@ export function weft(opts: WeftOptions = {}): Plugin {
 
     const { structs: _st, ...restReflect } = s.reflect;
     const reflectExpr = `{structs:{${structEntries.join(',')}},bindings:${JSON.stringify(restReflect.bindings)},entries:${JSON.stringify(restReflect.entries)},overrides:${JSON.stringify(restReflect.overrides)}}`;
-    // Strip source-map line-run tables in production builds (files kept minimal for error labels)
     return `${imports.join('\n')}\n` +
-      `export default /*#__PURE__*/ defineShader({id:${JSON.stringify(s.id)},label:${JSON.stringify(s.label)},code:${codeExpr},files:[${JSON.stringify(s.id)}],runs:[],reflect:${reflectExpr}});\n`;
+      `export default /*#__PURE__*/ defineShader({id:${JSON.stringify(s.id)},label:${JSON.stringify(s.label)},code:${codeExpr},files:${JSON.stringify(s.files)},runs:${JSON.stringify(s.runs)},reflect:${reflectExpr}});\n`;
   };
 
   return {
