@@ -101,7 +101,7 @@ test('computes of one shader, entry, constants and layout share one compile', as
   await tick();
   assert.equal(kit.compiled.length, 3, 'one compile each for fill, fill with constants, clear — declared together');
   const r = await kit.ready();
-  assert.deepEqual(r, { pipelines: 6, distinct: 3, failed: 0 });
+  assert.deepEqual(r, { pipelines: 6, distinct: 3, failed: 0, errors: [] });
   assert.equal(kit.compiled.length, 3);
   assert.equal(kit.pipelineCache.size, 3);
   assert.ok(a.pipe.pipeline && a.pipe.pipeline === b.pipe.pipeline);
@@ -131,7 +131,7 @@ test('draws: the blend, the cull, a filtering or non-filtering sampler tell pipe
   const alpha2 = d({ label: 'alpha2', blend: { alpha: { dstFactor: 'one-minus-src-alpha', srcFactor: 'one' }, color: { dstFactor: 'one-minus-src-alpha', srcFactor: 'src-alpha' } } });
   const noCull = d({ label: 'noCull', cull: 'none' });
   const r = await pass.ready();
-  assert.deepEqual(r, { pipelines: 6, distinct: 4, failed: 0 });
+  assert.deepEqual(r, { pipelines: 6, distinct: 4, failed: 0, errors: [] });
   assert.equal(kit.compiled.length, 4);
   assert.equal(hero.pipe.pipeline, lo.pipe.pipeline);
   assert.equal(alpha.pipe.pipeline, alpha2.pipe.pipeline);
@@ -182,7 +182,7 @@ test('a failed compile fails every record sharing it, and the next one asking tr
   kit.fail.add('bad');
   const a = c('bad'), b = c('bad.too');
   const r = await kit.ready();
-  assert.deepEqual(r, { pipelines: 2, distinct: 1, failed: 2 });
+  assert.deepEqual(r, { pipelines: 2, distinct: 1, failed: 2, errors: [{ label: 'bad', message: 'bad failed to compile' }, { label: 'bad.too', message: 'bad failed to compile' }] });
   assert.deepEqual(kit.errors, ['pipeline bad', 'pipeline bad.too']);
   assert.ok(a.pipe.error && b.pipe.error && !a.pipe.pipeline);
   assert.equal(kit.pipelineCache.size, 0);
@@ -207,7 +207,7 @@ test('a compile the compiler service drops (reason internal) is asked once more;
   const flaky = new Compute(kit, sh, { label: 'flaky', entry: 'fill', bind: { data: buffer(kit) } });
   const invalid = new Compute(kit, sh, { label: 'invalid', entry: 'clear', bind: { data: buffer(kit) } });
   const r = await kit.ready();
-  assert.deepEqual(r, { pipelines: 2, distinct: 2, failed: 1 });
+  assert.deepEqual(r, { pipelines: 2, distinct: 2, failed: 1, errors: [{ label: 'invalid', message: "unresolved value 'internalGain'" }] });
   assert.equal(tries.get('flaky'), 2);
   assert.ok(flaky.pipe.pipeline && !flaky.pipe.error);
   assert.equal(tries.get('invalid'), 1);
@@ -227,10 +227,10 @@ test('kit.ready(...items) waits for those alone; kit.ready() for everything', as
   // (a run item made of passes of its own, a MipChain's: theirs)
   assert.deepEqual(pipelinesOf([{ label: 'mips', passes: [pass] }]), [draw.pipe]);
   const r = await kit.ready([fast, pass]);
-  assert.deepEqual(r, { pipelines: 2, distinct: 2, failed: 0 });
+  assert.deepEqual(r, { pipelines: 2, distinct: 2, failed: 0, errors: [] });
   assert.ok(fast.pipe.pipeline && draw.pipe.pipeline && !slow.pipe.pipeline && slow.pipe.pending);
   // (an empty list waits for nothing)
-  assert.deepEqual(await kit.ready([]), { pipelines: 0, distinct: 0, failed: 0 });
+  assert.deepEqual(await kit.ready([]), { pipelines: 0, distinct: 0, failed: 0, errors: [] });
   let all = false;
   const everything = kit.ready().then(() => { all = true; });
   await tick(); await tick();
