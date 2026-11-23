@@ -185,7 +185,7 @@ export class Kit {
   private screen: GPUTextureView | null = null;
   private resizeObs: ResizeObserver;
   private frameCb: ((t: FrameTime) => void) | null = null;
-  private lastNow = 0;
+  private lastNow_ = 0;
   private lastTick = 0;
   private ran: string[] = [];
 
@@ -561,12 +561,16 @@ export class Kit {
       // (capped: skip refreshes until a frame's worth of time has gone; a few ms of slack absorbs rAF jitter)
       if (this.maxFps > 0 && this.lastTick && now - this.lastTick < 1000 / this.maxFps - 4) { requestAnimationFrame(tick); return; }
       this.lastTick = now;
-      const dt = this.lastNow ? (now - this.lastNow) / 1000 : 1 / 60;
-      this.lastNow = now;
+      const dt = this.lastNow_ ? (now - this.lastNow_) / 1000 : 1 / 60;
+      this.lastNow_ = now;
       try { this.step(dt); } finally { requestAnimationFrame(tick); }
     };
     requestAnimationFrame(tick);
   }
+  /** the animation frame the loop last stepped on: its timestamp (ms, performance.now()'s clock, as
+   *  requestAnimationFrame hands it over). `performance.now() - kit.lastNow` inside a frame is the time the frame's
+   *  own work has taken so far. 0 before the loop's first frame, and not moved by frames stepped by hand (step) */
+  get lastNow() { return this.lastNow_; }
   /** advance one frame by hand (headless capture / fixed-step films) */
   step(dt: number) {
     if (!this.frameCb) return;
