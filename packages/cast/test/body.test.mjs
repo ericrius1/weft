@@ -2,7 +2,7 @@
 // hierarchy from each bone's parent, no human bone required; a person's file is read exactly as before.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHero, CORE } from '../dist/asset.js';
+import { parseHero, isOwnBody, CORE } from '../dist/asset.js';
 import { HeroRig } from '../dist/rig.js';
 
 /** a DNC1 file: header JSON, then verts (24 bytes each) and u32 indices */
@@ -46,4 +46,21 @@ test('a person: the CORE bones still required, parents empty', async () => {
   assert.equal(a.parents.length, 0);
   await assert.rejects(parseHero(dnc1({ char: 'p', version: 1, height: 1.7, scale: 1, bones: bones.slice(1) }), 'p'), /missing bone root/);
   await assert.rejects(parseHero(dnc1({ char: 'p', kind: 'human', version: 1, height: 1.7, scale: 1, bones: bones.slice(1) }), 'p'), /missing bone root/);
+});
+
+test("a kind that's there but empty (null, '', 0, false) is a person's, as none is", async () => {
+  const bones = CORE.map((n, i) => ({ name: n, head: [0, i * 0.05, 0], tail: [0, i * 0.05 + 0.04, 0], up: [0, 0, 1] }));
+  const plain = await parseHero(dnc1({ char: 'p', version: 1, height: 1.7, scale: 1, bones }), 'p');
+  for (const kind of [null, '', 0, false]) {
+    const a = await parseHero(dnc1({ char: 'p', kind, version: 1, height: 1.7, scale: 1, bones }), 'p');
+    assert.equal(isOwnBody(a.header), false, `kind ${JSON.stringify(kind)}`);
+    // (read as a person's: no parents of its own, the garments' bones fitted, and a rig takes it)
+    assert.equal(a.parents.length, 0);
+    assert.deepEqual(a.bones.map((b) => b.name), plain.bones.map((b) => b.name));
+    // (and its CORE bones are still asked for: before this it was read as a body of its own, and they weren't)
+    await assert.rejects(parseHero(dnc1({ char: 'p', kind, version: 1, height: 1.7, scale: 1, bones: bones.slice(1) }), 'p'), /missing bone root/);
+  }
+  assert.equal(isOwnBody({ kind: 'bird' }), true);
+  assert.equal(isOwnBody({ kind: 'human' }), false);
+  assert.equal(isOwnBody({}), false);
 });
