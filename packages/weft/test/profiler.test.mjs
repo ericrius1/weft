@@ -47,6 +47,36 @@ test('a pass unseen for `stale` frames leaves the smoothed times', async () => {
   assert.ok(p.ms.has('load.bake'));
 });
 
+test('passes past the 128 a frame has room for run untimed: counted for the frame, said once', async () => {
+  const kit = fakeKit(), p = new Profiler(kit);
+  const warned = [];
+  kit.warnOnce = (key, message) => { if (!warned.some((w) => w[0] === key)) warned.push([key, message]); };
+  const labels = Array.from({ length: 131 }, (_, i) => `pass${i}`);
+  p.beginFrame();
+  const got = labels.map((l) => p.writes(l));
+  assert.equal(got.filter(Boolean).length, 128);
+  assert.deepEqual(got.slice(128), [undefined, undefined, undefined]);
+  assert.equal(got[127].endOfPassWriteIndex, 255);
+  assert.equal(p.dropped, 3);
+  assert.equal(warned.length, 1);
+  assert.match(warned[0][1], /more than 128 timed passes.*'pass128' the first/);
+  p.resolve([]);
+  p.endFrame();
+  await tick();
+  assert.equal(p.lastMs.size, 128);
+  assert.ok(!p.lastMs.has('pass128'));
+  // (a frame within its room: none dropped, nothing more said)
+  await frame(p, ['a', 'b']);
+  assert.equal(p.dropped, 0);
+  await frame(p, labels);
+  assert.equal(p.dropped, 3);
+  assert.equal(warned.length, 1);
+  // (while it isn't timing, nothing is dropped)
+  kit.overlay.open = false;
+  await frame(p, labels);
+  assert.equal(p.dropped, 0);
+});
+
 test('timing again after a while off starts afresh', async () => {
   const kit = fakeKit(), p = new Profiler(kit);
   await frame(p, ['a', 'b']);
