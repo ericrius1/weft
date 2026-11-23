@@ -140,7 +140,7 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   deferred = false;
   /** drawn only while this says so (a scheduler holding a feature back until all of it has compiled) */
   gate: (() => boolean) | null = null;
-  /** called when its pipeline changes (a compile landing, a hot reload) */
+  /** called when its pipeline changes (a compile landing, a hot reload), or fails with none to go on with */
   changed: (() => void) | null = null;
   /** the compile it uses, shared with every record of the same descriptor */
   entry: SharedPipeline | null = null;
@@ -203,6 +203,8 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         if (b !== this.serial) return;
         this.error = (e as Error).message ?? String(e);
         this.kit.report('pipeline', this.label, this.error);
+        // (what it's baked into records again: a draw with a fallback draws that from now on)
+        if (!this._pipe) this.changed?.();
       }
     })();
     this.pending = p.finally(() => { if (this.pending === wrapped) this.pending = null; });
@@ -499,6 +501,11 @@ export interface DrawOptions<S extends Shader = Shader> {
   enabled?: boolean | (() => boolean);
   /** issue the draw calls yourself (after the pipeline and bind groups are set) */
   encode?: (pass: GPURenderPassEncoder, draw: Draw<S>) => void;
+  /** a draw to draw in this one's place while this one's pipeline has failed to compile (a plainer shader of the same
+   *  thing, in place of a hole). Declare it in the same pass (the same bundle, for a bundled draw) with `enabled:
+   *  false`, so it never draws by itself: it's drawn when this one would be (this one's `enabled`, with its own counts
+   *  and bindings), and only then. Its pipeline compiles when it's declared, like any draw's. */
+  fallback?: Draw<any>;
 }
 
 const gpuBuf = (b: unknown) => { const v = deref(b); return v instanceof StorageBuffer ? v.gpu : (v as GPUBuffer); };
@@ -593,8 +600,22 @@ export class Draw<S extends Shader = Shader> {
   encodeInto(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>) {
     // (enabled first: a compile scheduler makes a deferred pipeline on the spot when it's read)
     if (!on(this.on_)) return;
+    this.emit(enc, view, shared);
+  }
+  private falling = false;
+  // (its calls whatever its `enabled` says: a fallback is drawn when the draw it stands in for would be)
+  private emit(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>) {
     const p = this.pipe.pipeline;
-    if (!p) { this.pipe.skip(); return; }
+    if (!p) {
+      const fb = this.pipe.error ? this.opts.fallback : undefined;
+      // (none, or one that came back round to this draw: nothing to draw)
+      if (!fb || this.falling) { this.pipe.skip(); return; }
+      if (this.pipe.gate && !this.pipe.gate()) return;
+      if (this.kit.debug) this.kit.warnOnce(`fallback:${this.label}`, `${this.label}: its pipeline failed, drawing its fallback '${fb.label}'`);
+      this.falling = true;
+      try { fb.emit(enc, view, shared); } finally { this.falling = false; }
+      return;
+    }
     if (this.pipe.gate && !this.pipe.gate()) return;
     const o = this.opts;
     // (consecutive draws with one pipeline set it once)

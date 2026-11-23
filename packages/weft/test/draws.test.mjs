@@ -149,3 +149,58 @@ test('kit.ready() names what failed: errors, each with its label and message; a 
   assert.equal(bad.pipe.skipped, 1);
   assert.match(kit.warnings.get('skip:broken'), /its pipeline failed: broken failed to compile/);
 });
+
+// ---- a fallback (DrawOptions.fallback): drawn in a draw's place while that draw's pipeline has failed
+test('a fallback is drawn in place of a draw whose pipeline failed, when that draw would be, and never by itself', async () => {
+  const kit = fakeKit(), sh = shader('test/tri.wgsl', TRI);
+  kit.fail.add('terrain');
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }] });
+  const plain = pass.draw(sh, { label: 'terrain.plain', count: 6, enabled: false });
+  let shown = true;
+  const terrain = pass.draw(sh, { label: 'terrain', cull: 'none', count: 600, enabled: () => shown, fallback: plain });
+  const sound = pass.draw(sh, { label: 'sea', cull: 'front', count: 9, fallback: plain });
+  // (while it's still compiling: nothing, not the fallback)
+  const early = encoder();
+  terrain.encodeInto(early);
+  assert.deepEqual(early.calls, []);
+  await pass.ready();
+  const pe = encoder();
+  for (const d of pass.draws) d.encode(pe);
+  // (the fallback by itself: nothing; for the failed draw: its own calls; a draw that compiled: itself)
+  assert.deepEqual(pe.calls, [['setPipeline', 'terrain.plain'], ['draw', 6, 1, 0, 0], ['setPipeline', 'sea'], ['draw', 9, 1, 0, 0]]);
+  assert.equal(terrain.pipe.skipped, 1, 'only the early one: drawing its fallback is not a skip');
+  shown = false;
+  const hidden = encoder();
+  terrain.encodeInto(hidden);
+  assert.deepEqual(hidden.calls, [], 'off with the draw it stands in for');
+  void sound;
+});
+
+test('a fallback that failed too draws nothing; one in a bundle is recorded once the failure is known', async () => {
+  const kit = fakeKit(), sh = shader('test/tri.wgsl', TRI);
+  kit.fail.add('a').add('b');
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }] });
+  const b = pass.draw(sh, { label: 'b', cull: 'front', enabled: false });
+  const a = pass.draw(sh, { label: 'a', cull: 'none', fallback: b });
+  await pass.ready();
+  const pe = encoder();
+  a.encodeInto(pe);
+  assert.deepEqual(pe.calls, []);
+  assert.equal(b.pipe.skipped, 1);
+
+  // (bundled: recorded before the compile failed, then again with the fallback's calls)
+  const recorded = [];
+  kit.device.createRenderBundleEncoder = () => encoder(recorded);
+  kit.fail.add('city');
+  const bundle = pass.bundle('static');
+  const low = bundle.draw(sh, { label: 'city.low', count: 12, enabled: false });
+  bundle.draw(sh, { label: 'city', cull: 'none', count: 1200, fallback: low });
+  bundle.encode(encoder());
+  assert.deepEqual(recorded, []);
+  await bundle.ready();
+  bundle.encode(encoder());
+  assert.deepEqual(recorded, [['setPipeline', 'city.low'], ['draw', 12, 1, 0, 0]]);
+  const n = bundle.records;
+  bundle.encode(encoder());
+  assert.equal(bundle.records, n, 'replayed after that');
+});

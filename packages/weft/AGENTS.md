@@ -139,7 +139,7 @@ or a `GPUSampler` from `kit.sampler(desc)`.
 | --- | --- |
 | `kit.compute(shader, { entry, bind, constants, threads \| workgroups \| indirect, view, enabled })` | one dispatch. `threads` is divided by the shader's `@workgroup_size` for you |
 | `kit.pass({ color: [{ target, clear, resolve }], depth: { target, clear, readOnly }, view, viewport, shared, replay, enabled })` | a render pass. `target: 'screen'` is the canvas. `clear: false` loads what's there |
-| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame |
+| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled, fallback })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame. `fallback`: see Debugging |
 | `pass.fullscreen(shader, { bind, … })` | a fullscreen triangle. The shader includes `weft/fullscreen` and has a fragment entry taking `FullscreenOut` |
 | `pass.bundle(label).draw(...)` | static draws recorded once into a `GPURenderBundle` and re-recorded only when something they use changes |
 | `pass.place(anchor, 'before' \| 'after', () => { …declare… })` | the draws and bundles declared inside go next to `anchor` (a draw or bundle of the pass, or a label) in the pass's order, not at its end. Returns them |
@@ -296,6 +296,12 @@ the kit's.
 - The `label` you give a resource, pass or draw is what errors, the overlay and GPU captures show. Name things.
 - `kit.ready()` resolves to `{ pipelines, distinct, failed, errors }`, `errors` being `{ label, message }` for each
   pipeline that failed. Log it once at startup.
+- **A draw whose pipeline fails draws nothing** (a compile the browser's compiler service gave up on, after weft's
+  one retry: it has happened to a terrain's vertex shader on Metal). Where a hole would be worse than a plainer
+  picture, give the draw a fallback: `const plain = scene.draw(simple, { …, enabled: false }); scene.draw(full, { …,
+  fallback: plain })`. The fallback is declared in the same pass (the same bundle, for a bundled draw) with
+  `enabled: false`; it's drawn only while the other's pipeline has failed, and only when the other would be drawn.
+  It costs one more pipeline compile, so keep it for the few draws a view can't do without.
 - `kit.memory()` returns `{ textures, buffers, total }` in bytes. `kit.errors` holds the current errors.
 - Pictures from a headless or hidden tab: `await shot(kit, 'name')` with `shotSink({ dir })` in the Vite config, or
   `new Capture(kit)` with `cap.grab()` / `cap.step(dt)`. For films, `filmSink({ dir })` takes POSTed frames and audio.
