@@ -90,6 +90,8 @@ export declare class LavaFlow {
     private frameN;
     private bedData;
     private bufs;
+    /** freed for good (dispose) */
+    disposed: boolean;
     constructor(kit: Kit, o: LavaOptions);
     /** the land's heights at the cells (world x, z -> y): at load, and again when the land under the lava comes finer */
     setBed(height: (x: number, z: number) => number): void;
@@ -107,5 +109,10 @@ export declare class LavaFlow {
     compute(): RunEntry[];
     /** every pipeline it declared (await kit.ready(lava.pipelines) before a bake) */
     get pipelines(): RunEntry[];
+    /** free it for good (a host leaving the lava's land): its computes disposed (their pipelines leave the kit), its
+     *  buffers, its uniform and its glow texture destroyed, the bed's heights on the CPU let go. After it compute()
+     *  gives nothing to run and update() and setBed() do nothing. The host's own draws that bind its state (st, fl,
+     *  bed, lists, args, glow) are the host's to dispose, before this */
+    dispose(): void;
 }
 //# sourceMappingURL=lava.d.ts.map

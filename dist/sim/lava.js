@@ -41,6 +41,8 @@ export class LavaFlow {
     frameN = 0;
     bedData;
     bufs = [];
+    /** freed for good (dispose) */
+    disposed = false;
     constructor(kit, o) {
         this.kit = kit;
         if (o.n % TILE)
@@ -78,6 +80,8 @@ export class LavaFlow {
     }
     /** the land's heights at the cells (world x, z -> y): at load, and again when the land under the lava comes finer */
     setBed(height) {
+        if (this.disposed)
+            return;
         const N = this.n, c = this.cell, [x0, z0] = this.corner, b = this.bedData;
         for (let j = 0; j < N; j++)
             for (let i = 0; i < N; i++)
@@ -101,6 +105,8 @@ export class LavaFlow {
     /** whether (x, z) is on the grid */
     covers(x, z) { return x > this.corner[0] && z > this.corner[1] && x < this.corner[0] + this.n * this.cell && z < this.corner[1] + this.n * this.cell; }
     update(dt, eye) {
+        if (this.disposed)
+            return;
         this.t += dt;
         const sub = Math.max(1, this.substeps);
         // (each substep's dt: the frame's, sped up, split; never past what the solver stays steady at)
@@ -141,5 +147,20 @@ export class LavaFlow {
     }
     /** every pipeline it declared (await kit.ready(lava.pipelines) before a bake) */
     get pipelines() { return this.items; }
+    /** free it for good (a host leaving the lava's land): its computes disposed (their pipelines leave the kit), its
+     *  buffers, its uniform and its glow texture destroyed, the bed's heights on the CPU let go. After it compute()
+     *  gives nothing to run and update() and setBed() do nothing. The host's own draws that bind its state (st, fl,
+     *  bed, lists, args, glow) are the host's to dispose, before this */
+    dispose() {
+        if (this.disposed)
+            return;
+        this.disposed = true;
+        this.on = false;
+        this.kit.release(...this.items, this.U, this.bed, ...this.bufs, this.fl, this.probeBuf, this.glow, this.args, this.lists);
+        this.items = [];
+        this.stepItems = [];
+        this.finish = [];
+        this.bedData = new Float32Array(0);
+    }
 }
 //# sourceMappingURL=lava.js.map

@@ -118,6 +118,8 @@ export class ClipLevel {
     }
     /** whether (r, c) is still this window's, in its slot */
     wants(r, c) {
+        if (this.set.disposed)
+            return false;
         const n = this.n, s = this.slots[(r % n) * n + (c % n)];
         return s.r === r && s.c === c;
     }
@@ -317,6 +319,8 @@ export class ClipSet {
     ahead = 0;
     aheadAt = 0;
     dest = 0;
+    /** freed for good (dispose) */
+    disposed = false;
     constructor(kit, stream, heightWindow, colorWindow) {
         this.kit = kit;
         this.stream = stream;
@@ -350,9 +354,29 @@ export class ClipSet {
         return set;
     }
     get levels() { return [...this.h, ...this.c, this.m].filter((l) => !!l); }
+    /** free it for good (a world leaving this land): its three textures destroyed, the tiles waiting for their upload
+     *  let go, and with its levels the heights it kept on the CPU. Tiles still being fetched or decoded are dropped as
+     *  they land (no level wants them any more: the streamer is given Infinity for their priority). After it follow()
+     *  does nothing, heightAt() answers as where no level is in, and fill() writes empty levels. What binds its
+     *  textures (a shared group, a terrain's draws) is the world's to rebind or dispose, before this */
+    dispose() {
+        if (this.disposed)
+            return;
+        this.disposed = true;
+        for (const j of this.ready)
+            j.drop?.();
+        this.ready = [];
+        this.h.length = 0;
+        this.c.length = 0;
+        this.m = null;
+        this.changed.length = 0;
+        this.kit.release(this.heights, this.colors, this.mats);
+    }
     /** each frame: the windows follow the camera, the decoded tiles go up (within the frame's allowance), the fades
      *  move on; and the road ahead of a fast camera prefetched */
     follow(x, z) {
+        if (this.disposed)
+            return;
         for (const l of this.levels)
             l.follow(x, z);
         const now = performance.now(), dt = Math.min(0.1, (now - this.lastTick) / 1000);
@@ -447,6 +471,10 @@ export class ClipSet {
         });
     }
     queue(level, r, c, bytes, put, drop) {
+        if (this.disposed) {
+            drop?.();
+            return;
+        }
         this.ready.push({ level, r, c, bytes, put, drop, since: performance.now() });
     }
     /** the decoded tiles up, nearest the view first, as many as the frame's allowance takes; a slot whose old tile's

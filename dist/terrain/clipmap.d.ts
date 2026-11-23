@@ -166,10 +166,18 @@ export declare class ClipSet {
     private ahead;
     private aheadAt;
     private dest;
+    /** freed for good (dispose) */
+    disposed: boolean;
     constructor(kit: Kit, stream: ClipStream, heightWindow: number, colorWindow: number);
     /** the textures and every level, once the packs' indexes are in (a pack that isn't there: its level left out) */
     static create(kit: Kit, stream: ClipStream, heightWindow: number, colorWindow: number, o: ClipOptions): Promise<ClipSet>;
     get levels(): ClipLevel[];
+    /** free it for good (a world leaving this land): its three textures destroyed, the tiles waiting for their upload
+     *  let go, and with its levels the heights it kept on the CPU. Tiles still being fetched or decoded are dropped as
+     *  they land (no level wants them any more: the streamer is given Infinity for their priority). After it follow()
+     *  does nothing, heightAt() answers as where no level is in, and fill() writes empty levels. What binds its
+     *  textures (a shared group, a terrain's draws) is the world's to rebind or dispose, before this */
+    dispose(): void;
     /** each frame: the windows follow the camera, the decoded tiles go up (within the frame's allowance), the fades
      *  move on; and the road ahead of a fast camera prefetched */
     follow(x: number, z: number): void;
