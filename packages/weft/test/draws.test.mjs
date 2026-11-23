@@ -150,6 +150,27 @@ test('kit.ready() names what failed: errors, each with its label and message; a 
   assert.match(kit.warnings.get('skip:broken'), /its pipeline failed: broken failed to compile/);
 });
 
+test("a disposed draw's failure leaves kit.errors with it, unless another of its label failed too", async () => {
+  const kit = fakeKit(), sh = shader('test/tri.wgsl', TRI);
+  kit.fail.add('broken').add('twin');
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }] });
+  const bad = pass.draw(sh, { label: 'broken', cull: 'none' });
+  const fine = pass.draw(sh, { label: 'fine' });
+  const twins = [pass.draw(sh, { label: 'twin', cull: 'front' }), pass.draw(sh, { label: 'twin', topology: 'line-list' })];
+  await kit.ready();
+  assert.deepEqual([...kit.errors.keys()].sort(), ['pipeline:broken', 'pipeline:twin']);
+  fine.dispose();
+  assert.equal(kit.errors.size, 2);
+  bad.dispose();
+  assert.deepEqual([...kit.errors.keys()], ['pipeline:twin']);
+  assert.equal((await kit.ready()).failed, 2);
+  twins[0].dispose();
+  assert.deepEqual([...kit.errors.keys()], ['pipeline:twin'], 'the other twin has failed too');
+  twins[1].dispose();
+  assert.equal(kit.errors.size, 0);
+  assert.deepEqual(await kit.ready(), { pipelines: 0, distinct: 0, failed: 0, errors: [] });
+});
+
 // ---- a fallback (DrawOptions.fallback): drawn in a draw's place while that draw's pipeline has failed
 test('a fallback is drawn in place of a draw whose pipeline failed, when that draw would be, and never by itself', async () => {
   const kit = fakeKit(), sh = shader('test/tri.wgsl', TRI);

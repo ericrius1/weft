@@ -120,7 +120,7 @@ is loom's renderer with TAAU, irradiance probes and a thousand lights, and `benc
 | call | what | notes |
 | --- | --- | --- |
 | `kit.uniforms(shader.structs.S, label?)` | `UniformBuffer` laid out from WGSL | `.set({ field })` writes only those fields, nested partials OK; it's uploaded at the start of the next `kit.run` |
-| `kit.storage({ count, stride \| struct, size, usage, data, label })` | `StorageBuffer` | `.write(data, offset)`, `.ensure(bytes)` grows it (contents are lost, bind groups follow), `.read()` returns the contents to the CPU |
+| `kit.storage({ count, stride \| struct, size, usage, data, label })` | `StorageBuffer` | `.write(data, offset)` (what fits, in whole 4-byte words: a write cut short warns once per buffer, so `ensure` first and pad odd byte counts), `.ensure(bytes)` grows it (contents are lost, bind groups follow), `.read()` returns the contents to the CPU |
 | `kit.texture({ format, size, scale, mips, samples, usage, dimension, view, label })` | `Texture` | `size: [w, h]`, `[w, h, layers]`, `'render'` or `'canvas'` (times `scale`); `mips: 'full'`; `.write`, `.writeImage`, `.readTexel(x, y)`, `.mip(n)` → `TexView` |
 | `kit.pingpong((i) => make(i))` | `PingPong` | bind `.read` / `.write` (Refs); put `.swap` in the run list |
 | `new StructArray(shader.structs.S, n)` | instance data in one ArrayBuffer | `arr.set(i, { … })`, then `buf.write(arr.data)`, using the struct's real stride |

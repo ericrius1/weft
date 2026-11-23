@@ -272,6 +272,13 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
     this.serial++;
     this.leave();
     this.changed = null;
+    // (its failure goes with it: kit.errors and the overlay showed a draw that's no longer there — unless another
+    // record of the same label has failed too, and the error is as much that one's)
+    if (this.error) {
+      const label = this.label;
+      this.error = null;
+      if (!list.some((p) => p.label === label && p.error)) this.kit.clearError(label);
+    }
   }
 }
 

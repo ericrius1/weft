@@ -101,6 +101,9 @@ export class StorageBuffer implements Resource {
   stride: number;
   label: string;
   readonly usage: number;
+  /** freed for good (destroy) */
+  destroyed = false;
+  private cutSaid = 0;
   constructor(private kit: Kit, o: StorageOptions) {
     this.label = o.label ?? 'storage';
     this.stride = o.stride ?? (o.struct ? Math.ceil(o.struct.size / o.struct.align) * o.struct.align : 4);
@@ -118,14 +121,37 @@ export class StorageBuffer implements Resource {
     this.size = Math.max(16, Math.ceil(size / 16) * 16);
     this.gpu = this.kit.device.createBuffer({ label: this.label, size: this.size, usage: this.usage });
   }
+  /** upload `data` at `byteOffset`: what fits, in whole 4-byte words (the GPU takes no less). Data past the buffer's
+   *  end, or a last 1-3 bytes short of a word, is left out: said once per buffer (grow it first with ensure(), pad
+   *  the data to a multiple of 4) */
   write(data: ArrayBufferView | ArrayBuffer, byteOffset = 0) {
     const view = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    const n = Math.min(view.byteLength, this.size - byteOffset) & ~3;
+    const room = this.size - byteOffset, n = Math.min(view.byteLength, room) & ~3;
+    if (n !== view.byteLength) {
+      // (said once a buffer and a kind: a flag here first, so a write that's cut every frame makes no string)
+      const past = view.byteLength > room, bit = past ? 1 : 2;
+      if (!(this.cutSaid & bit)) {
+        this.cutSaid |= bit;
+        if (past) this.kit.warnOnce(`write-past:${this.label}`, `${this.label}: a write of ${view.byteLength} bytes at ${byteOffset} runs past its ${this.size} bytes: only ${Math.max(0, n)} written (ensure() it first)`);
+        else this.kit.warnOnce(`write-odd:${this.label}`, `${this.label}: a write of ${view.byteLength} bytes isn't a multiple of 4: its last ${view.byteLength - n} left out (pad the data)`);
+      }
+    }
     if (n > 0) this.kit.queue.writeBuffer(this.gpu, byteOffset, view.buffer, view.byteOffset, n);
     return this;
   }
   /** grow (contents are not kept); bind groups follow automatically */
   ensure(bytes: number) {
+    if (this.destroyed) {
+      // (freed for good, then asked for again: made anew — and counted again by the kit, which the buffer it made
+      // before this was not — but an app that frees a buffer shouldn't still be using it)
+      this.kit.warnOnce(`ensure-freed:${this.label}`, `${this.label}: ensure() after destroy(): made again, ${Math.max(bytes, this.size)} bytes`);
+      this.destroyed = false;
+      this.alloc(Math.max(bytes, this.size));
+      this.count = Math.floor(this.size / this.stride);
+      this.kit.buffers.add(this);
+      this.version++;
+      return true;
+    }
     if (bytes <= this.size) return false;
     this.gpu.destroy();
     this.alloc(Math.max(bytes, this.size * 2));
@@ -148,6 +174,7 @@ export class StorageBuffer implements Resource {
   /** free it for good */
   destroy() {
     this.gpu.destroy();
+    this.destroyed = true;
     this.kit.buffers.delete(this);
   }
 }
