@@ -163,7 +163,7 @@ export class Kit {
   /** pixel x, y and buttons of the pointer over the canvas */
   mouse: [number, number, number, number] = [0, 0, 0, 0];
   debug: boolean;
-  /** stop the rAF loop (headless capture drives frames with tick()) */
+  /** stop the rAF loop (headless capture drives frames with step(dt)) */
   manual = false;
   /** cap the loop's rate (0: every animation frame). 30 on a 60 Hz display renders every other refresh */
   maxFps = 0;

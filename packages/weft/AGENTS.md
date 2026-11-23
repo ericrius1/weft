@@ -139,13 +139,30 @@ or a `GPUSampler` from `kit.sampler(desc)`.
 | --- | --- |
 | `kit.compute(shader, { entry, bind, constants, threads \| workgroups \| indirect, view, enabled })` | one dispatch. `threads` is divided by the shader's `@workgroup_size` for you |
 | `kit.pass({ color: [{ target, clear, resolve }], depth: { target, clear, readOnly }, view, viewport, shared, replay, enabled })` | a render pass. `target: 'screen'` is the canvas. `clear: false` loads what's there |
-| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled, fallback })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame. `fallback`: see Debugging |
+| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled, fallback })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame. `fallback`: see Debugging. `alphaToCoverage`, `writeMask`, `vertexBuffers`: below the table |
 | `pass.fullscreen(shader, { bind, … })` | a fullscreen triangle. The shader includes `weft/fullscreen` and has a fragment entry taking `FullscreenOut` |
 | `pass.bundle(label).draw(...)` | static draws recorded once into a `GPURenderBundle` and re-recorded only when something they use changes |
 | `pass.place(anchor, 'before' \| 'after', () => { …declare… })` | the draws and bundles declared inside go next to `anchor` (a draw or bundle of the pass, or a label) in the pass's order, not at its end. Returns them |
 | `kit.copy(src, dst)`, `kit.raw(enc => …)`, `kit.action(() => …)`, `pingpong.swap` | a copy, raw encoder access, and a CPU step at that point in the list |
 | `new MipChain(kit, tex)` | fills a texture's mips |
 | `new Taau(kit, hdr, depth, opts)` | temporal AA and upscaling. Run `taau.items`, then read `taau.out`. `opts.motion`: the moving draws' own motion (Recipes) |
+
+Three more draw options, less often needed:
+
+- `alphaToCoverage: true` turns a fragment's alpha into MSAA coverage (leaves, hair, fences: soft edges with depth
+  writes and no sorting). It needs a multisampled pass; on a one-sample pass (a phone's) the draw is made without it.
+  A fragment shader that declares `override ALPHA_TO_COVERAGE: bool = true;` is told which it got (weft sets the
+  constant per pipeline unless the draw's `constants` does), so it can cut out by alpha itself where it's off:
+  `if (!ALPHA_TO_COVERAGE && a < 0.5) { discard; }`. For a shader that doesn't declare it, weft warns once that
+  the draw is made without.
+- `writeMask` is the colour write mask: one number for every target or a list, one per target (`GPUColorWrite` bits:
+  red 1, green 2, blue 4, alpha 8; default 15). `writeMask: 0` with depth writes on is a depth-only draw that keeps
+  its fragment shader (for `discard`). A target the fragment entry has no output for gets 0 without your asking.
+- `vertexBuffers: [{ layout, buffer, offset? }]` binds real vertex buffers, slot by slot, for a shader that takes
+  `@location` attributes: `layout` is a `GPUVertexBufferLayout` (`arrayStride`, `stepMode`, `attributes`), `buffer`
+  a `StorageBuffer` made with `usage: ['vertex', 'copy-dst']`, a `GPUBuffer` or a `Ref`. The layouts are part of the
+  pipeline; the buffers can be swapped (through a `Ref`) without a recompile. Meshes from `MeshBuilder` don't use
+  this: they're pulled from a storage buffer by `vertex_index`.
 
 Every item accepts `enabled: boolean | () => boolean`. Prefer that over rebuilding the run list. Draws and computes
 have `.set(name, value)` to rebind one resource later (the layout stays the same), `.ready()` to wait for their own
@@ -196,6 +213,12 @@ the kit's.
   on the exact text), so a comment, an unused function or a new field in a shared include no longer recompiles every
   shader that includes it. A code line that's kept is kept exactly, so a runtime `code.replace` of a whole line still
   works. `weft({ lean: false })` sends the whole text.
+- **Grow a uniform struct at its end.** A field added after the last one leaves every earlier field's offset where it
+  was (WGSL lays a struct out front to back), and leaves the lean code of every shader that doesn't read the new
+  field exactly as it was (the struct is cut after the last field a shader reads), so nothing recompiles but the
+  shaders that use it. A field put in the middle moves what follows it, and each shader reading past it gets new
+  code. Renaming a field a shader doesn't read changes nothing for that shader either. This holds for a struct used
+  only as a uniform: one in an array or a storage buffer is sent whole, and a new field changes its stride.
 - **Chrome keeps ~6 MB of compiled pipelines per site.** Past that, every load evicts what the next one needs and
   compiles it again (San Francisco's load writes ~21 MB: each warm desktop load recompiled ~100 pipelines). What fills
   it: each pipeline's generated code, so every override variant and every shared function a shader reaches counts.
@@ -436,8 +459,9 @@ feature without any error.
   Point lights are set with `r.setPointLights(list, camPos)`.
 - Other modules are imported by path: `@ericrius1/loom/terrain/clipmap`, `world/forest`, `weather/rainfall`,
   `render/volume`, `render/film`, `render/clouds`, `destruct/rubble`, `physics/box3d`, `audio` (a procedural Web Audio
-  engine: `audio.bus('sfx' | 'music' | 'amb')`), `camera/autopilot`, `particles`. Each module's header comment explains
-  how to use it.
+  engine: `audio.bus('sfx' | 'music' | 'amb')`), `camera/autopilot`, `particles`, `sim/lava` (lava flowing over a
+  heightfield, stepped on the GPU: `LavaFlow`; a host's own shader draws it with `#include "loom/lava_common"`).
+  Each module's header comment explains how to use it.
 
 ## cast: characters
 
