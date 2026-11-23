@@ -86,15 +86,17 @@ export class View {
     this.updatedFrame = k.frameIndex;
     const c = this.camera, w = this.width, h = this.height;
     c.update(w, h);
-    this.frame.set({
-      viewProj: c.viewProj, view: c.view, proj: c.proj, invViewProj: c.invViewProj, invProj: c.invProj, invView: c.invView,
-      prevViewProj: c.prevViewProj, camPos: c.position, time: k.time, camFwd: c.forward, dt: k.dt, camRight: c.right,
-      near: c.near, camUp: c.up, frame: k.frameIndex, res: [w, h], invRes: [1 / w, 1 / h], jitter: c.jitter, fovY: c.fovY,
-      aspect: w / h, mouse: k.mouse, user: this.user,
-      viewProjRel: c.viewProjRel, invViewProjRel: c.invViewProjRel, prevViewProjRel: c.prevViewProjRel, camLo: c.camLo,
-      jitterNdc: c.jitterNdc,
-    });
+    // (one object for the view's life, refilled: set() copies the values out, and a view a frame makes no garbage)
+    const v = this.vals;
+    v.viewProj = c.viewProj; v.view = c.view; v.proj = c.proj; v.invViewProj = c.invViewProj; v.invProj = c.invProj; v.invView = c.invView;
+    v.prevViewProj = c.prevViewProj; v.camPos = c.position; v.time = k.time; v.camFwd = c.forward; v.dt = k.dt; v.camRight = c.right;
+    v.near = c.near; v.camUp = c.up; v.frame = k.frameIndex; v.res[0] = w; v.res[1] = h; v.invRes[0] = 1 / w; v.invRes[1] = 1 / h;
+    v.jitter = c.jitter; v.fovY = c.fovY; v.aspect = w / h; v.mouse = k.mouse; v.user = this.user;
+    v.viewProjRel = c.viewProjRel; v.invViewProjRel = c.invViewProjRel; v.prevViewProjRel = c.prevViewProjRel; v.camLo = c.camLo;
+    v.jitterNdc = c.jitterNdc;
+    this.frame.set(v as never);
   }
+  private vals: Record<string, unknown> & { res: [number, number]; invRes: [number, number] } = { res: [0, 0], invRes: [0, 0] };
   /** its group-0 bind group (made again only when the Frame buffer or the globals change) */
   group0(): GPUBindGroup {
     const g = this.globals ?? this.kit.globals, gv = g ? g.version : 0;

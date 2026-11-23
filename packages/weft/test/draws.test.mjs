@@ -132,6 +132,37 @@ test('skips are counted without debug, but nothing is said; a compute is the sam
   assert.equal(c.pipe.skipped, 1);
 });
 
+test("a compute's dispatch: threads over the entry's workgroup size (rounded up), or workgroups as given; none for a count of 0", async () => {
+  const kit = fakeKit();
+  const sh = shader('test/grid.wgsl', `
+@group(1) @binding(0) var<storage, read_write> data: array<f32>;
+@compute @workgroup_size(8, 4) fn grid(@builtin(global_invocation_id) id: vec3u) { data[id.x] = 1.0; }
+@compute @workgroup_size(64) fn row(@builtin(global_invocation_id) id: vec3u) { data[id.x] = 2.0; }`);
+  const data = new StorageBuffer(kit, { size: 256 });
+  let n = [20, 9];
+  const made = [
+    new Compute(kit, sh, { label: 'a', entry: 'grid', bind: { data }, threads: () => n }),
+    new Compute(kit, sh, { label: 'b', entry: 'grid', bind: { data }, threads: [16, 8, 3] }),
+    new Compute(kit, sh, { label: 'c', entry: 'row', bind: { data }, threads: [65] }),
+    new Compute(kit, sh, { label: 'd', entry: 'row', bind: { data }, workgroups: [3, 2] }),
+    new Compute(kit, sh, { label: 'e', entry: 'row', bind: { data }, workgroups: () => [5, 1, 7] }),
+    new Compute(kit, sh, { label: 'f', entry: 'row', bind: { data } }),
+    new Compute(kit, sh, { label: 'g', entry: 'row', bind: { data }, workgroups: [0, 4] }),
+    new Compute(kit, sh, { label: 'h', entry: 'row', bind: { data }, threads: [0] }),
+  ];
+  await kit.ready();
+  assert.deepEqual(made[0].workgroupSize, [8, 4, 1]);
+  assert.deepEqual(made[2].workgroupSize, [64, 1, 1]);
+  const ran = [];
+  for (const c of made) c.encode(commands(ran));
+  assert.deepEqual(ran, [[3, 3, 1], [2, 2, 3], [2, 1, 1], [3, 2, 1], [5, 1, 7], [1, 1, 1]]);
+  // (asked each frame)
+  n = [8, 4];
+  ran.length = 0;
+  made[0].encode(commands(ran));
+  assert.deepEqual(ran, [[1, 1, 1]]);
+});
+
 test('kit.ready() names what failed: errors, each with its label and message; a failed draw says so when skipped', async () => {
   const kit = fakeKit(), sh = shader('test/tri.wgsl', TRI);
   kit.debug = true;

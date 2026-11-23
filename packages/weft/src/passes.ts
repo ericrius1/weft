@@ -384,6 +384,7 @@ export class Compute<S extends Shader = Shader> implements RunItem {
   /** recompute bindings + pipeline (hot reload) */
   rebuild() {
     try {
+      this.wgSize = null;
       this.entry = pickEntry(this.shader, 'compute', this.opts.entry, this.label);
       this.binder.entries = [this.entry];
       this.binder.build();
@@ -391,7 +392,9 @@ export class Compute<S extends Shader = Shader> implements RunItem {
     } catch (e) { this.kit.report('bind', this.label, (e as Error).message); }
   }
   set(name: keyof NonNullable<ComputeOptions<S>['bind']> & string, value: Bindable) { this.binder.set(name, value); return this; }
-  get workgroupSize() { return this.shader.reflect.entries.find((e) => e.name === this.entry)?.workgroupSize ?? [1, 1, 1]; }
+  /** its entry's @workgroup_size (looked up when it's declared and when its shader changes, not every frame) */
+  get workgroupSize() { return (this.wgSize ??= this.shader.reflect.entries.find((e) => e.name === this.entry)?.workgroupSize ?? [1, 1, 1]); }
+  private wgSize: number[] | null = null;
   encode(enc: GPUCommandEncoder, ts?: GPUComputePassTimestampWrites) {
     const p = this.pipe.pipeline;
     if (!p) { this.pipe.skip(); return; }
@@ -404,12 +407,15 @@ export class Compute<S extends Shader = Shader> implements RunItem {
       const b = deref(o.indirect.buffer);
       pass.dispatchWorkgroupsIndirect(b instanceof StorageBuffer ? b.gpu : (b as GPUBuffer), o.indirect.offset ?? 0);
     } else {
-      let wg: number[];
+      let x = 1, y = 1, z = 1;
       if (o.threads) {
         const t = vals(o.threads), s = this.workgroupSize;
-        wg = [Math.ceil(t[0] / s[0]), Math.ceil((t[1] ?? 1) / s[1]), Math.ceil((t[2] ?? 1) / s[2])];
-      } else wg = o.workgroups ? vals(o.workgroups) : [1];
-      if (wg[0] > 0 && (wg[1] ?? 1) > 0 && (wg[2] ?? 1) > 0) pass.dispatchWorkgroups(wg[0], wg[1] ?? 1, wg[2] ?? 1);
+        x = Math.ceil(t[0] / s[0]); y = Math.ceil((t[1] ?? 1) / s[1]); z = Math.ceil((t[2] ?? 1) / s[2]);
+      } else if (o.workgroups) {
+        const w = vals(o.workgroups);
+        x = w[0]; y = w[1] ?? 1; z = w[2] ?? 1;
+      }
+      if (x > 0 && y > 0 && z > 0) pass.dispatchWorkgroups(x, y, z);
     }
     pass.end();
   }
@@ -780,8 +786,7 @@ export class RenderPass implements RunItem {
   private attachView(t: Target): GPUTextureView {
     if (t === 'screen') return this.kit.screenView();
     const v = deref(t);
-    if (v instanceof Texture) return v.view({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 });
-    if (v instanceof TexView) return v.texture.view({ ...v.desc, dimension: '2d' });
+    if (v instanceof Texture || v instanceof TexView) return v.attachment;
     throw new BindError(`${this.label}: bad attachment`);
   }
   encode(enc: GPUCommandEncoder, ts?: GPURenderPassTimestampWrites) {

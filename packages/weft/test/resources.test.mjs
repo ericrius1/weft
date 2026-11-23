@@ -20,6 +20,45 @@ function fakeKit() {
   return kit;
 }
 
+test("a texture's view as an attachment is made once, and again when the texture is reallocated", async () => {
+  const { Texture } = await import('../dist/src/resources.js');
+  const views = [];
+  const kit = {
+    size: { render: [640, 360], canvas: [640, 360] }, features: new Set(), resourceGen: 0, textures: new Set(),
+    device: { createTexture: (d) => ({ ...d, destroy() {}, createView: (v) => { const view = { of: d.size.join('x'), ...v }; views.push(view); return view; } }) },
+  };
+  const hdr = new Texture(kit, { label: 'hdr', format: 'rgba16float', size: 'render' });
+  const a = hdr.attachment;
+  assert.equal(hdr.attachment, a);
+  assert.equal(views.length, 1);
+  assert.deepEqual([a.dimension, a.baseMipLevel, a.mipLevelCount, a.baseArrayLayer, a.arrayLayerCount], ['2d', 0, 1, 0, 1]);
+  // (the same view a pass got before: Texture.view's, by its description)
+  assert.equal(hdr.view({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 }), a);
+  // (one layer of an array, as a TexView)
+  const cascades = new Texture(kit, { label: 'cascades', format: 'depth32float', size: [512, 512, 4] });
+  const layer = cascades.layer(2), la = layer.attachment;
+  assert.equal(layer.attachment, la);
+  assert.deepEqual([la.dimension, la.baseArrayLayer, la.arrayLayerCount], ['2d', 2, 1]);
+  assert.equal(cascades.view({ ...layer.desc, dimension: '2d' }), la);
+  const made = views.length;
+  for (let i = 0; i < 5; i++) { void hdr.attachment; void layer.attachment; }
+  assert.equal(views.length, made, 'asked every frame, made once');
+  // (a resize: the texture is new, and so are its views)
+  kit.size.render = [1280, 720];
+  assert.equal(hdr.alloc(), true);
+  const b = hdr.attachment;
+  assert.notEqual(b, a);
+  assert.equal(b.of, '1280x720x1');
+  assert.equal(hdr.attachment, b);
+  // (a TexView follows its texture's reallocation)
+  const half = new Texture(kit, { label: 'half', format: 'rgba16float', size: 'render', scale: 0.5, mips: 2 });
+  const mip = half.mip(1), m0 = mip.attachment;
+  kit.size.render = [640, 360];
+  half.alloc();
+  assert.notEqual(mip.attachment, m0);
+  assert.equal(mip.attachment.of, '320x180x1');
+});
+
 test('a write that fits, in whole words, says nothing', () => {
   const kit = fakeKit(), b = kit.storage({ label: 'cells', size: 64 });
   b.write(new Float32Array(16));
