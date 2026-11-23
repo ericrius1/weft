@@ -10,7 +10,9 @@ the package as `node_modules/@ericrius1/weft/AGENTS.md`.
   character runtime. `examples/lab` holds the pages that exercise them (`npm run dev`; `WEFT_SRC=1` runs them on the
   kit's source).
 - Build with `npm run build`. Test with `npm test -w @ericrius1/weft` and `npm test -w @ericrius1/cast`. CI runs both
-  before it writes the dist branches.
+  before it writes the dist branches. The tests run against each package's `dist/`: `npm test` builds the package
+  first when its source is newer than its `dist/` (`tools/dist-fresh.mjs`, each package's `pretest`), but
+  `node --test test/x.test.mjs` by hand does not, so build before that.
 - A change ships when it's pushed to `main`. `.github/workflows/dist.yml` commits each package to `dist/weft`,
   `dist/loom` and `dist/cast`, and every project's `tools/engine-latest.mjs` picks the change up on its next dev
   server or build. So test what you push, bump the package's `version`, and add an entry to its `CHANGELOG.md`.
