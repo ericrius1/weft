@@ -263,7 +263,9 @@ the kit's.
 8. **WebKit (every iPhone browser) compiles pipelines one at a time.** Asking for hundreds at once froze an iPhone for
    about 10 s. While building a world there, set `kit.compiler = new SerialCompiler(kit)` (when `isWebKit()`), and
    put back the previous compiler after `await kit.ready()`; call `compiler.urge(rec)` to promote a nearby site's
-   pipelines ahead of background compiles. Don't trust its GPU timestamps: `FrameBudget` paces by frame intervals
+   pipelines ahead of background compiles. An ask whose compile is already made or started (made on the spot, or a
+   twin of a draw that shares its pipeline) is settled without spending a frame; a scheduler of your own gets the
+   same from `compile(rec, start, asked)`'s third argument: when `asked()` is true, `start()` asks the GPU nothing. Don't trust its GPU timestamps: `FrameBudget` paces by frame intervals
    instead. On macOS Metal, Tint copies runtime-indexed function-local constant tables into thread memory, which can
    stall or interrupt Metal's compiler service — keep large lookup tables in storage or uniform buffers.
 9. **`r32float` textures are unfilterable** unless the device has `float32-filterable`, which weft requests when it's

@@ -50,8 +50,11 @@ type AnyPipeline = GPURenderPipeline | GPUComputePipeline;
  *  all of them. */
 export interface Compiler {
   readonly holding: boolean;
-  /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result */
-  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>): Promise<unknown>;
+  /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result. `asked`
+   *  says whether the GPU has nothing more to be asked for it — its compile made on the spot meanwhile, or already
+   *  started by a record sharing it: start() then only hands that one's result on, so a scheduler needn't spend a turn
+   *  on it */
+  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>, asked?: () => boolean): Promise<unknown>;
   /** `rec` is needed now: make it on the spot (rec.makeNow with kit.moduleNow) */
   now(rec: AnyPipelineRecord): void;
 }
@@ -105,6 +108,8 @@ export class SharedPipeline {
   readonly done: Promise<AnyPipeline>;
   /** its compile, started by the first of its records' asks let through (nothing once it's landed) */
   start: () => Promise<AnyPipeline> = () => Promise.reject(new Error('no compile'));
+  /** start() has been called: the GPU has been asked for it (calling it again asks nothing more) */
+  asked = false;
   private settle!: { ok: (p: AnyPipeline) => void; fail: (e: unknown) => void };
   constructor(readonly key: string) {
     this.done = new Promise<AnyPipeline>((ok, fail) => { this.settle = { ok, fail }; });
@@ -222,7 +227,7 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         const made = this.started = e = new SharedPipeline(key);
         kit.pipelineCache.set(key, made);
         let p: Promise<AnyPipeline> | null = null;
-        made.start = () => (p ??= made.pipeline
+        made.start = () => (made.asked = true) && (p ??= made.pipeline
           ? Promise.resolve(made.pipeline)
           : (makePipeline(kit, desc, module, true) as Promise<AnyPipeline>).catch((err) => {
             // Retry once on transient compiler-service failures (e.g. Metal XPC_ERROR_CONNECTION_INTERRUPTED). A
@@ -248,7 +253,7 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   /** ask for its compile (through the compile scheduler, if there's one): whichever ask is let through first starts it */
   private ask(e: SharedPipeline) {
     const kit = this.kit, c = kit.compiler, t0 = performance.now();
-    new Promise((r) => r(c ? c.compile(this.self, e.start) : e.start())).then(
+    new Promise((r) => r(c ? c.compile(this.self, e.start, () => e.asked || !!e.pipeline) : e.start())).then(
       (pipe) => { if (!e.pipeline) e.ms = performance.now() - t0; e.land(pipe as AnyPipeline); },
       (err) => { e.failed(err); if (kit.pipelineCache.get(e.key) === e) kit.pipelineCache.delete(e.key); });
   }

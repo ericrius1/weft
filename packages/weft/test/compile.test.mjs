@@ -59,3 +59,51 @@ test('urge() promotes a queued pipeline ahead of background compiles', async () 
   assert.deepEqual(order, ['a', 'd', 'b', 'c']);
   assert.equal(c.stats.urged, 1);
 });
+
+/** count the frames waited for while `fn` runs (animation frames stood in for by immediates) */
+async function framesDuring(fn) {
+  let frames = 0;
+  const was = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (cb) => { frames++; setImmediate(cb); };
+  try { await fn(); } finally { globalThis.requestAnimationFrame = was; }
+  return frames;
+}
+
+test('an ask whose compile is already made or started is settled without waiting a frame', async () => {
+  const c = new SerialCompiler({ moduleNow: () => null });
+  const made = new Set();
+  const start = (name) => async () => { made.add(name); return name; };
+  const frames = await framesDuring(async () => {
+    const ps = [];
+    for (let i = 0; i < 50; i++) ps.push(c.compile({}, start(`p${i}`), () => made.has(`p${i}`)));
+    // (as when they're needed before their turn: every one but the first and the last made on the spot)
+    for (let i = 1; i < 49; i++) made.add(`p${i}`);
+    assert.deepEqual(await Promise.all(ps), Array.from({ length: 50 }, (_, i) => `p${i}`));
+  });
+  assert.equal(frames, 2, 'a frame each for the two the GPU was asked for, none for the 48 already made');
+  assert.deepEqual([c.stats.compiled, c.stats.spared], [2, 48]);
+});
+
+test("records sharing one compile cost one turn, and one made on the spot none: the scheduler's queue with real records", async () => {
+  const { fakeKit, shader, TRI } = await import('./fakekit.mjs');
+  const { RenderPass } = await import('../dist/src/passes.js');
+  const kit = fakeKit(), sh = shader('test/compile-tri.wgsl', TRI);
+  const c = kit.compiler = new SerialCompiler(kit);
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }] });
+  const frames = await framesDuring(async () => {
+    // (twelve draws of one descriptor, labels aside: one compile between them; and four of their own)
+    for (let i = 0; i < 12; i++) pass.draw(sh, { label: `twin${i}` });
+    const own = ['none', 'front'].flatMap((cull) => [pass.draw(sh, { label: `own.${cull}`, cull }), pass.draw(sh, { label: `strip.${cull}`, cull, topology: 'triangle-strip' })]);
+    // (their modules made, their asks queued: then two of the four are needed at once)
+    await new Promise((r) => setImmediate(r));
+    c.now(own[2].pipe);
+    c.now(own[3].pipe);
+    const r = await kit.ready();
+    assert.deepEqual([r.pipelines, r.distinct, r.failed], [16, 5, 0]);
+  });
+  assert.equal(c.stats.now, 2);
+  assert.equal(c.stats.compiled, 3, 'the twins once, and the two not made on the spot');
+  assert.equal(c.stats.compiled + c.stats.spared, 16);
+  assert.equal(frames, 3, 'a frame for each compile asked of the GPU, none for the rest');
+  assert.equal(kit.compiled.length, 5);
+});
