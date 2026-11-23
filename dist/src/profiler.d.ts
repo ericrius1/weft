@@ -27,6 +27,9 @@ export declare class Profiler {
     trusted: boolean;
     /** the time between frames (ms, smoothed), by the clock: what a frame's GPU time is held against */
     wallMs: number;
+    /** timed passes this frame (since its beginFrame) that ran untimed, past the 128 a frame has room for: their time
+     *  is in none of the numbers, the frame's totals included. Warned of once */
+    dropped: number;
     private lastBegin;
     private judged;
     private implausible;

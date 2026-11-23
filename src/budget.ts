@@ -92,7 +92,7 @@ export class FrameBudget extends AutoResolution {
     if (!gap || gap > 250) return;
     const target = 1000 / (kit.maxFps > 0 ? kit.maxFps : 60);
     // (a frame the CPU made late isn't helped by fewer pixels: the step's own time, from its animation frame)
-    const cpu = now - ((kit as unknown as { lastNow?: number }).lastNow ?? now);
+    const cpu = now - (kit.lastNow ?? now);
     const late = gap > target * 1.3 && cpu < target * 0.7;
     this.gaps.push(late ? 1 : 0);
     // (starved here: a quarter of the frames late, lately, at the least scale)

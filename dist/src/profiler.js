@@ -28,6 +28,9 @@ export class Profiler {
     trusted = true;
     /** the time between frames (ms, smoothed), by the clock: what a frame's GPU time is held against */
     wallMs = 0;
+    /** timed passes this frame (since its beginFrame) that ran untimed, past the 128 a frame has room for: their time
+     *  is in none of the numbers, the frame's totals included. Warned of once */
+    dropped = 0;
     lastBegin = 0;
     judged = 0;
     implausible = 0;
@@ -61,6 +64,7 @@ export class Profiler {
             this.seen.clear();
         }
         this.on = this.active;
+        this.dropped = 0;
         this.next = 0;
         this.resolved = 0;
         this.labels = [];
@@ -72,8 +76,14 @@ export class Profiler {
         }
     }
     writes(label) {
-        if (!this.on || !this.qs || this.next + 2 > PAIRS * 2)
+        if (!this.on || !this.qs)
             return undefined;
+        if (this.next + 2 > PAIRS * 2) {
+            // (no room left: the pass runs, untimed)
+            if (!this.dropped++)
+                this.kit.warnOnce('profiler-full', `a frame ran more than ${PAIRS} timed passes: those past ${PAIRS} ('${label}' the first) aren't timed, and the frame's GPU time leaves them out (profiler.dropped)`);
+            return undefined;
+        }
         const i = this.next;
         this.next += 2;
         this.labels.push(label);

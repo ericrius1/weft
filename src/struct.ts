@@ -1,6 +1,10 @@
 // CPU-side views of WGSL structs, laid out from the shader's own reflection (offsets, padding, array strides), so the
 // TS writer and the WGSL struct can't drift apart. `set({ field: value })` writes only the named fields; vec3s never
 // spill into the next field; mat3x3f accepts 9 packed or 12 padded floats.
+//
+// A struct's fields are compiled once into writers (PLANS: by name, each field's offset and a function that already
+// knows its type), so a set() neither searches the field list nor parses a type: an app sets its globals several
+// times a frame.
 import type { StructDef, FieldLayout, StructLayout } from './shader';
 
 export type DeepPartial<T> = T extends ArrayLike<number> ? T : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
@@ -23,7 +27,7 @@ export class StructView<T = Record<string, unknown>> {
 
   /** byte offset of a top-level field */
   offset(field: keyof T & string): number {
-    const f = this.def.fields.find((x) => x.name === field);
+    const f = planOf(this.def).get(field);
     if (!f) throw new Error(`struct ${this.def.name} has no field '${field}'`);
     return this.base + f.offset;
   }
@@ -53,80 +57,121 @@ export class StructView<T = Record<string, unknown>> {
   }
 }
 
+// ---------------------------------------------------------------- writing
+/** a value into the view at byte offset `o`, as one type */
+type Write = (v: StructView<unknown>, o: number, val: unknown) => void;
+interface FieldPlan { offset: number; write: Write }
+
+/** each struct's fields by name, compiled the first time it's written (kept by its field list: a hot edit that
+ *  changes a struct hands it a new one) */
+const PLANS = new WeakMap<FieldLayout[], Map<string, FieldPlan>>();
+function planOf(layout: StructLayout): Map<string, FieldPlan> {
+  let p = PLANS.get(layout.fields);
+  if (!p) {
+    p = new Map();
+    for (const f of layout.fields) if (!p.has(f.name)) p.set(f.name, { offset: f.offset, write: writerOf(f.type, f) });
+    PLANS.set(layout.fields, p);
+  }
+  return p;
+}
+
 function writeStruct(v: StructView<unknown>, layout: StructLayout, base: number, values: Record<string, unknown>) {
+  const plan = planOf(layout);
   for (const key in values) {
     const val = values[key];
     if (val === undefined) continue;
-    const f = layout.fields.find((x) => x.name === key);
+    const f = plan.get(key);
     if (!f) throw new Error(`struct ${layout.name} has no field '${key}' (fields: ${layout.fields.map((x) => x.name).join(', ')})`);
-    writeField(v, f.type, f, base + f.offset, val);
+    f.write(v, base + f.offset, val);
   }
 }
 
-function writeScalar(v: StructView<unknown>, kind: string, byteOffset: number, x: number) {
-  const i = byteOffset >> 2;
-  if (kind === 'u') v.u32[i] = x;
-  else if (kind === 'i') v.i32[i] = x;
-  else v.f32[i] = x;
+const writeF32: Write = (v, o, val) => { v.f32[o >> 2] = val as number; };
+const writeU32: Write = (v, o, val) => { v.u32[o >> 2] = val as number; };
+const writeI32: Write = (v, o, val) => { v.i32[o >> 2] = val as number; };
+
+/** a vector of n components (never past the n-th: a vec3 doesn't spill into the next field), as far as `val` goes */
+function vecWriter(n: number, kind: string): Write {
+  if (kind === 'u') return (v, o, val) => { const a = val as ArrayLike<number>, t = v.u32, i = o >> 2; for (let k = 0; k < n && k < a.length; k++) t[i + k] = a[k]; };
+  if (kind === 'i') return (v, o, val) => { const a = val as ArrayLike<number>, t = v.i32, i = o >> 2; for (let k = 0; k < n && k < a.length; k++) t[i + k] = a[k]; };
+  return (v, o, val) => { const a = val as ArrayLike<number>, t = v.f32, i = o >> 2; for (let k = 0; k < n && k < a.length; k++) t[i + k] = a[k]; };
 }
 
-function writeField(v: StructView<unknown>, type: string, f: FieldLayout | null, o: number, val: unknown) {
-  if (type === 'f32') { v.f32[o >> 2] = val as number; return; }
-  if (type === 'u32' || type === 'atomic<u32>') { v.u32[o >> 2] = val as number; return; }
-  if (type === 'i32' || type === 'atomic<i32>') { v.i32[o >> 2] = val as number; return; }
-  const vm = VEC.exec(type);
-  if (vm) {
-    const n = Number(vm[1]), a = val as ArrayLike<number>;
-    for (let k = 0; k < n && k < a.length; k++) writeScalar(v, vm[2], o + k * 4, a[k]);
+/** a matrix's floats into `t` from float index `at`: `len` of `a` from `from`, packed (cols × rows, a mat3's nine)
+ *  or padded as the buffer is (each column `per` floats) */
+function matInto(t: Float32Array, at: number, a: ArrayLike<number>, from: number, len: number, cols: number, rows: number, per: number) {
+  if (rows === 3 && len === cols * 3) {
+    for (let c = 0; c < cols; c++) for (let r = 0; r < 3; r++) t[at + c * per + r] = a[from + c * 3 + r];
     return;
   }
-  const mm = MAT.exec(type);
-  if (mm) {
-    const cols = Number(mm[1]), rows = Number(mm[2]), a = val as ArrayLike<number>;
-    const colStride = rows === 2 ? 8 : 16;
-    const packed = a.length === cols * rows && rows === 3;
-    for (let c = 0; c < cols; c++) {
-      for (let r = 0; r < rows; r++) {
-        const src = packed ? c * rows + r : c * (colStride / 4) + r;
-        if (src < a.length) v.f32[(o + c * colStride) / 4 + r] = a[src];
-      }
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      const src = c * per + r;
+      if (src < len) t[at + c * per + r] = a[from + src];
     }
-    return;
   }
-  if (type === 'array' && f?.array) {
-    const { count, stride, elem, elemStruct } = f.array;
+}
+function matWriter(cols: number, rows: number): Write {
+  const per = rows === 2 ? 2 : 4;
+  return (v, o, val) => { const a = val as ArrayLike<number>; matInto(v.f32, o / 4, a, 0, a.length, cols, rows, per); };
+}
+
+function arrayWriter(type: NonNullable<FieldLayout['array']>): Write {
+  const { count, stride, elem, elemStruct } = type;
+  const mm = MAT.exec(elem), em = VEC.exec(elem);
+  const cols = mm ? Number(mm[1]) : 0, rows = mm ? Number(mm[2]) : 0, full = cols * rows, per = rows === 2 ? 2 : 4;
+  const comps = em ? Number(em[1]) : 1;
+  const kind = em ? em[2] : elem[0] === 'u' ? 'u' : elem[0] === 'i' ? 'i' : 'f';
+  // (an element's own writer, for elements given one by one: made when first needed)
+  let one: Write | null = null;
+  return (v, o, val) => {
     const arr = val as ArrayLike<unknown>;
-    const n = count > 0 ? Math.min(count, arr.length) : arr.length;
-    if (!elemStruct && typeof arr[0] === 'number' && MAT.test(elem)) {
-      // a flat array of matrices, each one packed (column-major)
-      const mm = MAT.exec(elem)!;
-      const per = Number(mm[1]) * Number(mm[2]);
-      const nums = val as ArrayLike<number>;
-      const elems = count > 0 ? Math.min(count, Math.floor(nums.length / per)) : Math.floor(nums.length / per);
-      for (let e = 0; e < elems; e++) writeField(v, elem, null, o + e * stride, Array.prototype.slice.call(nums, e * per, e * per + per));
-      return;
-    }
     if (!elemStruct && typeof arr[0] === 'number') {
-      // a flat numeric array: scalars, or vectors packed back to back
-      const em = VEC.exec(elem);
-      const comps = em ? Number(em[1]) : 1;
-      const kind = em ? em[2] : elem[0] === 'u' ? 'u' : elem[0] === 'i' ? 'i' : 'f';
       const nums = val as ArrayLike<number>;
+      if (mm) {
+        // a flat array of matrices, each one packed (column-major)
+        const elems = count > 0 ? Math.min(count, Math.floor(nums.length / full)) : Math.floor(nums.length / full);
+        for (let e = 0; e < elems; e++) matInto(v.f32, (o + e * stride) / 4, nums, e * full, full, cols, rows, per);
+        return;
+      }
+      // a flat numeric array: scalars, or vectors packed back to back
       const elems = count > 0 ? Math.min(count, Math.floor(nums.length / comps)) : Math.floor(nums.length / comps);
       if (kind === 'f' && stride === comps * 4 && nums instanceof Float32Array) { v.f32.set(nums.subarray(0, elems * comps), o >> 2); return; }
-      for (let e = 0; e < elems; e++) for (let k = 0; k < comps; k++) writeScalar(v, kind, o + e * stride + k * 4, nums[e * comps + k]);
+      const t = kind === 'u' ? v.u32 : kind === 'i' ? v.i32 : v.f32;
+      for (let e = 0; e < elems; e++) for (let k = 0; k < comps; k++) t[(o + e * stride + k * 4) >> 2] = nums[e * comps + k];
       return;
     }
+    const n = count > 0 ? Math.min(count, arr.length) : arr.length;
     for (let e = 0; e < n; e++) {
       const x = arr[e];
       if (x === undefined) continue;
       if (elemStruct) writeStruct(v, v.layoutOf(elemStruct), o + e * stride, x as Record<string, unknown>);
-      else writeField(v, elem, null, o + e * stride, x);
+      else (one ??= writerOf(elem, null))(v, o + e * stride, x);
     }
-    return;
+  };
+}
+
+/** the writers of the types that need nothing but their name (scalars, vectors, matrices), one each */
+const WRITERS = new Map<string, Write>();
+function writerOf(type: string, f: FieldLayout | null): Write {
+  if (type === 'array' && f?.array) return arrayWriter(f.array);
+  if (type === 'struct' && f?.struct) {
+    const name = f.struct;
+    return (v, o, val) => writeStruct(v, v.layoutOf(name), o, val as Record<string, unknown>);
   }
-  if (type === 'struct' && f?.struct) { writeStruct(v, v.layoutOf(f.struct), o, val as Record<string, unknown>); return; }
-  throw new Error(`weft: can't write a field of type ${type}`);
+  let w = WRITERS.get(type);
+  if (!w) {
+    const vm = VEC.exec(type), mm = MAT.exec(type);
+    if (type === 'f32') w = writeF32;
+    else if (type === 'u32' || type === 'atomic<u32>') w = writeU32;
+    else if (type === 'i32' || type === 'atomic<i32>') w = writeI32;
+    else if (vm) w = vecWriter(Number(vm[1]), vm[2]);
+    else if (mm) w = matWriter(Number(mm[1]), Number(mm[2]));
+    // (said when such a field is written, not when its struct is first used)
+    else w = () => { throw new Error(`weft: can't write a field of type ${type}`); };
+    WRITERS.set(type, w);
+  }
+  return w;
 }
 
 function readField(v: StructView<unknown>, f: FieldLayout, o: number): unknown {
@@ -183,7 +228,7 @@ export class StructArray<T = Record<string, unknown>> {
   }
   /** byte offset of a field inside element i */
   offset(i: number, field: keyof T & string) {
-    const f = this.def.fields.find((x) => x.name === field);
+    const f = planOf(this.def).get(field);
     if (!f) throw new Error(`struct ${this.def.name} has no field '${field}'`);
     return i * this.stride + f.offset;
   }

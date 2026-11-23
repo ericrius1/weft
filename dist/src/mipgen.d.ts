@@ -18,6 +18,10 @@ export declare class MipChain implements RunItem {
         pipelines: number;
         distinct: number;
         failed: number;
+        errors: {
+            label: string;
+            message: string;
+        }[];
     }>;
     /** stop it for good (its passes' pipelines leave the kit) */
     dispose(): void;

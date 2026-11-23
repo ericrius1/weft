@@ -50,8 +50,11 @@ type AnyPipeline = GPURenderPipeline | GPUComputePipeline;
  *  all of them. */
 export interface Compiler {
   readonly holding: boolean;
-  /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result */
-  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>): Promise<unknown>;
+  /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result. `asked`
+   *  says whether the GPU has nothing more to be asked for it — its compile made on the spot meanwhile, or already
+   *  started by a record sharing it: start() then only hands that one's result on, so a scheduler needn't spend a turn
+   *  on it */
+  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>, asked?: () => boolean): Promise<unknown>;
   /** `rec` is needed now: make it on the spot (rec.makeNow with kit.moduleNow) */
   now(rec: AnyPipelineRecord): void;
 }
@@ -105,6 +108,8 @@ export class SharedPipeline {
   readonly done: Promise<AnyPipeline>;
   /** its compile, started by the first of its records' asks let through (nothing once it's landed) */
   start: () => Promise<AnyPipeline> = () => Promise.reject(new Error('no compile'));
+  /** start() has been called: the GPU has been asked for it (calling it again asks nothing more) */
+  asked = false;
   private settle!: { ok: (p: AnyPipeline) => void; fail: (e: unknown) => void };
   constructor(readonly key: string) {
     this.done = new Promise<AnyPipeline>((ok, fail) => { this.settle = { ok, fail }; });
@@ -133,11 +138,14 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   /** ms from declared (or rebuilt) to its pipeline made: its own compile, or its wait for the one it shares */
   ms = 0;
   builds = 0;
+  /** times its draw or compute came up in a run with no pipeline to run with (still compiling, or failed) and so did
+   *  nothing; with kit.debug the first is warned of */
+  skipped = 0;
   /** waiting for kit.compiler to say when (kit.ready() doesn't wait for it) */
   deferred = false;
   /** drawn only while this says so (a scheduler holding a feature back until all of it has compiled) */
   gate: (() => boolean) | null = null;
-  /** called when its pipeline changes (a compile landing, a hot reload) */
+  /** called when its pipeline changes (a compile landing, a hot reload), or fails with none to go on with */
   changed: (() => void) | null = null;
   /** the compile it uses, shared with every record of the same descriptor */
   entry: SharedPipeline | null = null;
@@ -171,6 +179,13 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   makeNow(module: GPUShaderModule) { return makePipeline(this.kit, this.describe(), module, false) as P; }
   /** wait for its pipeline (see kit.ready) */
   ready() { return this.kit.ready(this.self); }
+  /** its draw or compute had no pipeline to run with: counted, and with kit.debug the first time is said */
+  skip() {
+    if (this.skipped++ || !this.kit.debug) return;
+    this.kit.warnOnce(`skip:${this.label}`, this.error
+      ? `${this.label}: skipped, its pipeline failed: ${this.error.split('\n')[0]}`
+      : `${this.label}: run before its pipeline was ready, so it did nothing that time (a one-off pass: await kit.ready(items) first)`);
+  }
 
   build() {
     const t0 = performance.now(), b = ++this.serial;
@@ -194,6 +209,8 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         this.error = (e as Error).message ?? String(e);
         this.kit.report('pipeline', this.label, this.error);
       }
+      // (failed with no pipeline to go on with: what it's baked into records again, a fallback's calls in its place)
+      if (this.error && !this._pipe && b === this.serial) this.changed?.();
     })();
     this.pending = p.finally(() => { if (this.pending === wrapped) this.pending = null; });
     const wrapped = this.pending;
@@ -210,7 +227,7 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         const made = this.started = e = new SharedPipeline(key);
         kit.pipelineCache.set(key, made);
         let p: Promise<AnyPipeline> | null = null;
-        made.start = () => (p ??= made.pipeline
+        made.start = () => (made.asked = true) && (p ??= made.pipeline
           ? Promise.resolve(made.pipeline)
           : (makePipeline(kit, desc, module, true) as Promise<AnyPipeline>).catch((err) => {
             // Retry once on transient compiler-service failures (e.g. Metal XPC_ERROR_CONNECTION_INTERRUPTED). A
@@ -236,7 +253,7 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   /** ask for its compile (through the compile scheduler, if there's one): whichever ask is let through first starts it */
   private ask(e: SharedPipeline) {
     const kit = this.kit, c = kit.compiler, t0 = performance.now();
-    new Promise((r) => r(c ? c.compile(this.self, e.start) : e.start())).then(
+    new Promise((r) => r(c ? c.compile(this.self, e.start, () => e.asked || !!e.pipeline) : e.start())).then(
       (pipe) => { if (!e.pipeline) e.ms = performance.now() - t0; e.land(pipe as AnyPipeline); },
       (err) => { e.failed(err); if (kit.pipelineCache.get(e.key) === e) kit.pipelineCache.delete(e.key); });
   }
@@ -255,6 +272,13 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
     this.serial++;
     this.leave();
     this.changed = null;
+    // (its failure goes with it: kit.errors and the overlay showed a draw that's no longer there — unless another
+    // record of the same label has failed too, and the error is as much that one's)
+    if (this.error) {
+      const label = this.label;
+      this.error = null;
+      if (!list.some((p) => p.label === label && p.error)) this.kit.clearError(label);
+    }
   }
 }
 
@@ -286,7 +310,9 @@ export async function settle(records: () => AnyPipelineRecord[]) {
     await Promise.allSettled(pend);
   }
   const all = records();
-  return { pipelines: all.length, distinct: new Set(all.map((p) => p.entry ?? p)).size, failed: all.filter((p) => p.error).length };
+  const errors: { label: string; message: string }[] = [];
+  for (const p of all) if (p.error) errors.push({ label: p.label, message: p.error });
+  return { pipelines: all.length, distinct: new Set(all.map((p) => p.entry ?? p)).size, failed: errors.length, errors };
 }
 
 function pickEntry(shader: Shader, stage: 'vertex' | 'fragment' | 'compute', name: string | undefined, label: string) {
@@ -358,6 +384,7 @@ export class Compute<S extends Shader = Shader> implements RunItem {
   /** recompute bindings + pipeline (hot reload) */
   rebuild() {
     try {
+      this.wgSize = null;
       this.entry = pickEntry(this.shader, 'compute', this.opts.entry, this.label);
       this.binder.entries = [this.entry];
       this.binder.build();
@@ -365,10 +392,13 @@ export class Compute<S extends Shader = Shader> implements RunItem {
     } catch (e) { this.kit.report('bind', this.label, (e as Error).message); }
   }
   set(name: keyof NonNullable<ComputeOptions<S>['bind']> & string, value: Bindable) { this.binder.set(name, value); return this; }
-  get workgroupSize() { return this.shader.reflect.entries.find((e) => e.name === this.entry)?.workgroupSize ?? [1, 1, 1]; }
+  /** its entry's @workgroup_size (looked up when it's declared and when its shader changes, not every frame) */
+  get workgroupSize() { return (this.wgSize ??= this.shader.reflect.entries.find((e) => e.name === this.entry)?.workgroupSize ?? [1, 1, 1]); }
+  private wgSize: number[] | null = null;
   encode(enc: GPUCommandEncoder, ts?: GPUComputePassTimestampWrites) {
     const p = this.pipe.pipeline;
-    if (!p || (this.pipe.gate && !this.pipe.gate())) return;
+    if (!p) { this.pipe.skip(); return; }
+    if (this.pipe.gate && !this.pipe.gate()) return;
     const pass = enc.beginComputePass({ label: this.label, timestampWrites: ts });
     pass.setPipeline(p);
     this.binder.apply(pass, this.opts.view ?? this.kit.mainView, this.opts.shared);
@@ -377,12 +407,15 @@ export class Compute<S extends Shader = Shader> implements RunItem {
       const b = deref(o.indirect.buffer);
       pass.dispatchWorkgroupsIndirect(b instanceof StorageBuffer ? b.gpu : (b as GPUBuffer), o.indirect.offset ?? 0);
     } else {
-      let wg: number[];
+      let x = 1, y = 1, z = 1;
       if (o.threads) {
         const t = vals(o.threads), s = this.workgroupSize;
-        wg = [Math.ceil(t[0] / s[0]), Math.ceil((t[1] ?? 1) / s[1]), Math.ceil((t[2] ?? 1) / s[2])];
-      } else wg = o.workgroups ? vals(o.workgroups) : [1];
-      if (wg[0] > 0 && (wg[1] ?? 1) > 0 && (wg[2] ?? 1) > 0) pass.dispatchWorkgroups(wg[0], wg[1] ?? 1, wg[2] ?? 1);
+        x = Math.ceil(t[0] / s[0]); y = Math.ceil((t[1] ?? 1) / s[1]); z = Math.ceil((t[2] ?? 1) / s[2]);
+      } else if (o.workgroups) {
+        const w = vals(o.workgroups);
+        x = w[0]; y = w[1] ?? 1; z = w[2] ?? 1;
+      }
+      if (x > 0 && y > 0 && z > 0) pass.dispatchWorkgroups(x, y, z);
     }
     pass.end();
   }
@@ -486,6 +519,11 @@ export interface DrawOptions<S extends Shader = Shader> {
   enabled?: boolean | (() => boolean);
   /** issue the draw calls yourself (after the pipeline and bind groups are set) */
   encode?: (pass: GPURenderPassEncoder, draw: Draw<S>) => void;
+  /** a draw to draw in this one's place while this one's pipeline has failed to compile (a plainer shader of the same
+   *  thing, in place of a hole). Declare it in the same pass (the same bundle, for a bundled draw) with `enabled:
+   *  false`, so it never draws by itself: it's drawn when this one would be (this one's `enabled`, with its own counts
+   *  and bindings), and only then. Its pipeline compiles when it's declared, like any draw's. */
+  fallback?: Draw<any>;
 }
 
 const gpuBuf = (b: unknown) => { const v = deref(b); return v instanceof StorageBuffer ? v.gpu : (v as GPUBuffer); };
@@ -580,8 +618,23 @@ export class Draw<S extends Shader = Shader> {
   encodeInto(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>) {
     // (enabled first: a compile scheduler makes a deferred pipeline on the spot when it's read)
     if (!on(this.on_)) return;
+    this.emit(enc, view, shared);
+  }
+  private falling = false;
+  // (its calls whatever its `enabled` says: a fallback is drawn when the draw it stands in for would be)
+  private emit(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>) {
     const p = this.pipe.pipeline;
-    if (!p || (this.pipe.gate && !this.pipe.gate())) return;
+    if (!p) {
+      const fb = this.pipe.error ? this.opts.fallback : undefined;
+      // (none, or one that came back round to this draw: nothing to draw)
+      if (!fb || this.falling) { this.pipe.skip(); return; }
+      if (this.pipe.gate && !this.pipe.gate()) return;
+      if (this.kit.debug) this.kit.warnOnce(`fallback:${this.label}`, `${this.label}: its pipeline failed, drawing its fallback '${fb.label}'`);
+      this.falling = true;
+      try { fb.emit(enc, view, shared); } finally { this.falling = false; }
+      return;
+    }
+    if (this.pipe.gate && !this.pipe.gate()) return;
     const o = this.opts;
     // (consecutive draws with one pipeline set it once)
     const tracked = enc as TrackedEncoder;
@@ -665,6 +718,30 @@ export class RenderPass implements RunItem {
     this.draws.push(b);
     return b;
   }
+  // (place: where each call under way began in `draws`, the outermost first)
+  private placing: number[] = [];
+  /** the draws and bundles `add` declares in this pass, put right before or after `anchor` in its order instead of at
+   *  its end: a system declared late (a site streamed in, a chunk loaded on demand) drawn where it belongs, beside the
+   *  opaque draws and before the translucent ones. `anchor` is a draw or bundle of this pass, or a label (the first
+   *  item of this pass with it); null, or one not in the pass, leaves them at the end, where they were declared.
+   *  `add` declares at once (what it declares after an await isn't placed); while it runs its draws are at the end of
+   *  `draws`, as ever. A place inside `add` is fine. Returns what was placed, in order. */
+  place(anchor: PassItem | string | null | undefined, where: 'before' | 'after', add: () => void): PassItem[] {
+    const stack = this.placing, depth = stack.length;
+    stack.push(this.draws.length);
+    let placed: PassItem[] = [];
+    try { add(); } finally {
+      // (what `add` declared before it threw is placed too: the pass's order doesn't depend on how it ended)
+      placed = this.draws.splice(stack.pop()!);
+      const at = typeof anchor === 'string' ? this.draws.findIndex((d) => d.label === anchor) : anchor ? this.draws.indexOf(anchor) : -1;
+      if (placed.length) {
+        this.draws.splice(at < 0 ? this.draws.length : where === 'before' ? at : at + 1, 0, ...placed);
+        // (put ahead of what a place around this one has declared so far: that one's draws begin further on)
+        if (at >= 0) for (let i = 0; i < depth; i++) if (at < stack[i]) stack[i] += placed.length;
+      }
+    }
+    return placed;
+  }
   /** stop it for good: every draw and bundle in it is disposed */
   dispose() {
     for (const d of [...this.draws]) if (d instanceof Draw || d instanceof DrawBundle) d.dispose();
@@ -709,8 +786,7 @@ export class RenderPass implements RunItem {
   private attachView(t: Target): GPUTextureView {
     if (t === 'screen') return this.kit.screenView();
     const v = deref(t);
-    if (v instanceof Texture) return v.view({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 });
-    if (v instanceof TexView) return v.texture.view({ ...v.desc, dimension: '2d' });
+    if (v instanceof Texture || v instanceof TexView) return v.attachment;
     throw new BindError(`${this.label}: bad attachment`);
   }
   encode(enc: GPUCommandEncoder, ts?: GPURenderPassTimestampWrites) {

@@ -32,8 +32,11 @@ type AnyPipeline = GPURenderPipeline | GPUComputePipeline;
  *  all of them. */
 export interface Compiler {
     readonly holding: boolean;
-    /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result */
-    compile(rec: AnyPipelineRecord, start: () => Promise<unknown>): Promise<unknown>;
+    /** when `rec` may compile: call start() (which asks the GPU) when it may, and settle with its result. `asked`
+     *  says whether the GPU has nothing more to be asked for it — its compile made on the spot meanwhile, or already
+     *  started by a record sharing it: start() then only hands that one's result on, so a scheduler needn't spend a turn
+     *  on it */
+    compile(rec: AnyPipelineRecord, start: () => Promise<unknown>, asked?: () => boolean): Promise<unknown>;
     /** `rec` is needed now: make it on the spot (rec.makeNow with kit.moduleNow) */
     now(rec: AnyPipelineRecord): void;
 }
@@ -60,6 +63,8 @@ export declare class SharedPipeline {
     readonly done: Promise<AnyPipeline>;
     /** its compile, started by the first of its records' asks let through (nothing once it's landed) */
     start: () => Promise<AnyPipeline>;
+    /** start() has been called: the GPU has been asked for it (calling it again asks nothing more) */
+    asked: boolean;
     private settle;
     constructor(key: string);
     /** its pipeline is made: every record using it has it (a later one, a compile finishing after one was made on the
@@ -80,11 +85,14 @@ export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipe
     /** ms from declared (or rebuilt) to its pipeline made: its own compile, or its wait for the one it shares */
     ms: number;
     builds: number;
+    /** times its draw or compute came up in a run with no pipeline to run with (still compiling, or failed) and so did
+     *  nothing; with kit.debug the first is warned of */
+    skipped: number;
     /** waiting for kit.compiler to say when (kit.ready() doesn't wait for it) */
     deferred: boolean;
     /** drawn only while this says so (a scheduler holding a feature back until all of it has compiled) */
     gate: (() => boolean) | null;
-    /** called when its pipeline changes (a compile landing, a hot reload) */
+    /** called when its pipeline changes (a compile landing, a hot reload), or fails with none to go on with */
     changed: (() => void) | null;
     /** the compile it uses, shared with every record of the same descriptor */
     entry: SharedPipeline | null;
@@ -107,7 +115,13 @@ export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipe
         pipelines: number;
         distinct: number;
         failed: number;
+        errors: {
+            label: string;
+            message: string;
+        }[];
     }>;
+    /** its draw or compute had no pipeline to run with: counted, and with kit.debug the first time is said */
+    skip(): void;
     build(): Promise<void>;
     /** the compile of its descriptor as it is now: the one made or under way for the same key, or a new one */
     private join;
@@ -130,6 +144,10 @@ export declare function settle(records: () => AnyPipelineRecord[]): Promise<{
     pipelines: number;
     distinct: number;
     failed: number;
+    errors: {
+        label: string;
+        message: string;
+    }[];
 }>;
 export interface ComputeOptions<S extends Shader = Shader> {
     label?: string;
@@ -164,11 +182,17 @@ export declare class Compute<S extends Shader = Shader> implements RunItem {
         pipelines: number;
         distinct: number;
         failed: number;
+        errors: {
+            label: string;
+            message: string;
+        }[];
     }>;
     /** recompute bindings + pipeline (hot reload) */
     rebuild(): void;
     set(name: keyof NonNullable<ComputeOptions<S>['bind']> & string, value: Bindable): this;
+    /** its entry's @workgroup_size (looked up when it's declared and when its shader changes, not every frame) */
     get workgroupSize(): number[];
+    private wgSize;
     encode(enc: GPUCommandEncoder, ts?: GPUComputePassTimestampWrites): void;
     /** stop it for good: no more hot rebuilds, and its pipeline leaves the kit */
     dispose(): void;
@@ -269,6 +293,11 @@ export interface DrawOptions<S extends Shader = Shader> {
     enabled?: boolean | (() => boolean);
     /** issue the draw calls yourself (after the pipeline and bind groups are set) */
     encode?: (pass: GPURenderPassEncoder, draw: Draw<S>) => void;
+    /** a draw to draw in this one's place while this one's pipeline has failed to compile (a plainer shader of the same
+     *  thing, in place of a hole). Declare it in the same pass (the same bundle, for a bundled draw) with `enabled:
+     *  false`, so it never draws by itself: it's drawn when this one would be (this one's `enabled`, with its own counts
+     *  and bindings), and only then. Its pipeline compiles when it's declared, like any draw's. */
+    fallback?: Draw<any>;
 }
 export declare class Draw<S extends Shader = Shader> {
     private kit;
@@ -292,6 +321,10 @@ export declare class Draw<S extends Shader = Shader> {
         pipelines: number;
         distinct: number;
         failed: number;
+        errors: {
+            label: string;
+            message: string;
+        }[];
     }>;
     /** drawn or not (a function is asked each frame) */
     get enabled(): boolean | (() => boolean);
@@ -304,6 +337,8 @@ export declare class Draw<S extends Shader = Shader> {
     /** its calls, into a pass or a bundle (nothing while it's off or its pipeline isn't ready); `view` and `shared` in
      *  place of its pass's (a pass replaying it: RenderPassOptions.replay) */
     encodeInto(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>): void;
+    private falling;
+    private emit;
     /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset and count, a
      *  scheduler's gate */
     get watched(): boolean;
@@ -328,6 +363,14 @@ export declare class RenderPass implements RunItem {
     /** a bundle of static draws at this point of the pass's order: its draws are recorded once into a GPURenderBundle
      *  and replayed with one call a frame (see bundle.ts for what re-records it) */
     bundle(label?: string): DrawBundle;
+    private placing;
+    /** the draws and bundles `add` declares in this pass, put right before or after `anchor` in its order instead of at
+     *  its end: a system declared late (a site streamed in, a chunk loaded on demand) drawn where it belongs, beside the
+     *  opaque draws and before the translucent ones. `anchor` is a draw or bundle of this pass, or a label (the first
+     *  item of this pass with it); null, or one not in the pass, leaves them at the end, where they were declared.
+     *  `add` declares at once (what it declares after an await isn't placed); while it runs its draws are at the end of
+     *  `draws`, as ever. A place inside `add` is fine. Returns what was placed, in order. */
+    place(anchor: PassItem | string | null | undefined, where: 'before' | 'after', add: () => void): PassItem[];
     /** stop it for good: every draw and bundle in it is disposed */
     dispose(): void;
     /** wait for the pipelines of its draws (and bundles') alone (see kit.ready) */
@@ -335,6 +378,10 @@ export declare class RenderPass implements RunItem {
         pipelines: number;
         distinct: number;
         failed: number;
+        errors: {
+            label: string;
+            message: string;
+        }[];
     }>;
     /** a fullscreen triangle (the shader includes weft/fullscreen and has a fragment entry) */
     fullscreen<S extends Shader>(shader: S, opts?: DrawOptions<S>): Draw<S>;

@@ -55,15 +55,40 @@ export class View {
         this.updatedFrame = k.frameIndex;
         const c = this.camera, w = this.width, h = this.height;
         c.update(w, h);
-        this.frame.set({
-            viewProj: c.viewProj, view: c.view, proj: c.proj, invViewProj: c.invViewProj, invProj: c.invProj, invView: c.invView,
-            prevViewProj: c.prevViewProj, camPos: c.position, time: k.time, camFwd: c.forward, dt: k.dt, camRight: c.right,
-            near: c.near, camUp: c.up, frame: k.frameIndex, res: [w, h], invRes: [1 / w, 1 / h], jitter: c.jitter, fovY: c.fovY,
-            aspect: w / h, mouse: k.mouse, user: this.user,
-            viewProjRel: c.viewProjRel, invViewProjRel: c.invViewProjRel, prevViewProjRel: c.prevViewProjRel, camLo: c.camLo,
-            jitterNdc: c.jitterNdc,
-        });
+        // (one object for the view's life, refilled: set() copies the values out, and a view a frame makes no garbage)
+        const v = this.vals;
+        v.viewProj = c.viewProj;
+        v.view = c.view;
+        v.proj = c.proj;
+        v.invViewProj = c.invViewProj;
+        v.invProj = c.invProj;
+        v.invView = c.invView;
+        v.prevViewProj = c.prevViewProj;
+        v.camPos = c.position;
+        v.time = k.time;
+        v.camFwd = c.forward;
+        v.dt = k.dt;
+        v.camRight = c.right;
+        v.near = c.near;
+        v.camUp = c.up;
+        v.frame = k.frameIndex;
+        v.res[0] = w;
+        v.res[1] = h;
+        v.invRes[0] = 1 / w;
+        v.invRes[1] = 1 / h;
+        v.jitter = c.jitter;
+        v.fovY = c.fovY;
+        v.aspect = w / h;
+        v.mouse = k.mouse;
+        v.user = this.user;
+        v.viewProjRel = c.viewProjRel;
+        v.invViewProjRel = c.invViewProjRel;
+        v.prevViewProjRel = c.prevViewProjRel;
+        v.camLo = c.camLo;
+        v.jitterNdc = c.jitterNdc;
+        this.frame.set(v);
     }
+    vals = { res: [0, 0], invRes: [0, 0] };
     /** its group-0 bind group (made again only when the Frame buffer or the globals change) */
     group0() {
         const g = this.globals ?? this.kit.globals, gv = g ? g.version : 0;
@@ -134,7 +159,7 @@ export class Kit {
     /** pixel x, y and buttons of the pointer over the canvas */
     mouse = [0, 0, 0, 0];
     debug;
-    /** stop the rAF loop (headless capture drives frames with tick()) */
+    /** stop the rAF loop (headless capture drives frames with step(dt)) */
     manual = false;
     /** cap the loop's rate (0: every animation frame). 30 on a 60 Hz display renders every other refresh */
     maxFps = 0;
@@ -156,7 +181,7 @@ export class Kit {
     screen = null;
     resizeObs;
     frameCb = null;
-    lastNow = 0;
+    lastNow_ = 0;
     lastTick = 0;
     ran = [];
     /** `parent`: the kit whose device this one shares (see sibling) */
@@ -430,7 +455,7 @@ export class Kit {
      *
      *  Either way pipelines a compile scheduler holds back (deferred) aren't waited for: they're made on the spot when
      *  first used. Resolves with the records waited for, the distinct GPU pipelines among them (records with the same
-     *  descriptor share one) and the failures. */
+     *  descriptor share one) and the failures (`failed`, and `errors`: each one's label and message). */
     async ready(...items) {
         return settle(items.length ? () => pipelinesOf(items) : () => this.pipelines);
     }
@@ -579,8 +604,8 @@ export class Kit {
                 return;
             }
             this.lastTick = now;
-            const dt = this.lastNow ? (now - this.lastNow) / 1000 : 1 / 60;
-            this.lastNow = now;
+            const dt = this.lastNow_ ? (now - this.lastNow_) / 1000 : 1 / 60;
+            this.lastNow_ = now;
             try {
                 this.step(dt);
             }
@@ -590,6 +615,10 @@ export class Kit {
         };
         requestAnimationFrame(tick);
     }
+    /** the animation frame the loop last stepped on: its timestamp (ms, performance.now()'s clock, as
+     *  requestAnimationFrame hands it over). `performance.now() - kit.lastNow` inside a frame is the time the frame's
+     *  own work has taken so far. 0 before the loop's first frame, and not moved by frames stepped by hand (step) */
+    get lastNow() { return this.lastNow_; }
     /** advance one frame by hand (headless capture / fixed-step films) */
     step(dt) {
         if (!this.frameCb)

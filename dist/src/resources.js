@@ -96,6 +96,9 @@ export class StorageBuffer {
     stride;
     label;
     usage;
+    /** freed for good (destroy) */
+    destroyed = false;
+    cutSaid = 0;
     constructor(kit, o) {
         this.kit = kit;
         this.label = o.label ?? 'storage';
@@ -115,15 +118,40 @@ export class StorageBuffer {
         this.size = Math.max(16, Math.ceil(size / 16) * 16);
         this.gpu = this.kit.device.createBuffer({ label: this.label, size: this.size, usage: this.usage });
     }
+    /** upload `data` at `byteOffset`: what fits, in whole 4-byte words (the GPU takes no less). Data past the buffer's
+     *  end, or a last 1-3 bytes short of a word, is left out: said once per buffer (grow it first with ensure(), pad
+     *  the data to a multiple of 4) */
     write(data, byteOffset = 0) {
         const view = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-        const n = Math.min(view.byteLength, this.size - byteOffset) & ~3;
+        const room = this.size - byteOffset, n = Math.min(view.byteLength, room) & ~3;
+        if (n !== view.byteLength) {
+            // (said once a buffer and a kind: a flag here first, so a write that's cut every frame makes no string)
+            const past = view.byteLength > room, bit = past ? 1 : 2;
+            if (!(this.cutSaid & bit)) {
+                this.cutSaid |= bit;
+                if (past)
+                    this.kit.warnOnce(`write-past:${this.label}`, `${this.label}: a write of ${view.byteLength} bytes at ${byteOffset} runs past its ${this.size} bytes: only ${Math.max(0, n)} written (ensure() it first)`);
+                else
+                    this.kit.warnOnce(`write-odd:${this.label}`, `${this.label}: a write of ${view.byteLength} bytes isn't a multiple of 4: its last ${view.byteLength - n} left out (pad the data)`);
+            }
+        }
         if (n > 0)
             this.kit.queue.writeBuffer(this.gpu, byteOffset, view.buffer, view.byteOffset, n);
         return this;
     }
     /** grow (contents are not kept); bind groups follow automatically */
     ensure(bytes) {
+        if (this.destroyed) {
+            // (freed for good, then asked for again: made anew — and counted again by the kit, which the buffer it made
+            // before this was not — but an app that frees a buffer shouldn't still be using it)
+            this.kit.warnOnce(`ensure-freed:${this.label}`, `${this.label}: ensure() after destroy(): made again, ${Math.max(bytes, this.size)} bytes`);
+            this.destroyed = false;
+            this.alloc(Math.max(bytes, this.size));
+            this.count = Math.floor(this.size / this.stride);
+            this.kit.buffers.add(this);
+            this.version++;
+            return true;
+        }
         if (bytes <= this.size)
             return false;
         this.gpu.destroy();
@@ -147,6 +175,7 @@ export class StorageBuffer {
     /** free it for good */
     destroy() {
         this.gpu.destroy();
+        this.destroyed = true;
         this.kit.buffers.delete(this);
     }
 }
@@ -233,6 +262,7 @@ export class Texture {
             sampleCount: this.samples, usage: this.usage,
         });
         this.views.clear();
+        this.attach = null;
         // (a new texture is in no bind group yet: only a reallocation needs them checked)
         if (first)
             this.v++;
@@ -254,6 +284,12 @@ export class Texture {
             this.views.set(key, v);
         }
         return v;
+    }
+    attach = null;
+    /** its view as a pass's attachment: mip 0 of layer 0, as a 2D view (kept until it's reallocated: a pass asks every
+     *  frame) */
+    get attachment() {
+        return (this.attach ??= this.view({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 }));
     }
     /** a bindable/attachable view of one mip level (and optionally one layer) */
     mip(level, layer) { return new TexView(this, { baseMipLevel: level, mipLevelCount: 1, ...(layer !== undefined ? { baseArrayLayer: layer, arrayLayerCount: 1, dimension: '2d' } : {}) }); }
@@ -361,6 +397,7 @@ export class Texture {
         this.probes = [];
         this.stagings = [];
         this.views.clear();
+        this.attach = null;
         this.destroyed = true;
         this.kit.textures.delete(this);
     }
@@ -422,6 +459,17 @@ export class TexView {
         this.desc = desc;
     }
     get view() { return this.texture.view(this.desc); }
+    att = null;
+    attFor = -1;
+    /** its view as a pass's attachment (2D), kept until its texture is reallocated */
+    get attachment() {
+        const t = this.texture;
+        if (!this.att || this.attFor !== t.version) {
+            this.att = t.view({ ...this.desc, dimension: '2d' });
+            this.attFor = t.version;
+        }
+        return this.att;
+    }
     get key() { return `${this.texture.uid}.${this.texture.version}:${JSON.stringify(this.desc)}`; }
     /** a number per distinct description: views of equal descriptions share it (so they bind alike) */
     get descId() {

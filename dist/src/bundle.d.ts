@@ -34,6 +34,10 @@ export declare class DrawBundle {
         pipelines: number;
         distinct: number;
         failed: number;
+        errors: {
+            label: string;
+            message: string;
+        }[];
     }>;
     encode(pe: GPURenderPassEncoder): void;
     /** stop it for good: its draws are disposed and it leaves its pass */

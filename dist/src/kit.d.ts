@@ -63,6 +63,7 @@ export declare class View {
     get height(): number;
     /** recompute the camera and fill the Frame uniform (once per frame unless forced) */
     update(force?: boolean): void;
+    private vals;
     /** its group-0 bind group (made again only when the Frame buffer or the globals change) */
     group0(): GPUBindGroup;
     /** stop updating it for good (a reflection or cascade no longer drawn): it leaves kit.views, its Frame is freed */
@@ -125,7 +126,7 @@ export declare class Kit {
     /** pixel x, y and buttons of the pointer over the canvas */
     mouse: [number, number, number, number];
     debug: boolean;
-    /** stop the rAF loop (headless capture drives frames with tick()) */
+    /** stop the rAF loop (headless capture drives frames with step(dt)) */
     manual: boolean;
     /** cap the loop's rate (0: every animation frame). 30 on a 60 Hz display renders every other refresh */
     maxFps: number;
@@ -147,7 +148,7 @@ export declare class Kit {
     private screen;
     private resizeObs;
     private frameCb;
-    private lastNow;
+    private lastNow_;
     private lastTick;
     private ran;
     /** `parent`: the kit whose device this one shares (see sibling) */
@@ -220,11 +221,15 @@ export declare class Kit {
      *
      *  Either way pipelines a compile scheduler holds back (deferred) aren't waited for: they're made on the spot when
      *  first used. Resolves with the records waited for, the distinct GPU pipelines among them (records with the same
-     *  descriptor share one) and the failures. */
+     *  descriptor share one) and the failures (`failed`, and `errors`: each one's label and message). */
     ready(...items: Waitable[]): Promise<{
         pipelines: number;
         distinct: number;
         failed: number;
+        errors: {
+            label: string;
+            message: string;
+        }[];
     }>;
     report(kind: string, label: string, message: string): void;
     clearError(label: string): void;
@@ -239,6 +244,10 @@ export declare class Kit {
     run(items: RunEntry[]): void;
     /** run `cb` every animation frame (resize, time and the overlay are handled; whatever throws, the loop goes on) */
     loop(cb: (t: FrameTime) => void): void;
+    /** the animation frame the loop last stepped on: its timestamp (ms, performance.now()'s clock, as
+     *  requestAnimationFrame hands it over). `performance.now() - kit.lastNow` inside a frame is the time the frame's
+     *  own work has taken so far. 0 before the loop's first frame, and not moved by frames stepped by hand (step) */
+    get lastNow(): number;
     /** advance one frame by hand (headless capture / fixed-step films) */
     step(dt: number): void;
 }

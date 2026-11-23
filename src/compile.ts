@@ -24,20 +24,23 @@ interface Queued {
   ok: (v: unknown) => void;
   fail: (e: unknown) => void;
   urgent: boolean;
+  /** whether the GPU has nothing more to be asked for it (made on the spot, or started by a record sharing it) */
+  asked: (() => boolean) | undefined;
 }
 
 export class SerialCompiler implements Compiler {
   readonly holding = false;
-  /** compiles asked of the GPU so far, made on the spot, and promoted via urge() */
-  readonly stats = { compiled: 0, now: 0, urged: 0 };
+  /** compiles asked of the GPU so far, made on the spot, promoted via urge(), and asks settled without a turn (their
+   *  compile already made: on the spot, or by a record sharing it) */
+  readonly stats = { compiled: 0, now: 0, urged: 0, spared: 0 };
   private queue: Queued[] = [];
   private busy = false;
   /** `frames`: frames waited between compiles (1) */
   constructor(private kit: Kit, private frames = 1) {}
 
-  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>): Promise<unknown> {
+  compile(rec: AnyPipelineRecord, start: () => Promise<unknown>, asked?: () => boolean): Promise<unknown> {
     return new Promise((ok, fail) => {
-      this.queue.push({ rec, start, ok, fail, urgent: false });
+      this.queue.push({ rec, start, ok, fail, urgent: false, asked });
       if (!this.busy) void this.pump();
     });
   }
@@ -58,8 +61,10 @@ export class SerialCompiler implements Compiler {
     this.busy = true;
     while (this.queue.length) {
       const item = this.queue.shift()!;
-      for (let i = 0; i < this.frames; i++) await nextFrame();
-      this.stats.compiled++;
+      // (one whose compile is already made — on the spot, or by the record it shares it with — asks the GPU nothing:
+      // settled at once, no frame spent waiting for its turn. A hundred made on the spot were a hundred idle frames)
+      if (!item.asked?.()) for (let i = 0; i < this.frames; i++) await nextFrame();
+      if (item.asked?.()) this.stats.spared++; else this.stats.compiled++;
       try {
         item.ok(await item.start());
       } catch (e) {

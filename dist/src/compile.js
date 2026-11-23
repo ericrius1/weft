@@ -12,8 +12,9 @@ export class SerialCompiler {
     kit;
     frames;
     holding = false;
-    /** compiles asked of the GPU so far, made on the spot, and promoted via urge() */
-    stats = { compiled: 0, now: 0, urged: 0 };
+    /** compiles asked of the GPU so far, made on the spot, promoted via urge(), and asks settled without a turn (their
+     *  compile already made: on the spot, or by a record sharing it) */
+    stats = { compiled: 0, now: 0, urged: 0, spared: 0 };
     queue = [];
     busy = false;
     /** `frames`: frames waited between compiles (1) */
@@ -21,9 +22,9 @@ export class SerialCompiler {
         this.kit = kit;
         this.frames = frames;
     }
-    compile(rec, start) {
+    compile(rec, start, asked) {
         return new Promise((ok, fail) => {
-            this.queue.push({ rec, start, ok, fail, urgent: false });
+            this.queue.push({ rec, start, ok, fail, urgent: false, asked });
             if (!this.busy)
                 void this.pump();
         });
@@ -46,9 +47,15 @@ export class SerialCompiler {
         this.busy = true;
         while (this.queue.length) {
             const item = this.queue.shift();
-            for (let i = 0; i < this.frames; i++)
-                await nextFrame();
-            this.stats.compiled++;
+            // (one whose compile is already made — on the spot, or by the record it shares it with — asks the GPU nothing:
+            // settled at once, no frame spent waiting for its turn. A hundred made on the spot were a hundred idle frames)
+            if (!item.asked?.())
+                for (let i = 0; i < this.frames; i++)
+                    await nextFrame();
+            if (item.asked?.())
+                this.stats.spared++;
+            else
+                this.stats.compiled++;
             try {
                 item.ok(await item.start());
             }

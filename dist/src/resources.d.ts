@@ -62,11 +62,17 @@ export declare class StorageBuffer implements Resource {
     stride: number;
     label: string;
     readonly usage: number;
+    /** freed for good (destroy) */
+    destroyed: boolean;
+    private cutSaid;
     constructor(kit: Kit, o: StorageOptions);
     /** bumped when its GPU buffer is replaced (and kit.resourceGen with it, so bind groups are checked again) */
     get version(): number;
     set version(n: number);
     private alloc;
+    /** upload `data` at `byteOffset`: what fits, in whole 4-byte words (the GPU takes no less). Data past the buffer's
+     *  end, or a last 1-3 bytes short of a word, is left out: said once per buffer (grow it first with ensure(), pad
+     *  the data to a multiple of 4) */
     write(data: ArrayBufferView | ArrayBuffer, byteOffset?: number): this;
     /** grow (contents are not kept); bind groups follow automatically */
     ensure(bytes: number): boolean;
@@ -119,6 +125,10 @@ export declare class Texture implements Resource {
     alloc(): boolean;
     /** a view, cached per descriptor until the texture is reallocated */
     view(d?: GPUTextureViewDescriptor): GPUTextureView;
+    private attach;
+    /** its view as a pass's attachment: mip 0 of layer 0, as a 2D view (kept until it's reallocated: a pass asks every
+     *  frame) */
+    get attachment(): GPUTextureView;
     /** a bindable/attachable view of one mip level (and optionally one layer) */
     mip(level: number, layer?: number): TexView;
     layer(i: number): TexView;
@@ -168,6 +178,10 @@ export declare class TexView {
     private id;
     constructor(texture: Texture, desc: GPUTextureViewDescriptor);
     get view(): GPUTextureView;
+    private att;
+    private attFor;
+    /** its view as a pass's attachment (2D), kept until its texture is reallocated */
+    get attachment(): GPUTextureView;
     get key(): string;
     /** a number per distinct description: views of equal descriptions share it (so they bind alike) */
     get descId(): number;
