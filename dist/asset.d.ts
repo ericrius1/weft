@@ -75,7 +75,8 @@ export interface HeroAsset {
      *  whose hierarchy HeroRig knows by name */
     parents: Int16Array;
 }
-/** a body that isn't a person (header.kind set and not 'human'): no CORE bones, its own hierarchy */
+/** a body that isn't a person (header.kind set and not 'human'): no CORE bones, its own hierarchy. A kind that's
+ *  there but empty (null, "", 0, false: an export that writes the key for every body) is a person's, as none is */
 export declare const isOwnBody: (h: HeroHeader) => boolean;
 export declare const VBYTES = 24;
 /** the bones a rig's arrays hold (HeroRig.bones, .dq): a body's own and what's added after them (Drake's robe adds
