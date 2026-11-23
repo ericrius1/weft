@@ -142,6 +142,7 @@ or a `GPUSampler` from `kit.sampler(desc)`.
 | `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame |
 | `pass.fullscreen(shader, { bind, … })` | a fullscreen triangle. The shader includes `weft/fullscreen` and has a fragment entry taking `FullscreenOut` |
 | `pass.bundle(label).draw(...)` | static draws recorded once into a `GPURenderBundle` and re-recorded only when something they use changes |
+| `pass.place(anchor, 'before' \| 'after', () => { …declare… })` | the draws and bundles declared inside go next to `anchor` (a draw or bundle of the pass, or a label) in the pass's order, not at its end. Returns them |
 | `kit.copy(src, dst)`, `kit.raw(enc => …)`, `kit.action(() => …)`, `pingpong.swap` | a copy, raw encoder access, and a CPU step at that point in the list |
 | `new MipChain(kit, tex)` | fills a texture's mips |
 | `new Taau(kit, hdr, depth, opts)` | temporal AA and upscaling. Run `taau.items`, then read `taau.out`. `opts.motion`: the moving draws' own motion (Recipes) |
@@ -235,8 +236,13 @@ the kit's.
    `Ref`. To vary what's drawn, change a uniform, a `count` function or an indirect buffer. For a buffer that loads
    later, bind `new Ref(() => this.buf ?? dummy)` with a small placeholder buffer, plus `enabled: () => !!this.buf`.
    **A pass draws its draws in the order they were declared**, so a system declared late lands after everything else,
-   including the translucent draws. Declare in drawing order, or give translucent work its own pass. (Three projects
-   have each written their own "insert this draw before that one" helper.)
+   including the translucent draws. Declare in drawing order, or give translucent work its own pass. For what has to
+   be declared late (a site streamed in, a chunk loaded on demand), `pass.place(anchor, 'before' | 'after', () => {
+   …declare the draws… })` puts what's declared inside next to `anchor` (a draw or bundle of that pass, or a label:
+   the first item with it): `scene.place(birds, 'after', () => new Hawk(kit, scene))`. With no anchor, or one that
+   isn't in the pass, they stay at the end. Only that pass's draws are placed, and only those declared before the
+   callback returns (not after an `await`). Don't splice `pass.draws` yourself: three projects each wrote that
+   helper, and one that counts by index goes wrong when the calls nest.
 3. **A uniform buffer has one value per `kit.run`.** Dirty uniforms are uploaded with `queue.writeBuffer` before the
    run's commands are submitted, so changing one in a `RunAction` or between two draws doesn't give those draws
    different values. Give each draw its own buffer, or index a storage array by instance.

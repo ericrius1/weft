@@ -665,6 +665,30 @@ export class RenderPass implements RunItem {
     this.draws.push(b);
     return b;
   }
+  // (place: where each call under way began in `draws`, the outermost first)
+  private placing: number[] = [];
+  /** the draws and bundles `add` declares in this pass, put right before or after `anchor` in its order instead of at
+   *  its end: a system declared late (a site streamed in, a chunk loaded on demand) drawn where it belongs, beside the
+   *  opaque draws and before the translucent ones. `anchor` is a draw or bundle of this pass, or a label (the first
+   *  item of this pass with it); null, or one not in the pass, leaves them at the end, where they were declared.
+   *  `add` declares at once (what it declares after an await isn't placed); while it runs its draws are at the end of
+   *  `draws`, as ever. A place inside `add` is fine. Returns what was placed, in order. */
+  place(anchor: PassItem | string | null | undefined, where: 'before' | 'after', add: () => void): PassItem[] {
+    const stack = this.placing, depth = stack.length;
+    stack.push(this.draws.length);
+    let placed: PassItem[] = [];
+    try { add(); } finally {
+      // (what `add` declared before it threw is placed too: the pass's order doesn't depend on how it ended)
+      placed = this.draws.splice(stack.pop()!);
+      const at = typeof anchor === 'string' ? this.draws.findIndex((d) => d.label === anchor) : anchor ? this.draws.indexOf(anchor) : -1;
+      if (placed.length) {
+        this.draws.splice(at < 0 ? this.draws.length : where === 'before' ? at : at + 1, 0, ...placed);
+        // (put ahead of what a place around this one has declared so far: that one's draws begin further on)
+        if (at >= 0) for (let i = 0; i < depth; i++) if (at < stack[i]) stack[i] += placed.length;
+      }
+    }
+    return placed;
+  }
   /** stop it for good: every draw and bundle in it is disposed */
   dispose() {
     for (const d of [...this.draws]) if (d instanceof Draw || d instanceof DrawBundle) d.dispose();
