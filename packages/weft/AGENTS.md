@@ -226,11 +226,13 @@ the kit's.
 
 ## Rules that save hours
 
-1. **A draw or compute with no pipeline yet does nothing, and nothing reports it.** A one-off pass run right after it's declared
+1. **A draw or compute with no pipeline yet does nothing, and no error reports it.** A one-off pass run right after it's declared
    (a bake, a mip fill, a readback) silently renders nothing. Await its own pipelines first:
    `await kit.ready(fill)`, `await pass.ready()` or `await kit.ready(items)`, then `kit.run(items)`. When nothing is
    given, `kit.ready()` waits for **every** pipeline declared so far, so don't use it to wait on one pass in the
-   middle of a game.
+   middle of a game. To find one: each skip is counted on the draw's or compute's record (`draw.pipe.skipped`,
+   `compute.pipe.skipped`; `kit.pipelines.filter((p) => p.skipped)` lists them all), and with `debug` the first skip of
+   each is a console warning that says whether it was still compiling or had failed.
 2. **Declare draws and computes once, at setup, and never inside the loop.** Each one is a pipeline record and a
    compile. For something that comes and goes, use `enabled`. To swap a resource, use `draw.set(name, value)` or a
    `Ref`. To vary what's drawn, change a uniform, a `count` function or an indirect buffer. For a buffer that loads
@@ -292,7 +294,8 @@ the kit's.
 - With `debug`, every item is encoded inside its own error scope, so a validation error names the pass it came from.
   Errors reach the console as `[weft <kind>] <label>: …`, and shader errors as `file:line:col`.
 - The `label` you give a resource, pass or draw is what errors, the overlay and GPU captures show. Name things.
-- `kit.ready()` resolves to `{ pipelines, failed, … }`. Log it once at startup.
+- `kit.ready()` resolves to `{ pipelines, distinct, failed, errors }`, `errors` being `{ label, message }` for each
+  pipeline that failed. Log it once at startup.
 - `kit.memory()` returns `{ textures, buffers, total }` in bytes. `kit.errors` holds the current errors.
 - Pictures from a headless or hidden tab: `await shot(kit, 'name')` with `shotSink({ dir })` in the Vite config, or
   `new Capture(kit)` with `cap.grab()` / `cap.step(dt)`. For films, `filmSink({ dir })` takes POSTed frames and audio.

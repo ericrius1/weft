@@ -1,10 +1,12 @@
-// A pass's draws (passes.ts): where a late-declared draw lands in its pass's order (RenderPass.place). Without a GPU
-// (fakekit.mjs). Run with `npm test` after `npm run build`.
+// A pass's draws (passes.ts): where a late-declared draw lands in its pass's order (RenderPass.place), and a draw or
+// compute run with no pipeline (counted, said in debug; kit.ready() names the failures). Without a GPU (fakekit.mjs).
+// Run with `npm test` after `npm run build`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fakeKit, shader, TRI } from './fakekit.mjs';
+import { fakeKit, shader, encoder, TRI } from './fakekit.mjs';
 
-const { RenderPass } = await import('../dist/src/passes.js');
+const { RenderPass, Compute } = await import('../dist/src/passes.js');
+const { StorageBuffer } = await import('../dist/src/resources.js');
 
 const labels = (pass) => pass.draws.map((d) => d.label);
 
@@ -80,4 +82,70 @@ test('place: a place inside a place keeps both, wherever the inner one puts its 
     pass.draw(sh, { label: 'e' });
   });
   assert.deepEqual(labels(pass), ['first', 'a', 'b', 'c0', 'c', 'd', 'e', 'z', 'last']);
+});
+
+// ---- a draw or compute run with no pipeline (PipelineRecord.skipped), and what kit.ready() says of the failures
+const FILL = `
+@group(1) @binding(0) var<storage, read_write> data: array<f32>;
+@compute @workgroup_size(64) fn fill(@builtin(global_invocation_id) id: vec3u) { data[id.x] = 1.0; }`;
+/** a command encoder as far as a compute's encode goes: `into` gets each dispatch */
+const commands = (into = []) => ({
+  beginComputePass: () => ({ setPipeline() {}, setBindGroup() {}, dispatchWorkgroups: (...a) => into.push(a), end() {} }),
+});
+
+test('a draw run before its pipeline is ready does nothing, and is counted; in debug the first time is said', async () => {
+  const kit = fakeKit(), sh = shader('test/tri.wgsl', TRI);
+  kit.debug = true;
+  const pass = new RenderPass(kit, { label: 'bake', color: [{ target: 'screen' }] });
+  const d = pass.draw(sh, { label: 'fill' });
+  const pe = encoder();
+  d.encodeInto(pe);
+  d.encodeInto(pe);
+  assert.deepEqual(pe.calls, []);
+  assert.equal(d.pipe.skipped, 2);
+  assert.deepEqual(kit.warned, ['skip:fill']);
+  assert.match(kit.warnings.get('skip:fill'), /before its pipeline was ready/);
+  await d.ready();
+  d.encodeInto(pe);
+  assert.deepEqual(pe.calls, [['setPipeline', 'fill'], ['draw', 3, 1, 0, 0]]);
+  assert.equal(d.pipe.skipped, 2, 'not counted once it draws');
+  // (off, or held back by a scheduler's gate: not a skip)
+  const off = pass.draw(sh, { label: 'off', enabled: false });
+  off.encodeInto(pe);
+  assert.equal(off.pipe.skipped, 0);
+  d.pipe.gate = () => false;
+  d.encodeInto(pe);
+  assert.equal(d.pipe.skipped, 2);
+});
+
+test('skips are counted without debug, but nothing is said; a compute is the same', async () => {
+  const kit = fakeKit(), sh = shader('test/fill.wgsl', FILL);
+  const c = new Compute(kit, sh, { label: 'fill', bind: { data: new StorageBuffer(kit, { size: 256 }) }, threads: [128] });
+  const ran = [];
+  c.encode(commands(ran));
+  assert.deepEqual(ran, []);
+  assert.equal(c.pipe.skipped, 1);
+  assert.deepEqual(kit.warned, []);
+  await c.ready();
+  c.encode(commands(ran));
+  assert.deepEqual(ran, [[2, 1, 1]]);
+  assert.equal(c.pipe.skipped, 1);
+});
+
+test('kit.ready() names what failed: errors, each with its label and message; a failed draw says so when skipped', async () => {
+  const kit = fakeKit(), sh = shader('test/tri.wgsl', TRI);
+  kit.debug = true;
+  kit.fail.add('broken');
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }] });
+  const fine = pass.draw(sh, { label: 'fine' });
+  // (a different descriptor, so it doesn't share the first one's compile)
+  const bad = pass.draw(sh, { label: 'broken', cull: 'none' });
+  const r = await kit.ready();
+  assert.equal(r.pipelines, 2);
+  assert.equal(r.failed, 1);
+  assert.deepEqual(r.errors, [{ label: 'broken', message: 'broken failed to compile' }]);
+  assert.deepEqual((await fine.ready()).errors, []);
+  bad.encodeInto(encoder());
+  assert.equal(bad.pipe.skipped, 1);
+  assert.match(kit.warnings.get('skip:broken'), /its pipeline failed: broken failed to compile/);
 });

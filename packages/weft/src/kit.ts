@@ -448,7 +448,7 @@ export class Kit {
    *
    *  Either way pipelines a compile scheduler holds back (deferred) aren't waited for: they're made on the spot when
    *  first used. Resolves with the records waited for, the distinct GPU pipelines among them (records with the same
-   *  descriptor share one) and the failures. */
+   *  descriptor share one) and the failures (`failed`, and `errors`: each one's label and message). */
   async ready(...items: Waitable[]) {
     return settle(items.length ? () => pipelinesOf(items) : () => this.pipelines);
   }

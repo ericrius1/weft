@@ -133,6 +133,9 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   /** ms from declared (or rebuilt) to its pipeline made: its own compile, or its wait for the one it shares */
   ms = 0;
   builds = 0;
+  /** times its draw or compute came up in a run with no pipeline to run with (still compiling, or failed) and so did
+   *  nothing; with kit.debug the first is warned of */
+  skipped = 0;
   /** waiting for kit.compiler to say when (kit.ready() doesn't wait for it) */
   deferred = false;
   /** drawn only while this says so (a scheduler holding a feature back until all of it has compiled) */
@@ -171,6 +174,13 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   makeNow(module: GPUShaderModule) { return makePipeline(this.kit, this.describe(), module, false) as P; }
   /** wait for its pipeline (see kit.ready) */
   ready() { return this.kit.ready(this.self); }
+  /** its draw or compute had no pipeline to run with: counted, and with kit.debug the first time is said */
+  skip() {
+    if (this.skipped++ || !this.kit.debug) return;
+    this.kit.warnOnce(`skip:${this.label}`, this.error
+      ? `${this.label}: skipped, its pipeline failed: ${this.error.split('\n')[0]}`
+      : `${this.label}: run before its pipeline was ready, so it did nothing that time (a one-off pass: await kit.ready(items) first)`);
+  }
 
   build() {
     const t0 = performance.now(), b = ++this.serial;
@@ -286,7 +296,9 @@ export async function settle(records: () => AnyPipelineRecord[]) {
     await Promise.allSettled(pend);
   }
   const all = records();
-  return { pipelines: all.length, distinct: new Set(all.map((p) => p.entry ?? p)).size, failed: all.filter((p) => p.error).length };
+  const errors: { label: string; message: string }[] = [];
+  for (const p of all) if (p.error) errors.push({ label: p.label, message: p.error });
+  return { pipelines: all.length, distinct: new Set(all.map((p) => p.entry ?? p)).size, failed: errors.length, errors };
 }
 
 function pickEntry(shader: Shader, stage: 'vertex' | 'fragment' | 'compute', name: string | undefined, label: string) {
@@ -368,7 +380,8 @@ export class Compute<S extends Shader = Shader> implements RunItem {
   get workgroupSize() { return this.shader.reflect.entries.find((e) => e.name === this.entry)?.workgroupSize ?? [1, 1, 1]; }
   encode(enc: GPUCommandEncoder, ts?: GPUComputePassTimestampWrites) {
     const p = this.pipe.pipeline;
-    if (!p || (this.pipe.gate && !this.pipe.gate())) return;
+    if (!p) { this.pipe.skip(); return; }
+    if (this.pipe.gate && !this.pipe.gate()) return;
     const pass = enc.beginComputePass({ label: this.label, timestampWrites: ts });
     pass.setPipeline(p);
     this.binder.apply(pass, this.opts.view ?? this.kit.mainView, this.opts.shared);
@@ -581,7 +594,8 @@ export class Draw<S extends Shader = Shader> {
     // (enabled first: a compile scheduler makes a deferred pipeline on the spot when it's read)
     if (!on(this.on_)) return;
     const p = this.pipe.pipeline;
-    if (!p || (this.pipe.gate && !this.pipe.gate())) return;
+    if (!p) { this.pipe.skip(); return; }
+    if (this.pipe.gate && !this.pipe.gate()) return;
     const o = this.opts;
     // (consecutive draws with one pipeline set it once)
     const tracked = enc as TrackedEncoder;
