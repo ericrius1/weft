@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.18
+
+Needs weft 0.2.9, as before. Two additions; nothing already drawn renders differently.
+
+- **`LavaFlow.dispose()`**: its computes, buffers, uniform and glow texture released, the bed's heights let go;
+  inert after (`disposed`).
+- **`ClipSet.dispose()`**: its three textures destroyed, queued uploads and the levels' CPU heights let go, tiles
+  still in flight dropped as they land; inert after (`disposed`).
+
 ## 0.1.17
 
 Needs weft 0.2.9. Additions and one fix; nothing already drawn renders differently.

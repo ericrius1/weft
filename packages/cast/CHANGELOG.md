@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2
+
+Against 0.7.1. One fix.
+
+- A DNC1 file whose header has `kind` there but empty (`null`, `''`, `0`, `false`) is a person's, as one with no
+  `kind` is: it was read as a body of its own (no CORE bones asked for, no garments fitted, `HeroRig` refusing it).
+
 ## 0.7.1
 
 Against 0.7.0. One addition; nothing else changes.

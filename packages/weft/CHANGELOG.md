@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.2.13
+
+Additions and fixes; nothing an app already draws changes, and the shaders are untouched.
+
+- **`RenderPass.place(anchor, 'before' | 'after', add)`**: the draws and bundles `add` declares in the pass go next
+  to `anchor` (a draw or bundle of the pass, or a label: the first item with it) instead of at the pass's end, and are
+  returned. No anchor, or one not in the pass: they stay at the end. Calls nest; what was declared before a throw is
+  still placed. In place of the "splice `pass.draws`" helper three projects carry.
+- **Skipped draws made visible**: a draw or compute run with no pipeline (still compiling, or failed) is counted on
+  its record (`draw.pipe.skipped`), and with `kit.debug` the first skip of each is warned of once. `kit.ready()`
+  resolves with `errors: { label, message }[]` beside `failed`.
+- **`DrawOptions.fallback`**: a draw (of the same pass, declared `enabled: false`) drawn in this one's place while
+  this one's pipeline has failed to compile. Opt-in. A record whose compile fails with no pipeline to go on with now
+  calls `changed()`, so a bundle records again.
+- **`SerialCompiler` spends no frame on an ask that needs no compile**: one whose pipeline was made on the spot
+  meanwhile, or a record sharing a compile already started. `Compiler.compile(rec, start, asked?)` gets the test as an
+  optional third argument (`SharedPipeline.asked`); `stats.spared` counts them, and `stats.compiled` now counts only
+  compiles asked of the GPU.
+- **The uniform writer is compiled once per struct**: `set()` no longer searches the field list per key or parses a
+  type per vector and matrix. The bytes written are the same (tested against the writer before it on every field
+  type); 4-5x faster in Node (the Frame as `View.update` sets it 2,700 -> 680 ns; 42 fields of an app's globals in
+  three sets 9,200 -> 1,860 ns).
+- **`kit.lastNow`**: the timestamp of the animation frame the loop last stepped on, readable (it was private, and
+  read through a cast).
+- **`StorageBuffer`**: `write` warns once per buffer when it leaves data out (past the end, or a last 1-3 bytes
+  short of a word; it always left them out). `destroyed` says it was freed; `ensure()` on a freed buffer makes it
+  anew, counted by the kit again, and warns once.
+- **`PipelineRecord.dispose()`** takes its failure out of `kit.errors` (unless another record of its label failed
+  too).
+- **`Profiler.dropped`**: the frame's timed passes past the 128 it has room for, which ran untimed; warned of once.
+- **Less garbage a frame**: `Texture.attachment` and `TexView.attachment` keep a pass's attachment view until the
+  texture is reallocated (it was looked up by a key string built per attachment per frame); a compute's workgroup
+  size is looked up when it's declared, not each dispatch; `View.update` refills one object.
+- AGENTS.md: `place`, `skipped`, `fallback`, `ready()`'s result, growing a uniform struct at its end,
+  `alphaToCoverage` and `ALPHA_TO_COVERAGE`, `writeMask`, `vertexBuffers`, loom's `sim/lava`.
+- The repo: `npm test` builds a package first when its `dist/` is older than its source (`tools/dist-fresh.mjs`).
+
 ## 0.2.12
 
 Additions and fixes; nothing an app already does changes, and the shaders are untouched.
