@@ -174,6 +174,7 @@ export class ClipLevel {
 
   /** whether (r, c) is still this window's, in its slot */
   wants(r: number, c: number) {
+    if (this.set.disposed) return false;
     const n = this.n, s = this.slots[(r % n) * n + (c % n)];
     return s.r === r && s.c === c;
   }
@@ -323,6 +324,8 @@ export class ClipSet {
   private ahead = 0;
   private aheadAt = 0;
   private dest = 0;
+  /** freed for good (dispose) */
+  disposed = false;
 
   constructor(readonly kit: Kit, readonly stream: ClipStream, readonly heightWindow: number, readonly colorWindow: number) {
     this.heights = kit.texture({ label: 'clip.heights', format: 'r32float', size: [heightWindow, heightWindow, 4], view: '2d-array', usage: ['sample', 'copy-dst'] });
@@ -352,9 +355,27 @@ export class ClipSet {
 
   get levels() { return [...this.h, ...this.c, this.m].filter((l): l is ClipLevel => !!l); }
 
+  /** free it for good (a world leaving this land): its three textures destroyed, the tiles waiting for their upload
+   *  let go, and with its levels the heights it kept on the CPU. Tiles still being fetched or decoded are dropped as
+   *  they land (no level wants them any more: the streamer is given Infinity for their priority). After it follow()
+   *  does nothing, heightAt() answers as where no level is in, and fill() writes empty levels. What binds its
+   *  textures (a shared group, a terrain's draws) is the world's to rebind or dispose, before this */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const j of this.ready) j.drop?.();
+    this.ready = [];
+    this.h.length = 0;
+    this.c.length = 0;
+    this.m = null;
+    this.changed.length = 0;
+    this.kit.release(this.heights, this.colors, this.mats);
+  }
+
   /** each frame: the windows follow the camera, the decoded tiles go up (within the frame's allowance), the fades
    *  move on; and the road ahead of a fast camera prefetched */
   follow(x: number, z: number) {
+    if (this.disposed) return;
     for (const l of this.levels) l.follow(x, z);
     const now = performance.now(), dt = Math.min(0.1, (now - this.lastTick) / 1000);
     this.lastTick = now;
@@ -431,6 +452,7 @@ export class ClipSet {
   }
 
   private queue(level: ClipLevel, r: number, c: number, bytes: number, put: () => void, drop?: () => void) {
+    if (this.disposed) { drop?.(); return; }
     this.ready.push({ level, r, c, bytes, put, drop, since: performance.now() });
   }
 
