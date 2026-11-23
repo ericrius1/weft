@@ -208,9 +208,9 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         if (b !== this.serial) return;
         this.error = (e as Error).message ?? String(e);
         this.kit.report('pipeline', this.label, this.error);
-        // (what it's baked into records again: a draw with a fallback draws that from now on)
-        if (!this._pipe) this.changed?.();
       }
+      // (failed with no pipeline to go on with: what it's baked into records again, a fallback's calls in its place)
+      if (this.error && !this._pipe && b === this.serial) this.changed?.();
     })();
     this.pending = p.finally(() => { if (this.pending === wrapped) this.pending = null; });
     const wrapped = this.pending;
