@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 import { Face, EXPRESSIONS } from '../dist/face.js';
 import { parseHero, CORE } from '../dist/asset.js';
 import { HeroRig } from '../dist/rig.js';
+import { groove } from '../dist/groove.js';
+import { beatGroove, glance } from '../dist/perform.js';
+import { sipAt, SIP_DUR } from '../dist/sip.js';
 
 const DT = 1 / 60;
 
@@ -305,4 +308,36 @@ test('HeroRig: walk and run maintain strict contralateral arm-leg opposition wit
       assert.ok(wristMax - wristMin > 0.14, `${label} wrist should flex/extend with distal overlapping action (range=${(wristMax - wristMin).toFixed(3)} rad)`);
     }
   }
+});
+
+test('groove, beatGroove, glance & sipAt: anticipation, overlapping phase lag, hold-and-shift gaze, and contented exhale', () => {
+  const F = { dip: 0.04, drop: 0.06, sway: 0.05, twist: 0.14, roll: 0.10, nod: 0.12, lag: 0.08, tilt: 0.08, rock: 0.06 };
+  // Pre-drop anticipation unweighting just before beat 3 (bar = 0.46 -> beat 1.84)
+  const preDrop = groove(0.46, 1, F);
+  const onDrop = groove(0.54, 1, F);
+  assert.ok(preDrop.bounce < 0, `expected slight anticipation unweighting before the one-drop, got ${preDrop.bounce.toFixed(4)}`);
+  assert.ok(onDrop.bounce > 0.05, `expected strong weighted drop on beat 3, got ${onDrop.bounce.toFixed(4)}`);
+  // Overlapping phase lag: at bar = 0.25 (hip sway crossing zero), lagged chest roll & head tilt haven't finished crossing yet
+  const cross = groove(0.25, 1, F);
+  assert.ok(Math.abs(cross.sway) < 1e-6 && Math.abs(cross.roll) > 0.01 && Math.abs(cross.tilt) > 0.02, 'chest roll and head tilt overlap behind hip weight transfer');
+
+  // beatGroove retains beat-aligned nod and adds lagged counter-tilt without moving shoulders (sway/twist = 0)
+  const bg = beatGroove(2, 1.5, { amt: 1, nod: 1, playing: true, seed: 0 });
+  assert.equal(bg.sway, 0);
+  assert.equal(bg.twist, 0);
+  assert.ok(bg.nod > 0 && Math.abs(bg.tilt) > 0);
+  // glance stays cleanly bounded and holds near min & max rather than oscillating without rest
+  const gs = Array.from({ length: 100 }, (_, i) => glance(i * 0.25, 0, 0.45));
+  assert.ok(Math.min(...gs) >= 0.15 - 1e-9 && Math.max(...gs) <= 0.60 + 1e-9);
+  assert.ok(gs.filter((v) => v <= 0.155).length >= 20, 'glance lingers calmly on instrument before shifting');
+
+  // sipAt anticipates with head-dip before tip, lingers eyes closed slightly past upright, and ends cleanly at SIP_DUR
+  const sPre = sipAt(0.55);
+  const sSip = sipAt(1.6);
+  const sAhh = sipAt(2.85);
+  const sEnd = sipAt(SIP_DUR);
+  assert.ok(sPre.nod < -0.02 && sPre.lips > 0.1, 'head dips slightly and lips part in anticipation of the rim');
+  assert.ok(sSip.tip > 0.9 && sSip.eyes > 0.9 && sSip.nod > 0.03, 'head tilts back smoothly while sipping with eyes closed');
+  assert.ok(sAhh.ahh > 0.5 && sAhh.nod > 0.01, 'contented exhale gently lifts head as cup settles');
+  assert.ok(sEnd.k === 0 && sEnd.tip === 0 && sEnd.ahh === 0, 'sip settles cleanly to rest by SIP_DUR');
 });

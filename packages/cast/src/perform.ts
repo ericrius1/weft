@@ -50,10 +50,12 @@ export class Heat {
 }
 
 // ---------------------------------------------------------------- the beat in the body
-/** the beat's pulse: a kick on each beat dying away (0..1), weaker when the player isn't playing */
+/** the beat's pulse: crisp downbeat impulse with slow-out decay (0..1), weaker when the player isn't playing */
 export function beatPulse(beat: number, playing = true): number {
   const ph = beat - Math.floor(beat);
-  return Math.exp(-ph * 6) * (playing ? 1 : 0.3);
+  // fast elastic attack on the beat + gentle slow-out exponential tail
+  const hit = Math.exp(-ph * 5.8);
+  return hit * (playing ? 1 : 0.3);
 }
 export interface BeatFeel {
   /** how much the body moves with it (1: Aether's band) and how much the head nods */
@@ -63,21 +65,36 @@ export interface BeatFeel {
   /** a player's own phase for the slow sway (Aether: its id's length) */
   seed?: number;
 }
-/** the beat in a player's body as a HeroRig groove (RigInput.groove): the spine leaning with the beat and rocking into
- *  each, a slow sway of the chest to the side, a nod on the beat (Aether's Performer.groove, in the rig's terms) */
+/** the beat in a player's body as a HeroRig groove (RigInput.groove): spine anticipation & rock into each beat,
+ *  slow weighted shoulder sway, overlapping head nod trailing the chest impulse, and gentle lagged head counter-tilt */
 export function beatGroove(beat: number, time: number, f: BeatFeel = {}, out: Groove = { bounce: 0, sway: 0, twist: 0, rock: 0, roll: 0, nod: 0, tilt: 0 }): Groove {
-  const amt = f.amt ?? 1, nod = f.nod ?? 1, pulse = beatPulse(beat, f.playing ?? true);
-  out.bounce = 0; out.sway = 0; out.twist = 0; out.tilt = 0;
-  out.rock = (Math.sin(beat * Math.PI) * 0.035 + pulse * 0.02) * amt;
-  out.roll = Math.sin(time * 0.6 + (f.seed ?? 0)) * 0.04 * amt;
-  out.nod = pulse * 0.09 * nod;
+  const amt = f.amt ?? 1, nod = f.nod ?? 1, playing = f.playing ?? true;
+  const pulse = beatPulse(beat, playing);
+  // subtle overlapping-action lag: head nod arrives slightly after the chest pulse while keeping beat-aligned bounce
+  const nodPulse = 0.55 * pulse + 0.45 * beatPulse(beat - 0.08, playing);
+  const ph = beat - Math.floor(beat);
+  // brief anticipation lift in the final 14% before each beat so the downbeat rock feels grounded
+  const ant = ph > 0.86 ? -0.008 * Math.sin(((ph - 0.86) / 0.14) * Math.PI) * (playing ? 1 : 0.3) : 0;
+  const swPh = time * 0.6 + (f.seed ?? 0);
+  // slow-in/slow-out dwell at each side of the chest sway
+  const sw = (Math.sin(swPh) - 0.12 * Math.sin(3 * swPh)) / 1.12;
+  const swLag = (Math.sin(swPh - 0.32) - 0.12 * Math.sin(3 * (swPh - 0.32))) / 1.12;
+  out.bounce = 0; out.sway = 0; out.twist = 0;
+  out.rock = (Math.sin(beat * Math.PI) * 0.035 + pulse * 0.022 + ant) * amt;
+  out.roll = sw * 0.04 * amt;
+  out.nod = nodPulse * 0.09 * nod;
+  out.tilt = -swLag * 0.014 * amt;
   return out;
 }
 
-/** now and then a glance at someone (the conductor, the audience), else at the instrument: how far the look goes from
- *  the instrument toward them (0..1; Aether's Performer.gaze). `seed` a player's own phase */
+/** now and then a glance at someone (the conductor, the audience), else at the instrument: crisp ease-out shift into a
+ *  calm attentive hold, then unhurried return (0.15 .. 0.15 + toward; Aether's Performer.gaze) */
 export function glance(time: number, seed = 0, toward = 0.45): number {
-  return smoothstep(0, 1, (Math.sin(time * 0.31 + seed * 2) - 0.35) * 3) * toward + 0.15;
+  const cyc = ((time * 0.052 + seed * 0.318) % 1 + 1) % 1;
+  // linger on the instrument (0..0.52), brisk gaze shift up (0.52..0.60), hold attentiveness (0.60..0.82), smooth return (0.82..0.94)
+  const rise = smoothstep(0.52, 0.60, cyc);
+  const fall = 1 - smoothstep(0.82, 0.94, cyc);
+  return rise * fall * toward + 0.15;
 }
 
 // ---------------------------------------------------------------- a keyboard
