@@ -174,6 +174,7 @@ export class Face {
   private T = blank();
   private rnd: () => number;
   private blinkT = 1;
+  private blinkDur = 0.17;
   private nextBlink: number;
   private blinkGap: [number, number];
   private saccT = 0;
@@ -223,7 +224,14 @@ export class Face {
     this.sipAhh = s ? s.ahh : 0;
   }
   /** a blink now */
-  blink() { if (this.blinkT >= 1) { this.blinkT = 0; this.lastBlinkAt = this.time; this.nextBlink = this.gap(); } }
+  blink() {
+    if (this.blinkT >= 1) {
+      this.blinkT = 0;
+      this.blinkDur = 0.145 + this.rnd() * 0.065;
+      this.lastBlinkAt = this.time;
+      this.nextBlink = this.gap();
+    }
+  }
   get speaking() { return !!this.speech && this.speech.w > 0.01; }
 
   private gap() { const [a, b] = this.blinkGap; return a + this.rnd() * (b - a); }
@@ -237,14 +245,14 @@ export class Face {
     for (const k of FACE_KEYS) T[k] = base[k] ?? 0;
     const R = this.rest;
     if (R) for (const k of FACE_KEYS) { const v = R[k]; if (v !== undefined) T[k] += v; }
-    let lookY = 0, lookP = 0, pulse = 0;
+    let lookY = 0, lookP = 0, pulseW = 0, pulseHz = 0;
     // the mood
     this.moodW = damp(this.moodW, this.moodK, 1 / Math.max(this.moodFade, 0.05), dt);
     if (this.moodW > 1e-3) {
       const E = this.moodE, w = this.moodW;
       for (const k of FACE_KEYS) { const v = E[k]; if (v !== undefined) T[k] += (v - T[k]) * w; }
       if (E.look) { lookY += E.look[0] * w; lookP += E.look[1] * w; }
-      if (E.pulse) pulse = Math.max(pulse, E.pulse * w);
+      if (E.pulse && w > pulseW) { pulseW = w; pulseHz = E.pulse; }
     }
     // passing expressions
     for (let i = this.flashes.length - 1; i >= 0; i--) {
@@ -253,14 +261,22 @@ export class Face {
       if (f.t > f.hold + f.fade) { this.flashes.splice(i, 1); continue; }
     }
     for (const f of this.flashes) {
-      const env = (f.hold > 0 ? smoothstep(0, f.fade, f.t) : 1) * (1 - smoothstep(f.hold, f.hold + f.fade, f.t)) * f.k;
+      const rise = f.hold > 0 ? smoothstep(0, f.fade, f.t) : 1;
+      const fall = 1 - smoothstep(f.hold, f.hold + f.fade, f.t);
+      // subtle elastic settle on fresh held expressions (Disney follow-through & appeal), zero overshoot on mood crossfades
+      const overU = f.hold > 0.15 ? Math.min(1, Math.max(0, (f.t - f.fade * 0.4) / Math.max(f.fade * 1.5, 0.12))) : 0;
+      const pop = f.hold > 0.15 ? 1 + 0.09 * Math.sin(Math.PI * overU) * (1 - smoothstep(f.fade * 0.4, f.fade * 2.1, f.t)) : 1;
+      const env = rise * fall * pop * f.k;
       if (env <= 1e-3) continue;
       for (const k of FACE_KEYS) { const v = f.e[k]; if (v !== undefined) T[k] += (v - T[k]) * env; }
       if (f.e.look) { lookY += f.e.look[0] * env; lookP += f.e.look[1] * env; }
-      if (f.e.pulse) pulse = Math.max(pulse, f.e.pulse * env);
+      if (f.e.pulse && env > pulseW) { pulseW = Math.min(1, env); pulseHz = f.e.pulse; }
     }
-    // (a laugh's rhythm: ha, ha, ha)
-    if (pulse > 0) T.open *= 0.55 + 0.45 * Math.abs(Math.sin(Math.PI * 4.2 * this.time));
+    // (a laugh or giggle's own rhythm: ha, ha, ha — using the expression's pulse rate, smoothly blended by its weight)
+    if (pulseW > 1e-3 && pulseHz > 0) {
+      const m = 0.55 + 0.45 * Math.abs(Math.sin(Math.PI * pulseHz * this.time));
+      T.open *= 1 + (m - 1) * Math.min(1, pulseW);
+    }
     // a sip
     if (this.sip > 1e-3) {
       const w = Math.min(this.sip, 1);
@@ -311,13 +327,18 @@ export class Face {
       if (d < 0.93 && this.time - this.lastBlinkAt > 0.8 && this.rnd() < 0.5) this.blink();
     }
     this.lastAim = aim ? [aim[0], aim[1], aim[2]] : null;
-    this.blinkT += dt / 0.17;
+    this.blinkT += dt / this.blinkDur;
     if (this.blinkT >= 1) {
       this.nextBlink -= dt;
-      if (this.nextBlink <= 0) this.blink();
+      if (this.nextBlink <= 0) {
+        const dbl = this.rnd() < 0.12;
+        this.blink();
+        if (dbl) this.nextBlink = 0.18 + this.rnd() * 0.1;
+      }
     }
     const bt = Math.min(this.blinkT, 1);
-    const blinkC = bt < 0.38 ? smoothstep(0, 0.38, bt) : 1 - smoothstep(0.38, 1, bt);
+    // brisk eyelid drop (~32% of blink), gentler slow-out opening (~68%) for organic living timing
+    const blinkC = bt < 0.32 ? smoothstep(0, 0.32, bt) : 1 - smoothstep(0.32, 1, bt);
     // the controls, eased (the mouth quick while talking)
     for (const k of FACE_KEYS) {
       const mouthK = (MOUTH_KEYS as readonly string[]).includes(k);

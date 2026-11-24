@@ -1003,6 +1003,14 @@ export class HeroRig {
   private lungs = 0.5;
   private breathK = 0;
   private breathShrug = 0;
+  /** organic breathing phase (integrated so rate shifts with exertion never jump), exertion envelope (0..1),
+   *  landing absorption impulse (0..1), inertial head pitch follow-through (rad, rad/s), and turn-lead anticipation */
+  private breathT = 0;
+  private exertion = 0;
+  private landK = 0;
+  private landNod = 0;
+  private landNodV = 0;
+  private turnLead = 0;
   get jawOpen() { return this.fx.jaw; }
   /** the face as the drawn face reads it: where the eyes look in the head's own axes (x her left, y up, z forward),
    *  how far they're shut, the expression */
@@ -1148,8 +1156,10 @@ export class HeroRig {
     }
     // (the face: where the eyes look, a blink under way, the expression)
     this.gaze = v3(from.gaze); this.blink = from.blink; this.fx = { ...from.fx };
-    // (the breath as the chest shows it)
+    // (the breath as the chest shows it, and landing / turn follow-through state)
     this.lungs = from.lungs; this.breathK = from.breathK; this.breathShrug = from.breathShrug;
+    this.breathT = from.breathT; this.exertion = from.exertion;
+    this.landK = from.landK; this.landNod = from.landNod; this.landNodV = from.landNodV; this.turnLead = from.turnLead;
     // (the cloth and the hair: this body's own, started at rest on the pose — not where they hung the last time)
     for (const c of this.chains) { c.prev = undefined; c.last = undefined; c.swing = undefined; c.swingV = undefined; c.roll = { up: [], dir: [] }; }
     this.lastCaps = null;
@@ -1396,7 +1406,7 @@ export class HeroRig {
       const caught = Math.min(this.catchUp, gdt * 1.5);
       this.catchUp -= caught;
       this.phase = (this.phase + gdt * this.cadence * (1 + 2 * hurry * runF + 2.5 * hurryW * (1 - runF)) + caught) % 1;
-      for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 2; i++) {
         const f = this.feet[i];
         const u0 = (prev + i * 0.5) % 1, u = (this.phase + i * 0.5) % 1;
         // lift-off: the local phase crosses the duty factor (speeding up into a run the duty falls as the phase rises:
@@ -1405,7 +1415,7 @@ export class HeroRig {
       }
     } else if (grounded) {
       // standing: a foot left behind (or turned away, or stopping) steps back under her — one at a time
-      for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 2; i++) {
         const f = this.feet[i], o = this.feet[1 - i];
         const side = i === 0 ? 1 : -1;
         const rest = add(add(I.pos, scale(left, side * stanceW)), scale(fwd, side * stanceFwd));
@@ -1432,6 +1442,9 @@ export class HeroRig {
       const g = Math.hypot(go[0], go[2]);
       if (g > v) go = scale(go, v / g);
     }
+    const jumpLaunch = !I.onGround && !I.flying && !swim
+      ? (1 - smoothstep(0.02, 0.22, I.jumpT ?? 9)) * smoothstep(0.5, 3.5, I.vel[1])
+      : 0;
     for (let i = 0; i < 2; i++) {
       const f = this.feet[i];
       const side = i === 0 ? 1 : -1;
@@ -1464,17 +1477,19 @@ export class HeroRig {
         continue;
       }
       if (!I.onGround) {
-        // airborne: a running leap strides through the air (the leading knee driven forward, the trailing leg
-        // stretched back); a standing jump tucks; falling, the legs reach down for the landing
+        // airborne: launch extension right off takeoff (push-off toe plantarflexion & upward drive: squash & stretch),
+        // then a running leap strides through the air or a standing jump tucks; falling, legs reach down for the landing
         const lk = smoothstep(1.5, 5, v), reach = smoothstep(-0.5, -4, I.vel[1]);
         const lead = i === 0;
-        const fw = lead ? lerp(0.06, 0.32, lk) : lerp(-0.04, -0.36, lk);
-        const upY = lerp(lead ? lerp(0.34, 0.24, lk) : lerp(0.3, 0.4, lk), 0.08, reach * 0.75);
+        const fw = lead ? lerp(0.06, 0.32, lk) : lerp(lerp(-0.04, -0.36, lk), -0.18, jumpLaunch);
+        const upY0 = lerp(lead ? lerp(0.34, 0.24, lk) : lerp(0.3, 0.4, lk), 0.08, reach * 0.75);
+        const upY = lead ? lerp(upY0, 0.32, jumpLaunch * 0.65) : lerp(upY0, -0.06, jumpLaunch * 0.85);
         const tgt = add(add(I.pos, scale(left, side * stanceW * 0.8)), add(scale(fwd, fw * (1 - 0.45 * reach) * s), [0, upY * s, 0]));
-        f.p = lerp3(add(f.p, disp), tgt, 1 - Math.exp(-dt * 10));
+        f.p = lerp3(add(f.p, disp), tgt, 1 - Math.exp(-dt * (10 + 4 * jumpLaunch)));
         f.planted = false; f.air = true; f.t = 0;
         f.yaw += angDiff(f.yaw, I.yaw + side * toeOut) * (1 - Math.exp(-dt * 8));
-        f.pitch = damp(f.pitch, lead ? 0.12 : lerp(-0.25, -0.7, lk) * (1 - reach * 0.6), 8, dt);
+        const airPitch = lead ? lerp(0.12, -0.15, jumpLaunch) : lerp(lerp(-0.25, -0.7, lk) * (1 - reach * 0.6), -0.72, jumpLaunch);
+        f.pitch = damp(f.pitch, airPitch, 10, dt);
         continue;
       }
       let pitch = 0;
@@ -1584,8 +1599,17 @@ export class HeroRig {
     // and stops holding it up). Running it sinks into each stance and rises through the flight.
     const bobR = -0.03 * Math.cos(2 * TAU * (ph - beta * 0.5)) * gw * runF * s;
     const GV = I.groove;
-    let py = I.pos[1] + standH - this.crouch - gw * 0.03 * runF * s + bobR - Math.min(I.wade * 0.08, 0.06) - (GV?.bounce ?? 0);
-    if (I.landImpact > 0) { this.pelYV -= Math.min(I.landImpact * 0.22, 0.9); I.landImpact = 0; }
+    if (I.landImpact > 0) {
+      // landing squash & weight absorption + delayed neck follow-through + involuntary impact blink on heavier drops
+      const imp = clamp(I.landImpact / 8, 0, 1);
+      this.pelYV -= Math.min(I.landImpact * 0.34, 1.4);
+      this.landK = Math.max(this.landK, imp);
+      this.landNodV += imp * 2.4;
+      if (imp > 0.45) this.face.blink();
+      I.landImpact = 0;
+    }
+    this.landK = damp(this.landK, 0, 4.2, dt);
+    let py = I.pos[1] + standH - this.crouch - this.landK * 0.11 * s - gw * 0.03 * runF * s + bobR - Math.min(I.wade * 0.08, 0.06) - (GV?.bounce ?? 0);
     const softMin = (a: number, b: number, k: number) => (a + b - Math.sqrt((a - b) * (a - b) + k * k)) * 0.5;
     const hipDrop = standH - sk.hipL[1];
     const reachOf = (i: number, ankle: V3) => {
@@ -1595,7 +1619,7 @@ export class HeroRig {
     };
     if (!(I.flying || swim) && sw < 0.5) {
       let reach = Infinity;
-      for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 2; i++) {
         const f = this.feet[i];
         const sp = this.moving ? clamp(((this.phase + i * 0.5) % 1) / beta, 0, 1) : 0;
         const w = f.planted ? 1 - smoothstep(lerp(0.6, 0.1, climb), lerp(1, 0.45, climb), sp) : smoothstep(0.8, 1, f.t);
@@ -1614,7 +1638,7 @@ export class HeroRig {
       // (a critically damped follower: smooth over stairs and bumps, quick enough to keep the gait's bob)
       [this.pelY, this.pelYV] = cdSpring(this.pelY, this.pelYV, py, 20, dt);
       if (this.pelY > py + 0.004) this.pelY = py + 0.004 + (this.pelY - py - 0.004) * Math.exp(-dt / 0.03);
-      if (this.pelY < py - 0.12 * s) { this.pelY = py - 0.12 * s; this.pelYV = Math.max(this.pelYV, 0); }
+      if (this.pelY < py - 0.18 * s) { this.pelY = py - 0.18 * s; this.pelYV = Math.max(this.pelYV, 0); }
     }
     // a planted foot the leg can't reach from there pushes off: its heel rises about the ball until it can
     if (!(I.flying || swim) && sw < 0.5 && I.onGround) for (let i = 0; i < 2; i++) {
@@ -1640,9 +1664,14 @@ export class HeroRig {
     const yawRate = this.first ? 0 : angDiff(this.lastYaw, I.yaw) / dt;
     this.lastYaw = I.yaw;
     this.turnLean = damp(this.turnLean, I.onGround ? clamp(-yawRate * v * 0.03, -0.2, 0.2) * gw : 0, 6, dt);
+    // anticipation & overlapping action: eyes and head lead into a turn ahead of the shoulders & hips
+    this.turnLead = damp(this.turnLead, I.onGround && !seat ? clamp(yawRate * 0.24, -0.45, 0.45) : 0, 8, dt);
 
-    // where she's attending to: the water while bending, else ahead / the camera's aim — never over her shoulder
-    let look = seat && sw > 0.3 ? seat.look : I.look ?? add(I.pos, add(scale(fwd, 6), [0, 1.5, 0]));
+    // where she's attending to: the water while bending, else ahead (leading into turns) / the camera's aim — never over her shoulder
+    const aheadDir: V3 = Math.abs(this.turnLead) > 1e-4
+      ? add(scale(fwd, Math.cos(this.turnLead)), scale(left, Math.sin(this.turnLead)))
+      : fwd;
+    let look = seat && sw > 0.3 ? seat.look : I.look ?? add(I.pos, add(scale(aheadDir, 6), [0, 1.5, 0]));
     if (this.flowW > 0.01) {
       const yw = 0.46 * 1.15 * Math.sin(flowPh);
       const hl = add(I.pos, add(add(scale(fwd, Math.cos(yw) * 1.6 * s), scale(left, Math.sin(yw) * 1.6 * s)), [0, 1.5 * s, 0]));
@@ -1676,6 +1705,7 @@ export class HeroRig {
     const flowTurn = this.flowW * 0.46 * Math.sin(flowPh);
     this.twist = damp(this.twist, clamp(lookYaw * 0.55, -0.7, 0.7) * Math.max(bendK, 0.3 * (1 - mk)) * (1 - this.flowW) * (1 - sw) + flowTurn + throwTwist, throwTwist !== 0 ? 18 : 6, dt);
     const leanWant = gw * (0.03 + 0.25 * runF) * Math.min(1, v / 2) + this.accLean + this.slopeLean + 0.06 * wadeK * gw
+      + this.landK * 0.22 - jumpLaunch * 0.1
       + (mode === 'push' || mode === 'throw' ? 0.22 : 0) + (mode === 'hold' ? 0.06 : 0) - (mode === 'wave' ? 0.08 : 0) + 0.5 * (I.hold?.stoop ?? 0);
     this.lean = damp(this.lean, lerp(leanWant, seat?.lean ?? 0.15, sw), 5, dt);
     // the gait through the body
@@ -1704,12 +1734,17 @@ export class HeroRig {
     const rel = (q: V3): V3 => sub(q, sk.pelvis);
     const waistW = frW(pel, rel(sk.waist));
     this.setBone(this.bi.pelvis, pel.o, waistW, pel.z);
-    // (the breath: the body's own slow rhythm, or a player's — set from what's at his lips — the chest lifting and
-    // opening as the lungs fill, the shoulders rising with it, both eased so a breath taken quickly never pops)
+    // (the breath: organic asymmetric inhale/exhale with lingering exertion after sprints, or a player's — set from
+    // what's at his lips — the chest lifting and opening as the lungs fill, the shoulders rising with it)
+    const exertGoal = clamp(runF * gw * 0.85 + (swim ? 0.65 : 0) + (I.flying && v > 15 ? 0.35 : 0), 0, 1);
+    this.exertion = damp(this.exertion, exertGoal, exertGoal > this.exertion ? 0.65 : 0.18, dt);
+    this.breathT += dt * lerp(1.55, 3.1, this.exertion);
+    const bp = ((this.breathT / TAU) % 1 + 1) % 1;
+    const bWave = (bp < 0.38 ? smoothstep(0, 0.38, bp) : bp < 0.84 ? 1 - smoothstep(0.38, 0.84, bp) : 0) - 0.42;
     this.lungs = damp(this.lungs, this.breath ? clamp(this.breath.v, 0, 1) : 0.5, 7, dt);
     this.breathK = damp(this.breathK, this.breath ? clamp(this.breath.k, 0, 1) : 0, 4, dt);
-    const breathe = lerp(Math.sin(I.time * 1.6) * 0.012, -(this.lungs - 0.5) * 0.05, this.breathK);
-    this.breathShrug = this.breathK * (this.lungs - 0.45) * 0.1;
+    const breathe = lerp(-bWave * lerp(0.022, 0.05, this.exertion), -(this.lungs - 0.5) * 0.05, this.breathK);
+    this.breathShrug = lerp(bWave * lerp(0.022, 0.048, this.exertion) * (1 - sw), (this.lungs - 0.45) * 0.1, this.breathK);
     const mid = frEuler(pel, (chYaw - pelYaw) * 0.2 * (1 - sw) + this.twist * 0.3 + A.twist * mk * 0.4, this.lean * (0.7 - pelShare) * 0.5 - A.arch * mk * 0.4, -pelList * 0.6 * (1 - sw) + A.bend * mk * 0.5);
     const chestBaseW = add(waistW, frD(mid, sub(sk.chestBase, sk.waist)));
     this.setBone(this.bi.spine, waistW, chestBaseW, mid.z);
@@ -1724,11 +1759,18 @@ export class HeroRig {
     const hpW = clamp(-Math.atan2(lv[1] - 0.15 * s, Math.hypot(lv[0], lv[2])), -0.6 - 0.35 * mk, 0.55) - A.headPitch * mk;
     this.headYaw = damp(this.headYaw, hyW, 7 + 7 * gw, dt);
     this.headPitch = damp(this.headPitch, hpW, 7 + 5 * gw, dt);
+    // overlapping action: inertial head pitch follow-through lagging slightly behind vertical landing & deceleration impulses
+    if (this.first) { this.landNod = 0; this.landNodV = 0; }
+    else {
+      const nodTarget = clamp(-this.pelYV * 0.14 - this.accLean * 0.25, -0.18, 0.22) * (1 - sw) * (1 - mk);
+      [this.landNod, this.landNodV] = cdSpring(this.landNod, this.landNodV, nodTarget, 11, dt);
+    }
+    const headLag = clamp(this.landNod, -0.22, 0.28);
     const gNod = GV?.nod ?? 0, gTilt = GV?.tilt ?? 0;
-    const nk = frEuler(ch, this.headYaw * NECK.turn, (this.headPitch + gNod) * NECK.nod, gTilt * 0.5);
+    const nk = frEuler(ch, this.headYaw * NECK.turn, (this.headPitch + gNod + headLag) * NECK.nod, gTilt * 0.5);
     const headBaseW = add(neckBaseW, frD(nk, sub(sk.headBase, sk.neckBase)));
     this.setBone(this.bi.neck, neckBaseW, headBaseW, nk.z);
-    const hd = frEuler(ch, this.headYaw, this.headPitch + gNod, gTilt);
+    const hd = frEuler(ch, this.headYaw, this.headPitch + gNod + headLag, gTilt);
     const headTopW = add(headBaseW, frD(hd, sub(sk.headTop, sk.headBase)));
     this.setBone(this.bi.head, headBaseW, headTopW, hd.z);
     this.J.chest = chestBaseW; this.J.pelvis = pelvis; this.J.head = add(headBaseW, scale(hd.y, 0.09 * s));
@@ -1759,8 +1801,9 @@ export class HeroRig {
       const pump = side * armAmp * Math.cos(TAU * (ph - 0.5 - 0.02)) - armAmp * 0.08;
       const sw0 = lerp(this.armSw[i].update(dt, [swing, 0, 0])[0], pump, runA);
       const elbR = 1.38 + 0.4 * clamp(sw0 / Math.max(armAmp, 0.1), -1, 1);
-      const elb = lerp(0.3 + Math.max(0, sw0) * 0.55, elbR, runA) + 0.03 * breathe * 40 * idle;
-      const abd = 0.155 + 0.05 * runA + 0.55 * wadeDeep;
+      const landArm = this.landK * (1 - sw) * (I.hold ? 0 : 1);
+      const elb = lerp(0.3 + Math.max(0, sw0) * 0.55, elbR, runA) + 0.03 * breathe * 40 * idle + 0.18 * landArm;
+      const abd = 0.155 + 0.05 * runA + 0.55 * wadeDeep + 0.24 * landArm;
       const uDir = rotateAxis([side * Math.sin(abd), -Math.cos(abd), 0], [1, 0, 0], -sw0 - 0.08 * wadeDeep);
       let fDir = rotateAxis(uDir, [1, 0, 0], -elb);
       this.elbAim[i] = frD(ch, uDir);
@@ -1787,9 +1830,13 @@ export class HeroRig {
         }
         relaxedW = lerp3(relaxedW, add(shW, frD(ch, h)), mk);
       } else if (!I.onGround) {
-        // in the air: arms open for balance (the arm opposite the leading leg forward, the other back and out)
+        // in the air: arms sweep up along a launch arc on takeoff, then open for balance (the arm opposite the leading leg forward)
         const shW = frW(chF, sub(shoulderBind, sk.chestBase));
         let airW = add(shW, add(scale(left, side * 0.32 * s), add(scale(fwd, (side > 0 ? -0.12 : 0.22) * s), [0, -0.14 * s, 0])));
+        if (jumpLaunch > 0.001) {
+          const launchW = add(shW, add(scale(left, side * 0.28 * s), add(scale(fwd, (side > 0 ? 0.14 : 0.26) * s), [0, 0.26 * s, 0])));
+          airW = lerp3(airW, launchW, jumpLaunch);
+        }
         // (a double jump: both arms thrown up and out overhead, a Y, on the way up — let down as she comes down)
         const jt = I.jumpT ?? 9, yk = I.jump === 2 ? smoothstep(0, 0.12, jt) * (1 - smoothstep(0.4, 0.75, jt)) : 0;
         if (yk > 0) airW = lerp3(airW, add(shW, add(scale(left, side * 0.3 * s), add(scale(fwd, 0.06 * s), [0, 0.5 * s, 0]))), yk);
@@ -2329,8 +2376,8 @@ export class HeroRig {
     const shrug = clamp((tl[1] + 0.05 * s) / (0.45 * s), 0, 1);
     const protract = clamp((tl[2] - 0.15 * s) / (0.35 * s), 0, 1);
     let cv = frD(chF, sub(shoulderBind, clavBind));
-    // (and a seat's shrug: a laugh's shoulders)
-    cv = rotateAxis(cv, ch.z, side * (shrug * 0.45 + this.seatShrug * 0.3 + this.breathShrug));
+    // (and a seat's shrug, living breath rise, and brief landing impact brace)
+    cv = rotateAxis(cv, ch.z, side * (shrug * 0.45 + this.seatShrug * 0.3 + this.breathShrug + this.landK * 0.07 * (1 - goalW)));
     cv = rotateAxis(cv, ch.y, -side * protract * 0.22);
     const shoulder = add(clavIn, cv);
     const ci = this.bi['clav' + T], ua = this.bi['uarm' + T], fa = this.bi['farm' + T], ha = this.bi['hand' + T];
@@ -3104,13 +3151,14 @@ export class HeroRig {
     const E = this.asset.header.eye;
     const head = this.bi.head;
     const eL = this.bi.eyeL, eR = this.bi.eyeR;
-    // a calm half-smile; focused (brows down, lips together) while bending; a breath out on a throw
+    // a calm half-smile; focused (brows down, lips together) while bending; a breath out on a throw; brief concentration on heavy landings
     const effort = mode === 'push' || mode === 'throw' ? 1 - smoothstep(0.2, 0.6, this.armT) : 0;
+    const landE = this.landK * 0.65;
     // (freezing: the brows hard down, a squint, a frown of effort)
     const freeze = mode === 'freeze' ? 1 : 0;
     const want: FaceExpr = {
-      smile: clamp(0.28 - 0.3 * bendK + 0.15 * effort, 0, 1), jaw: clamp(0.25 * effort + 0.06 * bendK - 0.12 * (1 - effort), -0.12, 0.6), pucker: 0, frown: 0.1 * freeze,
-      brows: 0.2 * effort, tender: 0, browDown: 0.5 * bendK + 0.3 * freeze, squint: 0.2 * freeze, wide: 0.3 * effort, closed: 0,
+      smile: clamp(0.28 - 0.3 * bendK + 0.15 * effort - 0.18 * landE, 0, 1), jaw: clamp(0.25 * effort + 0.06 * bendK + 0.06 * landE - 0.12 * (1 - effort), -0.12, 0.6), pucker: 0, frown: 0.1 * freeze,
+      brows: 0.2 * effort, tender: 0, browDown: 0.5 * bendK + 0.3 * freeze + 0.2 * landE, squint: 0.2 * freeze + 0.18 * landE, wide: 0.3 * effort, closed: 0,
     };
     const X = this.expr;
     if (X && X.k > 0) for (const k of FACE_KEYS) want[k] += ((X.face[k] ?? 0) - want[k]) * X.k;
