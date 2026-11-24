@@ -25,7 +25,7 @@ export declare class Heat {
     /** `active` how many notes sound, `last` the latest onset */
     update(dt: number, active: number, last: NoteEv | null, now: number): number;
 }
-/** the beat's pulse: a kick on each beat dying away (0..1), weaker when the player isn't playing */
+/** the beat's pulse: crisp downbeat impulse with slow-out decay (0..1), weaker when the player isn't playing */
 export declare function beatPulse(beat: number, playing?: boolean): number;
 export interface BeatFeel {
     /** how much the body moves with it (1: Aether's band) and how much the head nods */
@@ -36,11 +36,11 @@ export interface BeatFeel {
     /** a player's own phase for the slow sway (Aether: its id's length) */
     seed?: number;
 }
-/** the beat in a player's body as a HeroRig groove (RigInput.groove): the spine leaning with the beat and rocking into
- *  each, a slow sway of the chest to the side, a nod on the beat (Aether's Performer.groove, in the rig's terms) */
+/** the beat in a player's body as a HeroRig groove (RigInput.groove): spine anticipation & rock into each beat,
+ *  slow weighted shoulder sway, overlapping head nod trailing the chest impulse, and gentle lagged head counter-tilt */
 export declare function beatGroove(beat: number, time: number, f?: BeatFeel, out?: Groove): Groove;
-/** now and then a glance at someone (the conductor, the audience), else at the instrument: how far the look goes from
- *  the instrument toward them (0..1; Aether's Performer.gaze). `seed` a player's own phase */
+/** now and then a glance at someone (the conductor, the audience), else at the instrument: crisp ease-out shift into a
+ *  calm attentive hold, then unhurried return (0.15 .. 0.15 + toward; Aether's Performer.gaze) */
 export declare function glance(time: number, seed?: number, toward?: number): number;
 /** a keyboard's sounding notes shared between two hands (MIDI, any order): split at the widest gap when it's more than
  *  `gap` semitones (two hands), else all to one, the left if they're low (under `middle`) — [left, right], each low to

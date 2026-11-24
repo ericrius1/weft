@@ -566,6 +566,45 @@ export declare class HeroRig {
     private lungs;
     private breathK;
     private breathShrug;
+    /** organic breathing phase (integrated so rate shifts with exertion never jump), exertion envelope (0..1),
+     *  landing absorption impulse (0..1), elastic landing rebound spring (m, m/s), inertial head pitch follow-through
+     *  (rad, rad/s), momentum torso lean follow-through (rad, rad/s), turn-lead anticipation & arc tilt,
+     *  volumetric squash/stretch spring, hierarchical spine/chest/clavicle overlapping waves, and distal wrist lag */
+    private breathT;
+    private exertion;
+    private landK;
+    private landY;
+    private landYV;
+    private landNod;
+    private landNodV;
+    private inertLean;
+    private inertLeanV;
+    private turnLead;
+    private turnTilt;
+    private squash;
+    private squashV;
+    private spineLag;
+    private spineLagV;
+    private chestLag;
+    private chestLagV;
+    private clavDrop;
+    private clavDropV;
+    private wristFlex;
+    private wristFlexV;
+    private wristRoll;
+    private wristRollV;
+    private armSett;
+    private armSettV;
+    private lastSw;
+    private landFlex;
+    private landFlexV;
+    private recentSpd;
+    private brakeSink;
+    private brakeSinkV;
+    private fdOmega;
+    private airArmW;
+    private lastAirLoc;
+    private braidSway;
     get jawOpen(): number;
     /** the face as the drawn face reads it: where the eyes look in the head's own axes (x her left, y up, z forward),
      *  how far they're shut, the expression */

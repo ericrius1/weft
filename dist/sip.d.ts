@@ -33,7 +33,8 @@ export declare const CUPS: {
         h: number;
     };
 };
-/** the sip's shape at u s into it */
+/** the sip's shape at u s into it: purposeful lift with slow-out lip settle, overlapping head anticipation & tilt,
+ *  lingering eyes-closed savour, and unhurried lowered cup with a warm contented exhale */
 export declare function sipAt(u: number): SipShape;
 /** a cup's base and up so its near rim rests on the lower lip (lip: the lower lip's front, world; fwd: the way the face
  *  looks), tipped toward the face by `tip` of `maxTilt` (rad) */

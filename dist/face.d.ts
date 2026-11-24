@@ -322,12 +322,14 @@ export declare class Face {
     private T;
     private rnd;
     private blinkT;
+    private blinkDur;
     private nextBlink;
     private blinkGap;
     private saccT;
     private sacc;
     private time;
     private lastAim;
+    private gazeRef;
     private lastBlinkAt;
     private lastPhrase;
     private mouthTmp;
