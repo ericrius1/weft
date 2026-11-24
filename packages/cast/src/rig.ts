@@ -1683,7 +1683,7 @@ export class HeroRig {
     const fwdV = dot(I.vel, fwd);
     const acc = this.first ? 0 : (fwdV - this.lastFwdV) / dt;
     this.lastFwdV = fwdV;
-    this.accLean = damp(this.accLean, I.onGround && !I.flying ? clamp(acc * 0.026, -0.12, 0.14) : 0, 5, dt);
+    this.accLean = damp(this.accLean, I.onGround && !I.flying ? clamp(acc * 0.022, -0.1, 0.12) : 0, 5, dt);
     if (this.first || !I.onGround || I.flying || sw > 0.1) { this.inertLean = 0; this.inertLeanV = 0; }
     else {
       // underdamped upper-body inertia: stopping from a run carries chest forward past vertical then springs back to erect
@@ -1711,17 +1711,25 @@ export class HeroRig {
       look = lerp3(look, hl, this.flowW);
     }
     const idle = (1 - this.gaitW) * (1 - bendK) * (1 - mk) * (1 - sw);
-    if (idle > 0.01 && mode === 'idle' && !I.look) {
-      // pose-to-pose idle curiosity: hold a gaze target ~2.6s, then smoothly shift to the next point (eyes lead, head arcs after)
-      const gSlot = I.time / 3.1;
-      const gi = Math.floor(gSlot), gf = gSlot - gi;
-      const hashG = (n: number) => Math.sin(n * 127.1 + 311.7) * 43758.5453 % 1;
-      const g0 = (hashG(gi) * 2 - 1) * 0.9, g1 = (hashG(gi + 1) * 2 - 1) * 0.9;
-      const gy0 = (hashG(gi + 37) * 2 - 1) * 0.35, gy1 = (hashG(gi + 38) * 2 - 1) * 0.35;
-      const shiftG = smoothstep(0.76, 1.0, gf);
-      const latG = lerp(g0, g1, shiftG) + 0.08 * Math.sin(I.time * 0.7);
-      const upG = lerp(gy0, gy1, shiftG) + 0.06 * Math.sin(I.time * 0.45 + 1.1);
-      look = add(look, scale(add(scale(left, latG * len(sub(look, I.pos)) * 0.22), [0, upG * 0.65, 0]), idle));
+    const holdK = I.hold ? clamp(Math.max(I.hold.w[0] ?? 0, I.hold.w[1] ?? 0), 0, 1) : 0;
+    const freeK = (1 - holdK) * (this.anchor ? 0 : 1);
+    const freeIdle = idle * freeK;
+    if (idle > 0.01 && mode === 'idle') {
+      if (!I.look && freeIdle > 0.01) {
+        // pose-to-pose idle curiosity: hold a gaze target ~2.6s, then smoothly shift to the next point (eyes lead, head arcs after)
+        const gSlot = I.time / 3.1;
+        const gi = Math.floor(gSlot), gf = gSlot - gi;
+        const hashG = (n: number) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+        const g0 = (hashG(gi) * 2 - 1) * 0.9, g1 = (hashG(gi + 1) * 2 - 1) * 0.9;
+        const gy0 = (hashG(gi + 37) * 2 - 1) * 0.35, gy1 = (hashG(gi + 38) * 2 - 1) * 0.35;
+        const shiftG = smoothstep(0.76, 1.0, gf);
+        const latG = lerp(g0, g1, shiftG) + 0.06 * Math.sin(I.time * 0.7);
+        const upG = lerp(gy0, gy1, shiftG) + 0.05 * Math.sin(I.time * 0.45 + 1.1);
+        look = add(look, scale(add(scale(left, latG * len(sub(look, I.pos)) * 0.16), [0, upG * 0.48, 0]), freeIdle));
+      } else {
+        const tt0 = I.time;
+        look = add(look, scale(add(scale(left, (Math.sin(tt0 * 0.21) * 0.9 + Math.sin(tt0 * 0.53 + 1) * 0.35) * len(sub(look, I.pos)) * 0.12), [0, Math.sin(tt0 * 0.29 + 2) * 0.25, 0]), idle));
+      }
     }
     // flying she looks where she's going (a little below her path), unless she's bending
     if (mk > 0.001 && !(bendK > 0.2 || mode !== 'idle')) {
@@ -1745,16 +1753,16 @@ export class HeroRig {
     const throwTwist = mode === 'push' || mode === 'throw' ? (tt < 0.12 ? -0.45 * ease(tt / 0.12) : tt < 0.3 ? -0.45 + 0.95 * ease((tt - 0.12) / 0.18) : 0.5 * (1 - ease(clamp((tt - 0.3) / 0.5, 0, 1)))) : 0;
     const flowTurn = this.flowW * 0.46 * Math.sin(flowPh);
     this.twist = damp(this.twist, clamp(lookYaw * 0.55, -0.7, 0.7) * Math.max(bendK, 0.3 * (1 - mk)) * (1 - this.flowW) * (1 - sw) + flowTurn + throwTwist, throwTwist !== 0 ? 18 : 6, dt);
-    const leanWant = gw * (0.03 + 0.25 * runF) * Math.min(1, v / 2) + this.accLean + this.inertLean + this.slopeLean + 0.06 * wadeK * gw
+    const leanWant = gw * (0.03 + 0.25 * runF) * Math.min(1, v / 2) + this.accLean + this.slopeLean + 0.06 * wadeK * gw
       + this.landK * 0.26 - Math.max(0, this.landY) * 2.6 - jumpLaunch * 0.14
       + (mode === 'push' || mode === 'throw' ? 0.22 : 0) + (mode === 'hold' ? 0.06 : 0) - (mode === 'wave' ? 0.08 : 0) + 0.5 * (I.hold?.stoop ?? 0);
     this.lean = damp(this.lean, lerp(leanWant, seat?.lean ?? 0.15, sw), 5, dt);
-    // the gait through the body (rich contrapposto shift while standing idle breaks static symmetry)
+    // the gait through the body (rich contrapposto shift while standing idle breaks static symmetry, damped during precision holds)
     const drift = Math.sin(I.time * 0.45) + 0.35 * Math.sin(I.time * 0.17 + 1.3);
     const sway = lerp(0.026, 0.009, runF) * s * Math.sin(TAU * (ph - 0.06)) * amp;
-    const shift = idle * drift * 0.011 * s + this.idleW * 0.046 * s + sway + this.flowW * Math.sin(flowPh) * 0.065 * s + (GV?.sway ?? 0);
+    const shift = idle * drift * lerp(0.008, 0.011, freeK) * s + this.idleW * lerp(0.034, 0.046, freeK) * s + sway + this.flowW * Math.sin(flowPh) * 0.065 * s + (GV?.sway ?? 0);
     const pelYaw = -amp * lerp(0.075, 0.11, runF) * Math.cos(TAU * ph);
-    const pelList = amp * lerp(0.065, 0.03, runF) * Math.cos(TAU * (ph - 0.12)) + idle * drift * 0.015 + this.idleW * 0.105 + this.slopeList * (1 - mk);
+    const pelList = amp * lerp(0.065, 0.03, runF) * Math.cos(TAU * (ph - 0.12)) + idle * drift * lerp(0.012, 0.015, freeK) + this.idleW * lerp(0.09, 0.105, freeK) + this.slopeList * (1 - mk);
     const chYaw = amp * lerp(0.09, 0.2, runF) * Math.cos(TAU * ph);
     let pelvis: V3 = [I.pos[0] + left[0] * shift, this.pelY, I.pos[2] + left[2] * shift];
     let pelFr: Fr = { o: pelvis, x: B.x, y: B.y, z: B.z };
@@ -1784,12 +1792,12 @@ export class HeroRig {
     const bWave = (bp < 0.38 ? smoothstep(0, 0.38, bp) : bp < 0.84 ? 1 - smoothstep(0.38, 0.84, bp) : 0) - 0.42;
     this.lungs = damp(this.lungs, this.breath ? clamp(this.breath.v, 0, 1) : 0.5, 7, dt);
     this.breathK = damp(this.breathK, this.breath ? clamp(this.breath.k, 0, 1) : 0, 4, dt);
-    const breathe = lerp(-bWave * lerp(0.022, 0.05, this.exertion), -(this.lungs - 0.5) * 0.05, this.breathK);
-    this.breathShrug = lerp(bWave * lerp(0.022, 0.048, this.exertion) * (1 - sw), (this.lungs - 0.45) * 0.1, this.breathK);
-    const mid = frEuler(pel, (chYaw - pelYaw) * 0.2 * (1 - sw) + this.twist * 0.3 + A.twist * mk * 0.4, this.lean * (0.7 - pelShare) * 0.5 - A.arch * mk * 0.4, -pelList * 0.6 * (1 - sw) + A.bend * mk * 0.5);
+    const breathe = lerp(lerp(Math.sin(I.time * 1.6) * 0.012, -bWave * lerp(0.022, 0.05, this.exertion), freeK), -(this.lungs - 0.5) * 0.05, this.breathK);
+    this.breathShrug = lerp(bWave * lerp(0.022, 0.048, this.exertion) * (1 - sw) * freeK, (this.lungs - 0.45) * 0.1, this.breathK);
+    const mid = frEuler(pel, (chYaw - pelYaw) * 0.2 * (1 - sw) + this.twist * 0.3 + A.twist * mk * 0.4, this.lean * (0.7 - pelShare) * 0.5 + this.inertLean * 0.35 * (1 - sw) - A.arch * mk * 0.4, -pelList * 0.6 * (1 - sw) + A.bend * mk * 0.5);
     const chestBaseW = add(waistW, frD(mid, sub(sk.chestBase, sk.waist)));
     this.setBone(this.bi.spine, waistW, chestBaseW, mid.z);
-    const ch = frEuler(pel, (chYaw - pelYaw) * (1 - sw) + this.twist * 0.75 + A.twist * mk + (GV?.twist ?? 0), this.lean * (1 - pelShare) + breathe - A.arch * mk - 0.06 * sw + (GV?.rock ?? 0),
+    const ch = frEuler(pel, (chYaw - pelYaw) * (1 - sw) + this.twist * 0.75 + A.twist * mk + (GV?.twist ?? 0), this.lean * (1 - pelShare) + this.inertLean * 0.65 * (1 - sw) + breathe - A.arch * mk - 0.06 * sw + (GV?.rock ?? 0),
       -pelList * 1.1 * (1 - sw) + A.bend * mk + (GV?.roll ?? 0));
     const chF: Fr = { o: chestBaseW, x: ch.x, y: ch.y, z: ch.z };
     const neckBaseW = frW(chF, sub(sk.neckBase, sk.chestBase));
@@ -1808,7 +1816,7 @@ export class HeroRig {
     }
     const headLag = clamp(this.landNod, -0.22, 0.3);
     // subtle curved-arc roll tilt when looking/turning to one side or shifting idle weight (Disney Arcs + Appeal)
-    const idleTilt = idle * (this.idleW * -0.055 + clamp(this.headYaw * 0.08, -0.06, 0.06));
+    const idleTilt = freeIdle * (this.idleW * -0.055 + clamp(this.headYaw * 0.08, -0.06, 0.06));
     const gNod = GV?.nod ?? 0, gTilt = (GV?.tilt ?? 0) + this.turnTilt + idleTilt;
     const nk = frEuler(ch, this.headYaw * NECK.turn, (this.headPitch + gNod + headLag) * NECK.nod, gTilt * 0.5);
     const headBaseW = add(neckBaseW, frD(nk, sub(sk.headBase, sk.neckBase)));
@@ -1846,7 +1854,7 @@ export class HeroRig {
       const elbR = 1.38 + 0.4 * clamp(sw0 / Math.max(armAmp, 0.1), -1, 1);
       const landArm = this.landK * (1 - sw) * (I.hold ? 0 : 1);
       // anti-twinning idle asymmetry (weight-bearing side hangs longer, relaxed side flexes softly) + centrifugal turn counterbalance
-      const idleAsym = idle * (side * this.idleW < 0 ? Math.abs(this.idleW) : 0);
+      const idleAsym = freeIdle * (side * this.idleW < 0 ? Math.abs(this.idleW) : 0);
       const bankArm = clamp(-side * this.turnLean * 0.65, 0, 0.16);
       const stopSwing = this.inertLean * 0.45 * (1 - gw * 0.5) * (1 - sw);
       const elb = lerp(0.3 + Math.max(0, sw0) * 0.55, elbR, runA) + 0.03 * breathe * 40 * idle + 0.11 * idleAsym + 0.24 * landArm;
