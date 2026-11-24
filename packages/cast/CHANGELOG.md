@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.3
+
+Against 0.7.2. Disney 12 Principles of Animation pass across character locomotion, facial expression, dance/groove, performance sway, and tea-drinking. Zero public API changes.
+
+- **Hero body mechanics, squash/stretch & overlapping action (`rig.ts`)**:
+  - Contralateral walk/run arm-leg opposition locked directly to ankle phase with balanced backswing and smooth pelvis yaw; replaced explicit Euler body springs with exact closed-form damped harmonic oscillators (`springExact`), frame-rate invariant across 20/30/60 fps.
+  - Hierarchical overlapping action from bottom up: pelvis → lumbar → chest → clavicle → elbow → distal wrist (`fdOmega`) → head and cascading braid/hair S-wave whip.
+  - Zero-input-lag jump push-coil anticipation → continuous parabola stretch & buoyant apex hang-time → aerodynamic counterbalance arms → smooth air-to-ground pole/velocity blend → elastic underdamped landing squash-rebound (+27 mm) with delayed inertial head nod, arm brace, landing focus expression, and horizon VOR gaze lock.
+  - Wide split braking catch-step, upper-body deceleration follow-through (`inertLean`) with elastic rebound, and head → chest → pelvis turn-lead anticipation cascade with hard torso-space arm clearance and bank counterbalance.
+  - Organic exertion-coupled breathing and pose-to-pose idle curiosity glances with contrapposto/arm asymmetry (damped cleanly during precision instrument holds so flute/guitar/fiddle/piano finger contacts remain exact).
+- **Expressive face (`face.ts`)**:
+  - Asymmetric fast-close / slow-open blinks, accumulated smooth gaze-shift anticipation blinks, eye-gaze to upper-eyelid & brow coupling, smile-flash brow accent, and per-expression pulse rates (`EXPRS[k].hz`).
+- **Dance groove, musical performance & sipping (`groove.ts`, `perform.ts`, `sip.ts`)**:
+  - `groove()`: pre-beat & pre-one-drop anticipation lift, slow-in/slow-out `weightWave()` foot-plant dwell, and overlapping hip-sway → chest-roll/twist → head-tilt phase lag.
+  - `beatGroove()` & `glance()`: pre-beat anticipation + overlapping lagged head nod & counter-tilt (keeping `sway = 0, twist = 0` for precision instrument holds) and saccadic hold-and-shift glances.
+  - `sipAt()`: purposeful ease-out cup lift, early head-dip anticipation to meet the rim, lingering eyes-closed overlap, slower relaxed lower, and subtle exhale head lift.
+- **Tests**: expanded `test/disney.test.mjs` covering HeroRig locomotion/jumps/braking/turns/instrument-safety, Face blinking/gaze-lid coupling, and `groove`/`beatGroove`/`glance`/`sipAt`.
+
 ## 0.7.2
 
 Against 0.7.1. One fix.
