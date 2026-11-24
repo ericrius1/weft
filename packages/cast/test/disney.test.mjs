@@ -194,3 +194,58 @@ test('HeroRig: jump takeoff launch extends arms up before mid-air balance & carr
   rig2.update(baseInput({ time: t + DT, pos: [0, 1.1, 0], vel: [0, -1.8, -1], speed: 1, onGround: false, jumpT: 0.8 }));
   assert.ok(Number.isFinite(rig2.J.pelvis[1]) && Number.isFinite(rig2.J.head[1]));
 });
+
+test('Face: eye gaze couples into upper eyelid follow & smooth gaze shifts trigger anticipation blinks', () => {
+  const f = new Face({ seed: 7 });
+  for (let i = 0; i < 30; i++) f.update(DT, {}, [0, 0, 1]);
+  const levelLid = f.state.lidUp;
+  // Look downward -> upper lid follows iris downward (higher lidUp)
+  for (let i = 0; i < 35; i++) f.update(DT, {}, [0, -0.45, 0.89]);
+  assert.ok(f.state.lidUp > levelLid + 0.08, `looking down should lower upper lid (${f.state.lidUp.toFixed(3)} vs ${levelLid.toFixed(3)})`);
+  // Smooth turn across > 30 deg triggers an organic transition blink across seeds
+  let blinked = false;
+  for (let seed = 1; seed <= 8 && !blinked; seed++) {
+    const g = new Face({ seed, blinkGap: [20, 25] });
+    for (let i = 0; i < 15; i++) g.update(DT, {}, [0, 0, 1]);
+    for (let i = 0; i < 20; i++) {
+      const ang = (i / 20) * 0.7;
+      const st = g.update(DT, {}, [Math.sin(ang), 0, Math.cos(ang)]);
+      if (st.blink > 0.2) { blinked = true; break; }
+    }
+  }
+  assert.ok(blinked, 'smooth accumulated gaze shift should trigger an organic turn blink');
+});
+
+test('HeroRig: landing exhibits elastic upward rebound after squash and deceleration stop carries torso follow-through', async () => {
+  const asset = await synthPerson();
+  const rig = new HeroRig(asset);
+  let t = 0;
+  for (let i = 0; i < 40; i++) { t += DT; rig.update(baseInput({ time: t })); }
+  const restPelY = rig.J.pelvis[1];
+  let minPel = restPelY, maxPelAfterDrop = restPelY - 1;
+  let dropped = false;
+  for (let i = 0; i < 70; i++) {
+    t += DT;
+    rig.update(baseInput({ time: t, landImpact: i === 0 ? 7.5 : 0 }));
+    if (rig.J.pelvis[1] < minPel) minPel = rig.J.pelvis[1];
+    if (restPelY - rig.J.pelvis[1] > 0.04) dropped = true;
+    if (dropped && rig.J.pelvis[1] > maxPelAfterDrop) maxPelAfterDrop = rig.J.pelvis[1];
+  }
+  assert.ok(restPelY - minPel > 0.06, `deep landing compression expected (${(restPelY - minPel).toFixed(3)} m)`);
+  assert.ok(maxPelAfterDrop > restPelY + 0.001, `elastic landing rebound should briefly rise past rest (${maxPelAfterDrop.toFixed(4)} vs ${restPelY.toFixed(4)})`);
+
+  // Decelerating sharply from a run carries upper chest forward in follow-through
+  for (let i = 0; i < 40; i++) {
+    t += DT;
+    rig.update(baseInput({ time: t, pos: [0, 0, -i * DT * 5], vel: [0, 0, -5], speed: 5, running: true }));
+  }
+  let maxStopLean = -1;
+  for (let i = 0; i < 20; i++) {
+    t += DT;
+    const v = Math.max(0, 5 - i * 0.9);
+    rig.update(baseInput({ time: t, pos: [0, 0, -3.3 - i * DT * v], vel: [0, 0, -v], speed: v, running: false }));
+    const fwdLean = rig.J.chest[2] - rig.J.pelvis[2]; // negative z is forward
+    maxStopLean = Math.max(maxStopLean, -fwdLean);
+  }
+  assert.ok(maxStopLean > 0.04, `stopping from a run should carry torso forward (${maxStopLean.toFixed(3)} m)`);
+});

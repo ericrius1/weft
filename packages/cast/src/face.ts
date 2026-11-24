@@ -181,6 +181,7 @@ export class Face {
   private sacc: [number, number] = [0, 0];
   private time = 0;
   private lastAim: V3 | null = null;
+  private gazeRef: V3 | null = null;
   private lastBlinkAt = -9;
   private lastPhrase = -1;
   private mouthTmp: Mouth = { open: 0, spread: 0, round: 0, press: 0, teeth: 0, tongue: 0, tuck: 0 };
@@ -269,6 +270,11 @@ export class Face {
       const env = rise * fall * pop * f.k;
       if (env <= 1e-3) continue;
       for (const k of FACE_KEYS) { const v = f.e[k]; if (v !== undefined) T[k] += (v - T[k]) * env; }
+      // subtle brow lift staging accent at the onset of fresh expressive flashes
+      if (f.hold > 0.15 && (f.e.smile ?? 0) > 0.4 && f.t < f.fade * 2.2) {
+        const ba = Math.sin(Math.PI * overU) * (1 - smoothstep(f.fade * 0.4, f.fade * 2.2, f.t)) * 0.1 * f.k;
+        T.browInL += ba; T.browInR += ba; T.browOutL += ba * 0.7; T.browOutR += ba * 0.7;
+      }
       if (f.e.look) { lookY += f.e.look[0] * env; lookP += f.e.look[1] * env; }
       if (f.e.pulse && env > pulseW) { pulseW = Math.min(1, env); pulseHz = f.e.pulse; }
     }
@@ -321,10 +327,29 @@ export class Face {
         if (pi > 0 && this.rnd() < 0.5) this.blink();
       }
     } else this.lastPhrase = -1;
-    // blinks (and one with a big look elsewhere)
-    if (aim && this.lastAim) {
-      const d = aim[0] * this.lastAim[0] + aim[1] * this.lastAim[1] + aim[2] * this.lastAim[2];
-      if (d < 0.93 && this.time - this.lastBlinkAt > 0.8 && this.rnd() < 0.5) this.blink();
+    // blinks (both on sudden target jumps AND accumulated smooth gaze/head turns > ~22 deg: Disney eye-lead anticipation)
+    if (aim) {
+      if (this.lastAim) {
+        const d = aim[0] * this.lastAim[0] + aim[1] * this.lastAim[1] + aim[2] * this.lastAim[2];
+        if (d < 0.93 && this.time - this.lastBlinkAt > 0.8 && this.rnd() < 0.65) { this.blink(); this.gazeRef = [aim[0], aim[1], aim[2]]; }
+      }
+      if (!this.gazeRef) this.gazeRef = [aim[0], aim[1], aim[2]];
+      else {
+        const dr = aim[0] * this.gazeRef[0] + aim[1] * this.gazeRef[1] + aim[2] * this.gazeRef[2];
+        if (dr < 0.925 && this.time - this.lastBlinkAt > 0.95) {
+          if (this.rnd() < 0.78) this.blink();
+          this.gazeRef = [aim[0], aim[1], aim[2]];
+        } else {
+          const rk = 1 - Math.exp(-3.2 * dt);
+          const gx = this.gazeRef[0] + (aim[0] - this.gazeRef[0]) * rk;
+          const gy = this.gazeRef[1] + (aim[1] - this.gazeRef[1]) * rk;
+          const gz = this.gazeRef[2] + (aim[2] - this.gazeRef[2]) * rk;
+          const gl0 = Math.hypot(gx, gy, gz) || 1;
+          this.gazeRef = [gx / gl0, gy / gl0, gz / gl0];
+        }
+      }
+    } else {
+      this.gazeRef = null;
     }
     this.lastAim = aim ? [aim[0], aim[1], aim[2]] : null;
     this.blinkT += dt / this.blinkDur;
@@ -339,14 +364,6 @@ export class Face {
     const bt = Math.min(this.blinkT, 1);
     // brisk eyelid drop (~32% of blink), gentler slow-out opening (~68%) for organic living timing
     const blinkC = bt < 0.32 ? smoothstep(0, 0.32, bt) : 1 - smoothstep(0.32, 1, bt);
-    // the controls, eased (the mouth quick while talking)
-    for (const k of FACE_KEYS) {
-      const mouthK = (MOUTH_KEYS as readonly string[]).includes(k);
-      const rate = mouthK ? (talk > 0.05 ? 34 : 14) : k === 'blush' ? 3 : k === 'happy' || k === 'shut' ? 10 : 8;
-      S[k] = damp(S[k], T[k], rate, dt);
-    }
-    S.blink = Math.max(blinkC * (1 - S.happy), Math.min(1, S.shut));
-    S.talk = talk; S.emph = emph;
     // the gaze: the aim (clamped to where eyes can turn), the saccades, the expression's glance
     this.saccT -= dt;
     if (this.saccT <= 0) {
@@ -362,6 +379,22 @@ export class Face {
     g[0] += (tx - g[0]) * k; g[1] += (ty - g[1]) * k; g[2] += (tz - g[2]) * k;
     const gl = Math.hypot(g[0], g[1], g[2]) || 1;
     g[0] /= gl; g[1] /= gl; g[2] /= gl;
+    // solid-drawing eye-lid & brow coupling: upper lids follow vertical gaze so downward looks never stare blankly
+    const downGaze = Math.max(0, -g[1]);
+    const upGaze = Math.max(0, g[1]);
+    T.lidUp = Math.min(1, Math.max(-1, T.lidUp + downGaze * 0.45 - upGaze * 0.22));
+    T.browInL = Math.min(1, T.browInL + upGaze * 0.16);
+    T.browInR = Math.min(1, T.browInR + upGaze * 0.16);
+    T.browOutL = Math.min(1, T.browOutL + upGaze * 0.12);
+    T.browOutR = Math.min(1, T.browOutR + upGaze * 0.12);
+    // the controls, eased (the mouth quick while talking)
+    for (const k of FACE_KEYS) {
+      const mouthK = (MOUTH_KEYS as readonly string[]).includes(k);
+      const rate = mouthK ? (talk > 0.05 ? 34 : 14) : k === 'blush' ? 3 : k === 'happy' || k === 'shut' ? 10 : 8;
+      S[k] = damp(S[k], T[k], rate, dt);
+    }
+    S.blink = Math.max(blinkC * (1 - S.happy), Math.min(1, S.shut));
+    S.talk = talk; S.emph = emph;
     return S;
   }
 }
