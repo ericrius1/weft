@@ -169,29 +169,38 @@ test('HeroRig: landing impact absorbs pelvis, pitches head with follow-through, 
   assert.ok(Number.isFinite(rig.J.head[0]) && Number.isFinite(rig.J.pelvis[1]));
 });
 
-test('HeroRig: jump takeoff launch extends arms up before mid-air balance & carries cleanly across rigs', async () => {
+test('HeroRig: 3-phase jump arms (asymmetric launch punch -> compact apex -> upward freefall lag) & carry cleanly across rigs', async () => {
   const asset = await synthPerson();
   const rig = new HeroRig(asset);
   const rig2 = new HeroRig(asset);
   let t = 0;
   for (let i = 0; i < 20; i++) { t += DT; rig.update(baseInput({ time: t })); }
-  // Early jump takeoff (jumpT = 0.05, rising fast)
-  for (let i = 0; i < 4; i++) {
+  // 1) Launch: asymmetric contralateral punch (right arm drives higher than trailing left arm!)
+  for (let i = 0; i < 6; i++) {
     t += DT;
     rig.update(baseInput({ time: t, pos: [0, 0.25 + i * 0.08, 0], vel: [0, 5.2, -1], speed: 1, onGround: false, jumpT: 0.02 + i * DT }));
   }
-  const launchHandY = (rig.J.handL[1] + rig.J.handR[1]) * 0.5 - rig.J.chest[1];
-  // Later apex / falling (jumpT = 0.45, descending)
-  for (let i = 0; i < 20; i++) {
+  const launchAsym = rig.J.handR[1] - rig.J.handL[1];
+  const launchLeadY = rig.J.handR[1] - rig.J.chest[1];
+  // 2) Apex hang-time (vy ~ 0): compact relaxed bent-elbow gather
+  for (let i = 0; i < 18; i++) {
     t += DT;
-    rig.update(baseInput({ time: t, pos: [0, 1.1, 0], vel: [0, -1.5, -1], speed: 1, onGround: false, jumpT: 0.45 + i * DT }));
+    rig.update(baseInput({ time: t, pos: [0, 1.35, 0], vel: [0, 0.1, -1], speed: 1, onGround: false, jumpT: 0.35 + i * DT }));
   }
-  const midAirHandY = (rig.J.handL[1] + rig.J.handR[1]) * 0.5 - rig.J.chest[1];
-  assert.ok(launchHandY > midAirHandY + 0.05, `arms should sweep higher on launch (${launchHandY.toFixed(3)}) than mid-air settle (${midAirHandY.toFixed(3)})`);
+  const apexHandY = (rig.J.handL[1] + rig.J.handR[1]) * 0.5 - rig.J.chest[1];
+  // 3) Freefall descent (vy = -4.2): arms trail/float upward against downward acceleration
+  for (let i = 0; i < 18; i++) {
+    t += DT;
+    rig.update(baseInput({ time: t, pos: [0, 0.8, 0], vel: [0, -4.2, -1], speed: 1, onGround: false, jumpT: 0.65 + i * DT }));
+  }
+  const fallHandY = (rig.J.handL[1] + rig.J.handR[1]) * 0.5 - rig.J.chest[1];
+  assert.ok(launchAsym > 0.08, `launch arms should be asymmetrically contralateral (R-L=${launchAsym.toFixed(3)})`);
+  assert.ok(launchLeadY > apexHandY + 0.06, `lead launch arm (${launchLeadY.toFixed(3)}) should punch higher than apex gather (${apexHandY.toFixed(3)})`);
+  assert.ok(fallHandY > apexHandY + 0.04, `freefall descent arms (${fallHandY.toFixed(3)}) should lag upward above apex (${apexHandY.toFixed(3)})`);
 
   // carry() copies new state cleanly without NaN
-  rig2.carry(rig, [0, 1.1, 0]);
-  rig2.update(baseInput({ time: t + DT, pos: [0, 1.1, 0], vel: [0, -1.8, -1], speed: 1, onGround: false, jumpT: 0.8 }));
+  rig2.carry(rig, [0, 0.8, 0]);
+  rig2.update(baseInput({ time: t + DT, pos: [0, 0.8, 0], vel: [0, -4.2, -1], speed: 1, onGround: false, jumpT: 0.95 }));
   assert.ok(Number.isFinite(rig2.J.pelvis[1]) && Number.isFinite(rig2.J.head[1]));
 });
 
@@ -222,30 +231,78 @@ test('HeroRig: landing exhibits elastic upward rebound after squash and decelera
   let t = 0;
   for (let i = 0; i < 40; i++) { t += DT; rig.update(baseInput({ time: t })); }
   const restPelY = rig.J.pelvis[1];
-  let minPel = restPelY, maxPelAfterDrop = restPelY - 1;
+  const restNeckH = rig.joint('neck')[1] - rig.J.pelvis[1];
+  let minPel = restPelY, maxPelAfterDrop = restPelY - 1, minNeckH = restNeckH;
   let dropped = false;
   for (let i = 0; i < 70; i++) {
     t += DT;
     rig.update(baseInput({ time: t, landImpact: i === 0 ? 7.5 : 0 }));
     if (rig.J.pelvis[1] < minPel) minPel = rig.J.pelvis[1];
+    const nh = rig.joint('neck')[1] - rig.J.pelvis[1];
+    if (nh < minNeckH) minNeckH = nh;
     if (restPelY - rig.J.pelvis[1] > 0.04) dropped = true;
     if (dropped && rig.J.pelvis[1] > maxPelAfterDrop) maxPelAfterDrop = rig.J.pelvis[1];
   }
-  assert.ok(restPelY - minPel > 0.06, `deep landing compression expected (${(restPelY - minPel).toFixed(3)} m)`);
-  assert.ok(maxPelAfterDrop > restPelY + 0.001, `elastic landing rebound should briefly rise past rest (${maxPelAfterDrop.toFixed(4)} vs ${restPelY.toFixed(4)})`);
+  assert.ok(restPelY - minPel > 0.09, `deep landing compression expected (${(restPelY - minPel).toFixed(3)} m)`);
+  assert.ok(maxPelAfterDrop > restPelY + 0.015, `elastic landing rebound should rise >= 15 mm past rest (${((maxPelAfterDrop - restPelY) * 1000).toFixed(1)} mm)`);
+  assert.ok(restNeckH - minNeckH > 0.022, `rigid-bone C-curve flexion should drop pelvis-to-neck height >= 22 mm (${((restNeckH - minNeckH) * 1000).toFixed(1)} mm)`);
 
-  // Decelerating sharply from a run carries upper chest forward in follow-through
+  // Decelerating sharply from a run carries upper chest forward in follow-through, then rebounds past idle!
   for (let i = 0; i < 40; i++) {
     t += DT;
-    rig.update(baseInput({ time: t, pos: [0, 0, -i * DT * 5], vel: [0, 0, -5], speed: 5, running: true }));
+    rig.update(baseInput({ time: t, pos: [0, 0, -i * DT * 5.5], vel: [0, 0, -5.5], speed: 5.5, running: true }));
   }
-  let maxStopLean = -1;
-  for (let i = 0; i < 20; i++) {
+  let maxStopLean = -1, minStopLeanAfterPeak = 1, hitPeak = false;
+  for (let i = 0; i < 45; i++) {
     t += DT;
-    const v = Math.max(0, 5 - i * 0.9);
-    rig.update(baseInput({ time: t, pos: [0, 0, -3.3 - i * DT * v], vel: [0, 0, -v], speed: v, running: false }));
-    const fwdLean = rig.J.chest[2] - rig.J.pelvis[2]; // negative z is forward
-    maxStopLean = Math.max(maxStopLean, -fwdLean);
+    const v = Math.max(0, 5.5 - i * 0.85);
+    rig.update(baseInput({ time: t, pos: [0, 0, -3.6 - i * DT * v], vel: [0, 0, -v], speed: v, running: false }));
+    const fwdLean = -(rig.joint('neck')[2] - rig.J.pelvis[2]); // -Z is forward
+    if (fwdLean > maxStopLean) maxStopLean = fwdLean;
+    if (i > 4 && fwdLean > 0.06) hitPeak = true;
+    if (hitPeak && fwdLean < minStopLeanAfterPeak) minStopLeanAfterPeak = fwdLean;
   }
-  assert.ok(maxStopLean > 0.04, `stopping from a run should carry torso forward (${maxStopLean.toFixed(3)} m)`);
+  assert.ok(maxStopLean > 0.06, `stopping from a run should carry torso forward (${(maxStopLean * 1000).toFixed(1)} mm)`);
+  assert.ok(minStopLeanAfterPeak < -0.006, `braking stop should exhibit elastic counter-swing rebound past upright (${(minStopLeanAfterPeak * 1000).toFixed(1)} mm)`);
+});
+
+test('HeroRig: walk and run maintain strict contralateral arm-leg opposition with distal wrist overlapping action across 60/30/20 fps', async () => {
+  const asset = await synthPerson();
+  for (const fps of [60, 30, 20]) {
+    const stepDt = 1 / fps;
+    for (const { label, speed, running } of [
+      { label: `walk@${fps}fps`, speed: 1.8, running: false },
+      { label: `run@${fps}fps`, speed: 6.0, running: true },
+    ]) {
+      const rig = new HeroRig(asset);
+      let t = 0, z = 0;
+      const warm = Math.round(1.5 * fps), meas = Math.round(2.0 * fps);
+      for (let i = 0; i < warm; i++) {
+        t += stepDt; z -= speed * stepDt;
+        rig.update(baseInput({ dt: stepDt, time: t, pos: [0, 0, z], vel: [0, 0, -speed], speed, running }));
+      }
+      let legDotArm = 0, legSq = 0, armSq = 0, oppFrames = 0, activeFrames = 0;
+      let wristMin = 1e9, wristMax = -1e9;
+      for (let i = 0; i < meas; i++) {
+        t += stepDt; z -= speed * stepDt;
+        rig.update(baseInput({ dt: stepDt, time: t, pos: [0, 0, z], vel: [0, 0, -speed], speed, running }));
+        const legDiff = -(rig.J.footL[2] - rig.J.footR[2]);
+        const armDiff = -(rig.J.handL[2] - rig.J.handR[2]);
+        legDotArm += legDiff * armDiff;
+        legSq += legDiff * legDiff;
+        armSq += armDiff * armDiff;
+        if (Math.abs(legDiff) > 0.08 && Math.abs(armDiff) > 0.05) {
+          activeFrames++;
+          if (legDiff * armDiff < 0) oppFrames++;
+        }
+        wristMin = Math.min(wristMin, rig.armStat[0].flex);
+        wristMax = Math.max(wristMax, rig.armStat[0].flex);
+      }
+      const corr = legDotArm / Math.sqrt(Math.max(legSq * armSq, 1e-9));
+      const oppShare = oppFrames / Math.max(activeFrames, 1);
+      assert.ok(corr < -0.88, `${label} must be strongly contralateral (corr=${corr.toFixed(3)}, expected < -0.88)`);
+      assert.ok(oppShare > 0.90, `${label} must stay contralateral on >90% of active frames (${(oppShare * 100).toFixed(1)}%)`);
+      assert.ok(wristMax - wristMin > 0.14, `${label} wrist should flex/extend with distal overlapping action (range=${(wristMax - wristMin).toFixed(3)} rad)`);
+    }
+  }
 });
