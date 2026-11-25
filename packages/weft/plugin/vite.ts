@@ -26,6 +26,8 @@ export interface WeftOptions {
   typesFrom?: string;
   /** write .d.wgsl.ts declarations next to the app's shaders (default true; never inside node_modules) */
   types?: boolean;
+  /** import structs declared in project-local included .wgsl files instead of copying them into every .d.wgsl.ts (default false) */
+  sharedTypes?: boolean;
   /** the browser given each shader's comment-free code, only what its entry points reach (plugin/lean.ts), so a
    *  change elsewhere in an included file leaves its pipelines in the browser's cache. Default true */
   lean?: boolean;
@@ -68,10 +70,10 @@ export function weft(opts: WeftOptions = {}): Plugin {
   const runtime = opts.runtime ?? `${PACKAGE}/runtime`;
   const compile = (file: string) => compileWgsl(file, { root, libs, lean: opts.lean });
   const declare = (file: string, s: CompiledShader) => {
-    if (opts.types === false || file.includes('/node_modules/')) return;
-    writeDeclaration(file, s, typesFrom);
+    if (opts.types === false || file.includes('/node_modules/') || file.includes('\\node_modules\\')) return;
+    writeDeclaration(file, s, typesFrom, { file, root, sharedTypes: opts.sharedTypes });
   };
-  const moduleCode = (s: Omit<CompiledShader, 'includes'> & { error?: string }) =>
+  const moduleCode = (s: Omit<CompiledShader, 'includes' | 'structFiles'> & { error?: string }) =>
     `import { defineShader } from ${JSON.stringify(runtime)};\n` +
     `export default defineShader(${JSON.stringify(s)});\n` +
     `if (import.meta.hot) import.meta.hot.accept();\n`;
@@ -108,7 +110,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
           set.add(file);
         }
         declare(file, s);
-        const { includes: _i, ...rest } = s;
+        const { includes: _i, structFiles: _sf, ...rest } = s;
         return moduleCode(rest);
       } catch (e) {
         const msg = (e as Error).message;

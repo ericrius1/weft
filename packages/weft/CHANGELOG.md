@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.14
+
+Foundation upgrades for multi-place residency, zero-alloc frames, and shader/pipeline economy; 100% backwards-compatible.
+
+- **Warm pipeline LRU cache + shader-module release (`KitOptions.warmPipelines`, default 192)**: when a shared pipeline's last draw/compute disposes, a compiled current-version pipeline moves into `kit.warmPipelines` instead of being deleted immediately, so revisiting an evicted place pays 0 ms compile. Eviction past `warmLimit` (respecting `kit.pinPipelines(...)`) releases unused `GPUShaderModule`s from `kit.modules`. `kit.pipelineStats()` reports live, warm, module, hit and eviction counts.
+- **Zero-alloc `kit.run()`**: reuses internal command-buffer and ran-label arrays and iterates `readonly RunEntry[]` directly without `items.filter(Boolean)` allocations per run.
+- **Typed `tags`, `owner`, `phase`, `order` on `DrawOptions` / `ComputeOptions` and `PipelineRecord`**: enables tag-driven compile scheduling and draw routing without label regexes.
+- **Phased `RenderPass` (`RenderPassOptions.phases`)**: draws and bundles declared on a phased pass automatically insert into their phase bucket in registration order (tie-broken by `order`), replacing manual draw-array splicing.
+- **`FrameGraph` (`kit.graph(phases)`)**: explicit phase-ordered run-entry list that caches its flat `RunEntry[]` until registrations or owner enable flags change.
+- **Shared `.d.wgsl.ts` struct types (`WeftOptions.sharedTypes`)**: when enabled, structs declared in project-local included `.wgsl` files are imported/re-exported via `import type` instead of copied inline into every including shader's `.d.wgsl.ts`.
+
 ## 0.2.13
 
 Additions and fixes; nothing an app already draws changes, and the shaders are untouched.

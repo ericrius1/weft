@@ -50,6 +50,8 @@ export interface CompiledShader {
   /** contiguous runs of output lines: [firstOutLine, fileIndex, firstSourceLine] … (1-based lines) */
   runs: number[];
   includes: string[];
+  /** build-time only: absolute path of the .wgsl file that declared each struct (omitted from runtime bundle) */
+  structFiles?: Record<string, string>;
   reflect: ShaderReflection;
 }
 
@@ -77,6 +79,7 @@ export function preprocess(entry: string, opts: CompileOptions) {
   const files: string[] = [];
   const runs: number[] = [];
   const seen = new Set<string>();
+  const structFiles: Record<string, string> = {};
   const rel = (p: string) => relative(opts.root, p).split(sep).join('/');
   let lastFile = -1, lastSrc = -2;
   const visit = (abs: string, from?: string, fromLine?: number, spec?: string) => {
@@ -88,13 +91,15 @@ export function preprocess(entry: string, opts: CompileOptions) {
     for (let i = 0; i < lines.length; i++) {
       const m = INCLUDE.exec(lines[i]);
       if (m) { visit(resolveInclude(m[1], abs, opts), abs, i + 1, m[1]); continue; }
+      const sm = /^\s*struct\s+(\w+)\b/.exec(lines[i]);
+      if (sm && !(sm[1] in structFiles)) structFiles[sm[1]] = abs;
       if (fi !== lastFile || i + 1 !== lastSrc + 1) runs.push(out.length + 1, fi, i + 1);
       lastFile = fi; lastSrc = i + 1;
       out.push(lines[i]);
     }
   };
   visit(entry);
-  return { code: out.join('\n'), files, runs, includes: [...seen].filter((f) => f !== entry) };
+  return { code: out.join('\n'), files, runs, includes: [...seen].filter((f) => f !== entry), structFiles };
 }
 
 /** maps a 1-based output line back to { file, line } */
@@ -311,10 +316,19 @@ export function compileWgsl(file: string, opts: CompileOptions): CompiledShader 
   const label = id.split('/').pop()!.replace(/\.wgsl$/, '');
   // (reflected whole, for the struct layouts and their tweak comments; the browser gets the lean code: lean.ts)
   const lean = opts.lean === false ? { code: pre.code, runs: pre.runs } : leanWgsl(pre.code, pre.runs);
-  return { id, label, code: lean.code, files: pre.files, runs: lean.runs, includes: pre.includes, reflect };
+  return { id, label, code: lean.code, files: pre.files, runs: lean.runs, includes: pre.includes, structFiles: pre.structFiles, reflect };
 }
 
 // ---------------------------------------------------------------- generated declarations
+
+export interface DeclarationOptions {
+  /** absolute path of the shader file being declared */
+  file?: string;
+  /** project root; only included shaders inside `root` (and outside `node_modules`) are imported by type */
+  root?: string;
+  /** import structs declared in project-local included .wgsl files instead of copying them into every .d.wgsl.ts */
+  sharedTypes?: boolean;
+}
 
 function tsType(t: string, structs: Record<string, StructLayout>, f?: FieldLayout): string {
   if (f?.type === 'struct' && f.struct) return f.struct;
@@ -333,25 +347,59 @@ function tsType(t: string, structs: Record<string, StructLayout>, f?: FieldLayou
   return 'unknown';
 }
 
-export function declaration(s: CompiledShader, weftImport: string): string {
+export function declaration(s: CompiledShader, weftImport: string, opts: DeclarationOptions = {}): string {
   const { structs, bindings } = s.reflect;
   const body: string[] = [];
+  const sharedByFile = new Map<string, string[]>();
+  const canShare = (srcAbs: string | undefined): srcAbs is string => {
+    if (!opts.sharedTypes || !opts.file || !srcAbs || srcAbs === opts.file) return false;
+    const norm = srcAbs.split(sep).join('/');
+    if (norm.includes('/node_modules/')) return false;
+    if (opts.root) {
+      const r = relative(opts.root, srcAbs);
+      if (r.startsWith('..') || r === '') return false;
+    }
+    return true;
+  };
   for (const st of Object.values(structs)) {
+    const srcAbs = s.structFiles?.[st.name];
+    if (canShare(srcAbs)) {
+      let relSpec = relative(dirname(opts.file!), srcAbs).split(sep).join('/');
+      if (!relSpec.startsWith('.')) relSpec = `./${relSpec}`;
+      let list = sharedByFile.get(relSpec);
+      if (!list) sharedByFile.set(relSpec, (list = []));
+      list.push(st.name);
+      continue;
+    }
     body.push(`export interface ${st.name} {`);
     for (const f of st.fields) body.push(`  ${f.name}: ${tsType(f.type, structs, f)};`);
     body.push('}');
   }
+  const sharedImports: string[] = [];
+  const sharedExports: string[] = [];
+  for (const [spec, names] of [...sharedByFile.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    sharedImports.push(`import type { ${names.join(', ')} } from '${spec}';`);
+    sharedExports.push(`export type { ${names.join(', ')} };`);
+  }
   const structMap = Object.keys(structs).map((n) => `${n}: ${n}`).join('; ');
   const bindingNames = Object.keys(bindings).map((n) => `'${n}'`).join(' | ') || 'never';
+  if (sharedExports.length) body.unshift(...sharedExports);
   body.push('', `declare const shader: Shader<{ ${structMap} }, ${bindingNames}>;`, 'export default shader;', '');
   const text = body.join('\n');
   const used = ['Vec2', 'Vec3', 'Vec4', 'Mat3', 'Mat4'].filter((t) => new RegExp(`\\b${t}\\b`).test(text));
-  return [`// generated by weft from ${s.id} — do not edit`, `import type { Shader${used.map((t) => ', ' + t).join('')} } from '${weftImport}';`, '', text].join('\n');
+  const head = [
+    `// generated by weft from ${s.id} — do not edit`,
+    `import type { Shader${used.map((t) => ', ' + t).join('')} } from '${weftImport}';`,
+    ...sharedImports,
+    '',
+    text,
+  ];
+  return head.join('\n');
 }
 
-export function writeDeclaration(file: string, s: CompiledShader, weftImport: string) {
+export function writeDeclaration(file: string, s: CompiledShader, weftImport: string, opts: DeclarationOptions = {}) {
   const dts = file.replace(/\.wgsl$/, '.d.wgsl.ts');
-  const text = declaration(s, weftImport);
+  const text = declaration(s, weftImport, { ...opts, file });
   if (existsSync(dts) && readFileSync(dts, 'utf8') === text) return false;
   writeFileSync(dts, text);
   return true;
