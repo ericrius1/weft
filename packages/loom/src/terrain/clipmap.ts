@@ -32,6 +32,8 @@ export const MAX_LEVELS = 9;
 export interface ClipStream {
   /** the camera's motion (m/s): a fast camera's road ahead is fetched early */
   readonly view: { vx: number; vz: number };
+  /** optional hysteresis-gated fast-flight state */
+  readonly fast?: boolean;
   /** optional estimated network latency (s) for velocity-aware prefetch horizons */
   readonly latencyS?: number;
   /** the queue's order for a square (`cx`, `cz` its middle, `half` its half side, `scale` how much detail it adds,
@@ -190,30 +192,36 @@ export class ClipLevel {
   /** seconds until tile (r, c) exits the trailing edge of this shifted window along current velocity */
   private tGoneOf(r: number, c: number): number {
     if (this.whole) return Infinity;
-    const v = this.set.stream.view, speed = Math.hypot(v.vx, v.vz);
-    if (speed <= 30 || !Number.isFinite(this.lastX) || !Number.isFinite(this.lastZ)) return Infinity;
+    const st = this.set.stream, v = st.view, speed = Math.hypot(v.vx, v.vz);
+    const fast = st.fast ?? (speed > 30);
+    if (!fast || speed <= 1 || !Number.isFinite(this.lastX) || !Number.isFinite(this.lastZ)) return Infinity;
     const s = this.tile * this.texel;
     const [mx, mz] = this.middle(r, c);
     let t = Infinity;
-    if (v.vx > 1) t = Math.min(t, ((mx - this.lastX) + (this.n / 2 - this.bx) * s) / v.vx);
-    else if (v.vx < -1) t = Math.min(t, ((this.lastX - mx) + (this.n / 2 + this.bx) * s) / (-v.vx));
-    if (v.vz > 1) t = Math.min(t, ((mz - this.lastZ) + (this.n / 2 - this.bz) * s) / v.vz);
-    else if (v.vz < -1) t = Math.min(t, ((this.lastZ - mz) + (this.n / 2 + this.bz) * s) / (-v.vz));
+    // If the window is already clamped against the pack's boundary along travel, trailing tiles do not exit on that axis.
+    if (v.vx > 1 && this.c0 < this.grid - this.n) t = Math.min(t, ((mx - this.lastX) + (this.n / 2 - this.bx) * s) / v.vx);
+    else if (v.vx < -1 && this.c0 > 0) t = Math.min(t, ((this.lastX - mx) + (this.n / 2 + this.bx) * s) / (-v.vx));
+    if (v.vz > 1 && this.r0 < this.grid - this.n) t = Math.min(t, ((mz - this.lastZ) + (this.n / 2 - this.bz) * s) / v.vz);
+    else if (v.vz < -1 && this.r0 > 0) t = Math.min(t, ((this.lastZ - mz) + (this.n / 2 + this.bz) * s) / (-v.vz));
     return Math.max(0, t);
   }
 
   /** the queue's order for a tile of this level (Infinity once the window's let it go) */
   prio(r: number, c: number) {
     if (this.paused || !this.wants(r, c)) return Infinity;
-    // (the coarsest levels a little ahead of the rest: under everything, where they're missing the land's flat)
+    // (the coarsest levels a little ahead of the rest: under everything, where they're missing the land's flat;
+    // never shift a deferred rank >= 5e5 below the deferral threshold)
     const [x, z, h] = this.middle(r, c);
-    return this.set.stream.rank(x, z, h, this.scale, this.tGoneOf(r, c)) - (this.coarsest ? 100 : 0);
+    const rank = this.set.stream.rank(x, z, h, this.scale, this.tGoneOf(r, c));
+    return this.coarsest && rank < 5e5 ? rank - 100 : rank;
   }
 
   /** follow the camera: slide the window when the velocity-biased centre leaves the middle tile */
-  follow(x: number, z: number, dt = 0.016, fx?: number, fz?: number) {
-    // Reset stale bias and prefetch capsule immediately on first placement or after a teleport/cut (> 400 m jump)
-    if (!this.placed || (Number.isFinite(this.lastX) && Math.hypot(x - this.lastX, z - this.lastZ) > 400)) {
+  follow(x: number, z: number, dt = 0.016, fx?: number, fz?: number, rawDt = dt) {
+    // Reset stale bias and prefetch capsule on first placement or real teleport/cut (scaled by speed so Mach 2-3 stalls don't snap back)
+    const prevSpd = Math.hypot(this.set.stream.view.vx, this.set.stream.view.vz);
+    const cutDist = Math.max(400, prevSpd * Math.max(rawDt, 0.016) * 4);
+    if (!this.placed || (Number.isFinite(this.lastX) && Math.hypot(x - this.lastX, z - this.lastZ) > cutDist)) {
       this.bx = 0;
       this.bz = 0;
       this.capsule.clear();
@@ -547,9 +555,9 @@ export class ClipSet {
    *  move on; and the road ahead of a fast camera prefetched */
   follow(x: number, z: number, fx?: number, fz?: number) {
     if (this.disposed) return;
-    const now = performance.now(), dt = Math.min(0.1, (now - this.lastTick) / 1000);
+    const now = performance.now(), rawDt = Math.max(1e-3, (now - this.lastTick) / 1000), dt = Math.min(0.1, rawDt);
     this.lastTick = now;
-    for (const l of this.levels) l.follow(x, z, dt, fx, fz);
+    for (const l of this.levels) l.follow(x, z, dt, fx, fz, rawDt);
     this.upload();
     let moving = false;
     for (const l of this.levels) moving = l.tick(dt, x, z) || moving;
