@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.20
+
+Needs weft 0.2.9, as before. Backwards-compatible `world/forest` packing and dynamic tail upgrades.
+
+- **32-bit `packForest` / `unpackForest` format** (`world/forest.ts`, `shaders/forest.wgsl`):
+  - Expanded species archetype slot from 6 bits (0..63) to **8 bits** (`0..255`, `FOREST_ARCH_MASK = 255`).
+  - Piecewise 9-bit height (`0..38.3 m` at `0.1 m` resolution; `38.4..140.0 m` at `0.8 m` resolution) and 7-bit crown radius (`0..9.5 m` at `0.1 m`; `9.6..25.1 m` at `0.5 m`), covering dwarf shrubs through giant redwoods and baobabs.
+  - Dedicated 1-bit `pinnedY` flag (`FOREST_PINNED_BIT = 0x80000000`, `packForest(arch, h, r, seed, pinned)`): when set, `forestCull` uses the instance's exact stored `y` directly instead of draping onto terrain via `forestGround`.
+  - `decodeForest()` transparently upgrades legacy 6-bit `TRE2` packs into the new runtime 32-bit packing so existing baked `.bin`/`.pack` files keep working without re-baking.
+- **Zero-copy dynamic tail (`Forest.setDynamic`)**:
+  - `Forest.setDynamic(instances)` writes feature-planted trees into the tail slice `[staticCount .. staticCount + dynamicCount)` without copying or re-uploading the static forest buffer, preserving the dynamic tail across `Forest.load()` calls and growing capacity via `StorageBuffer.ensure()` (so `Forest.instances` stays the same buffer handle).
+  - `forest.wgsl` exports `forestRepackSize` and supports the `forestGround(xz, stored)` / `pinned` path cleanly.
+
 ## 0.1.19
 
 Needs weft 0.2.9, as before. Backwards-compatible fast-flight streaming improvements in `terrain/clipmap` and `world/forest`.

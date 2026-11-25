@@ -480,9 +480,14 @@ feature without any error.
   In `terrain/clipmap` (loom 0.1.19), `ClipSet.follow(x, z, fx?, fz?)` shifts toroidal windows ahead along velocity,
   `ClipLevel.paused` smoothly fades a level down (and clears non-resident slots for instant resume while still letting
   `prefetch(..., fromTarget=true)` pre-warm destinations), `ClipLevel.fadeAt(x, z)` reads effective weight at a point,
-  and `ClipStream` accepts optional `fast`, `latencyS` and `rank(cx, cz, half, scale, tGone?)`. In `world/forest`,
-  `Forest.load()` reuses buffers/computes when capacity fits, `forestCull` uses position-stable hash overflow thinning,
-  and `ForestFrame.thinFar` keeps impostor thinning density anchored to a base reach when `far` shrinks at speed.
+  and `ClipStream` accepts optional `fast`, `latencyS` and `rank(cx, cz, half, scale, tGone?)`. In `world/forest`
+  (loom 0.1.20), `packForest(arch, h, r, seed, pinned?)` / `unpackForest` pack 8-bit species slots (`0..255`,
+  `FOREST_ARCH_MASK`), piecewise height (`0..140 m`) and radius (`0..25.1 m`), 7-bit seed, and a 1-bit `pinnedY` flag
+  (`FOREST_PINNED_BIT`, skipping `forestGround` draping for terraced/potted/planter trees); `decodeForest()` upgrades
+  legacy 6-bit `TRE2` packs transparently; `Forest.setDynamic(instances)` writes feature trees into the dynamic tail
+  slice without re-uploading the static forest; `Forest.load()` reuses buffers/computes when capacity fits; `forestCull`
+  uses position-stable hash overflow thinning; and `ForestFrame.thinFar` keeps impostor thinning density anchored to a
+  base reach when `far` shrinks at speed.
 
 ## cast: characters
 
