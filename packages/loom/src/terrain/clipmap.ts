@@ -102,6 +102,11 @@ export class ClipLevel {
   readonly coarsest: boolean;
   private slots: Slot[];
   placed = false;
+  /** smoothed velocity window bias (tiles) so fast flight places more runway ahead without oscillating */
+  private bx = 0;
+  private bz = 0;
+  /** when true (high-speed LOD), this level pauses new fetches and gently fades its rect out */
+  paused = false;
 
   constructor(readonly set: ClipSet, readonly kind: LayerKind, readonly layer: number, readonly index: number, readonly pack: Pack, readonly window: number, readonly shrink: number, levels = 4) {
     const ix = pack.index;
@@ -128,11 +133,35 @@ export class ClipLevel {
     return [(x + this.half) / s, (z + this.half) / s];
   }
 
-  /** the window's first tile for a camera at (x, z) */
-  windowAt(x: number, z: number): [number, number] {
+  /** centered window's first tile for an arbitrary target point (x, z) (used for prefetch) */
+  private windowCentered(x: number, z: number): [number, number] {
     const [tx, tz] = this.tileOf(x, z), n = this.n;
     const want = (t: number) => Math.max(0, Math.min(this.grid - n, Math.round(t - n / 2)));
     return [want(tx), want(tz)];
+  }
+
+  /** the window's first tile for a camera at (x, z), shifted ahead along smoothed velocity when flying fast */
+  windowAt(x: number, z: number): [number, number] {
+    const [tx, tz] = this.tileOf(x, z), n = this.n;
+    const want = (t: number) => Math.max(0, Math.min(this.grid - n, Math.round(t - n / 2)));
+    return [want(tx + this.bx), want(tz + this.bz)];
+  }
+
+  private updateBias(dt: number) {
+    if (this.whole || this.n <= 4) { this.bx = 0; this.bz = 0; return; }
+    const v = this.set.stream.view;
+    const speed = Math.hypot(v.vx, v.vz);
+    // Keep at least ~1.4 tiles behind the eye on an 8x8 window (358 m > blend + hysteresis) so heightAt() never falls off
+    const maxBias = Math.max(0, this.n / 2 - 1.85);
+    const u = speed > 25 ? Math.min(1, (speed - 25) / 95) : 0;
+    const gx = u > 0 ? (v.vx / speed) * maxBias * u : 0;
+    const gz = u > 0 ? (v.vz / speed) * maxBias * u : 0;
+    const tau = u > 0 ? 0.55 : 0.9;
+    const k = 1 - Math.exp(-Math.max(0, dt) / tau);
+    this.bx += (gx - this.bx) * k;
+    this.bz += (gz - this.bz) * k;
+    if (Math.abs(this.bx) < 1e-3 && gx === 0) this.bx = 0;
+    if (Math.abs(this.bz) < 1e-3 && gz === 0) this.bz = 0;
   }
 
   /** a tile's middle and half its side (m) */
@@ -143,21 +172,32 @@ export class ClipLevel {
 
   /** the queue's order for a tile of this level (Infinity once the window's let it go) */
   prio(r: number, c: number) {
-    if (!this.wants(r, c)) return Infinity;
+    if (this.paused || !this.wants(r, c)) return Infinity;
     // (the coarsest levels a little ahead of the rest: under everything, where they're missing the land's flat)
     const [x, z, h] = this.middle(r, c);
     return this.set.stream.rank(x, z, h, this.scale) - (this.coarsest ? 100 : 0);
   }
 
-  /** follow the camera: slide the window when it's left the middle tile by most of a tile */
-  follow(x: number, z: number) {
+  /** follow the camera: slide the window when the velocity-biased centre leaves the middle tile */
+  follow(x: number, z: number, dt = 0.016) {
+    this.updateBias(dt);
     const [tx, tz] = this.tileOf(x, z), n = this.n;
-    if (!this.placed) { [this.c0, this.r0] = this.windowAt(x, z); this.placed = true; }
+    const cx = tx + this.bx, cz = tz + this.bz;
+    let shifted = false;
+    if (!this.placed) { [this.c0, this.r0] = this.windowAt(x, z); this.placed = true; shifted = true; }
     else {
       const [wc, wr] = this.windowAt(x, z);
-      if (Math.abs(tx - (this.c0 + n / 2)) > 0.75) this.c0 = wc;
-      if (Math.abs(tz - (this.r0 + n / 2)) > 0.75) this.r0 = wr;
+      const speed = Math.hypot(this.set.stream.view.vx, this.set.stream.view.vz);
+      const hyst = speed > 30 ? 0.55 : 0.75;
+      if (Math.abs(cx - (this.c0 + n / 2)) > hyst && wc !== this.c0) { this.c0 = wc; shifted = true; }
+      if (Math.abs(cz - (this.r0 + n / 2)) > hyst && wr !== this.r0) { this.r0 = wr; shifted = true; }
     }
+    if (shifted) {
+      // Immediately snap strictly trailing edges off tiles that left the window so recycled toroidal slots accept new uploads this frame
+      this.measure();
+      this.snapTrailing(x, z);
+    }
+    if (this.paused) return;
     // (every tile of the window asked for; a slot whose tile has left is taken over, its old tile kept until the new
     // one's written over it)
     const now = performance.now();
@@ -170,6 +210,17 @@ export class ClipLevel {
       s.r = r; s.c = c; s.state = 'loading'; s.retry = 0;
       this.set.request(this, r, c);
     }
+  }
+
+  /** snap only trailing edges of `shown` that shrank behind velocity while keeping the eye safely inside `shown` */
+  private snapTrailing(x: number, z: number) {
+    const t = this.rect, q = this.shown;
+    if (t[2] <= t[0] || t[3] <= t[1] || q[2] <= q[0] || q[3] <= q[1]) return;
+    const { vx, vz } = this.set.stream.view;
+    if (vx > 25 && t[0] > q[0] && x - t[0] > this.blend * 0.5) q[0] = t[0];
+    if (vx < -25 && t[2] < q[2] && t[2] - x > this.blend * 0.5) q[2] = t[2];
+    if (vz > 25 && t[1] > q[1] && z - t[1] > this.blend * 0.5) q[1] = t[1];
+    if (vz < -25 && t[3] < q[3] && t[3] - z > this.blend * 0.5) q[3] = t[3];
   }
 
   /** whether (r, c) is still this window's, in its slot */
@@ -206,10 +257,18 @@ export class ClipLevel {
   }
 
   /** the fades and the rect's easing, a frame on; whether anything's still moving */
-  tick(dt: number): boolean {
+  tick(dt: number, eyeX = NaN, eyeZ = NaN): boolean {
     let moving = false;
+    const v = this.set.stream.view;
+    const speed = Math.hypot(v.vx, v.vz);
+    const fadeS = speed > 40 ? Math.max(0.16, FADE * (40 / speed)) : FADE;
     for (const s of this.slots) {
-      if (s.res >= 0 && s.alpha < 1) { s.alpha = Math.min(1, s.alpha + dt / FADE); moving = true; }
+      if (this.paused) {
+        if (s.alpha > 0) { s.alpha = Math.max(0, s.alpha - dt / 0.25); moving = true; }
+      } else if (s.res >= 0 && s.alpha < 1) {
+        s.alpha = Math.min(1, s.alpha + dt / fadeS);
+        moving = true;
+      }
     }
     this.measure();
     const t = this.rect, q = this.shown;
@@ -217,8 +276,10 @@ export class ClipLevel {
     if (empty(t)) { q[0] = q[1] = q[2] = q[3] = 0; return moving; }
     // (from nothing, or nowhere near: the rect starts where it's going — the tiles' own fades bring them in)
     if (empty(q) || t[0] >= q[2] || t[2] <= q[0] || t[1] >= q[3] || t[3] <= q[1] || this.set.instant) { q[0] = t[0]; q[1] = t[1]; q[2] = t[2]; q[3] = t[3]; return moving; }
-    // (eased, and never slower than a tile in EASE * 2: a slot waiting on it isn't kept long)
-    const k = 1 - Math.exp(-dt / EASE), least = (this.tile * this.texel * dt) / (EASE * 2);
+    if (Number.isFinite(eyeX) && Number.isFinite(eyeZ)) this.snapTrailing(eyeX, eyeZ);
+    // (eased, faster while flying so side edges during turns also release slots promptly)
+    const easeS = speed > 40 ? Math.max(0.12, EASE * 0.5) : EASE;
+    const k = 1 - Math.exp(-dt / easeS), least = (this.tile * this.texel * dt) / (easeS * 2);
     for (let i = 0; i < 4; i++) {
       const d = t[i] - q[i], step = Math.max(Math.abs(d) * k, least);
       if (Math.abs(d) <= step) q[i] = t[i]; else { q[i] += Math.sign(d) * step; moving = true; }
@@ -234,25 +295,53 @@ export class ClipLevel {
     }
   }
 
-  /** the rect that's in: the window, its edges pulled in past any row or column still loading */
+  /** the rect that's in: tight bounding box of loaded tiles inside the active window (per-tile tileFade + neighbor
+   *  guard in clipmap.wgsl blends individual unloaded tiles cleanly without collapsing a whole row on one corner tile) */
   private measure() {
     const n = this.n;
-    let c0 = this.c0, c1 = this.c0 + n - 1, r0 = this.r0, r1 = this.r0 + n - 1;
-    const isIn = (r: number, c: number) => { const s = this.slots[(r % n) * n + (c % n)]; return s.state === 'in' && s.r === r && s.c === c; };
-    for (let guard = 0; guard < 4 * n && c0 <= c1 && r0 <= r1; guard++) {
-      let moved = false;
-      for (let r = r0; r <= r1; r++) { if (!isIn(r, c0)) { c0++; moved = true; break; } }
-      if (c0 > c1) break;
-      for (let r = r0; r <= r1; r++) { if (!isIn(r, c1)) { c1--; moved = true; break; } }
-      if (c0 > c1) break;
-      for (let c = c0; c <= c1; c++) { if (!isIn(r0, c)) { r0++; moved = true; break; } }
-      if (r0 > r1) break;
-      for (let c = c0; c <= c1; c++) { if (!isIn(r1, c)) { r1--; moved = true; break; } }
-      if (!moved) break;
+    let c0 = this.c0 + n, c1 = this.c0 - 1, r0 = this.r0 + n, r1 = this.r0 - 1;
+    for (let r = this.r0; r < this.r0 + n; r++) for (let c = this.c0; c < this.c0 + n; c++) {
+      const s = this.slots[(r % n) * n + (c % n)];
+      if (s.state === 'in' && s.r === r && s.c === c) {
+        if (c < c0) c0 = c;
+        if (c > c1) c1 = c;
+        if (r < r0) r0 = r;
+        if (r > r1) r1 = r;
+      }
     }
     const s = this.tile * this.texel, h = this.half, k = this.shrink * this.texel;
     if (c0 > c1 || r0 > r1) { this.rect = [0, 0, 0, 0]; return; }
     this.rect = [-h + c0 * s + k, -h + r0 * s + k, -h + (c1 + 1) * s - k, -h + (r1 + 1) * s - k];
+  }
+
+  /** exact shader levelWeight (rectWeight * tileFade with neighbor guard) at world point (x, z), for telemetry */
+  fadeAt(x: number, z: number): number {
+    const q = this.shown;
+    if (q[2] <= q[0] || q[3] <= q[1]) return 0;
+    const edge = Math.min(Math.min(x - q[0], q[2] - x), Math.min(z - q[1], q[3] - z));
+    if (edge <= 0) return 0;
+    const u = Math.min(1, edge / Math.max(this.blend, 1e-4));
+    const rw = u * u * (3 - 2 * u);
+    const s = this.tile * this.texel, n = this.n, g = this.grid;
+    const px = (x + this.half) / s, pz = (z + this.half) / s;
+    const tx = Math.floor(px), tz = Math.floor(pz);
+    if (tx < 0 || tx >= g || tz < 0 || tz >= g) return 0;
+    const slotW = (cx: number, cz: number) => {
+      const sl = this.slots[(cz % n) * n + (cx % n)];
+      return sl && sl.res === cz * g + cx ? sl.alpha : 0;
+    };
+    const ss = (a: number, b: number, v: number) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const ef = (nf: number, d: number) => (nf <= 0 ? ss(0.035, 0.1, d) : nf + (1 - nf) * ss(0, 0.1, d));
+    let w = slotW(tx, tz);
+    if (w <= 0) return 0;
+    const fx = px - tx, fz = pz - tz;
+    let ox = 0, dx = 0.1, oy = 0, dy = 0.1;
+    if (fx < 0.1 && tx > 0) { ox = -1; dx = fx; } else if (fx > 0.9 && tx + 1 < g) { ox = 1; dx = 1 - fx; }
+    if (fz < 0.1 && tz > 0) { oy = -1; dy = fz; } else if (fz > 0.9 && tz + 1 < g) { oy = 1; dy = 1 - fz; }
+    if (ox) w *= ef(slotW(tx + ox, tz), dx);
+    if (oy) w *= ef(slotW(tx, tz + oy), dy);
+    if (ox && oy) w *= ef(slotW(tx + ox, tz + oy), Math.max(dx, dy));
+    return rw * w;
   }
 
   /** the share of the window's tiles in */
@@ -283,12 +372,12 @@ export class ClipLevel {
   /** the window round (x, z)'s tiles that aren't here or in the cache, fetched into it (a flight's destination, the
    *  road ahead); `live` says when it's moot */
   prefetch(x: number, z: number, live: () => boolean) {
-    if (this.whole) return;
-    const [c0, r0] = this.windowAt(x, z), n = this.n;
+    if (this.whole || this.paused) return;
+    const [c0, r0] = this.windowCentered(x, z), n = this.n;
     for (let r = r0; r < r0 + n; r++) for (let c = c0; c < c0 + n; c++) {
       if (this.wants(r, c) || this.set.stream.cached(this.pack, r, c)) continue;
       const [mx, mz, h] = this.middle(r, c);
-      this.set.stream.prefetch(this.pack, r, c, () => (live() ? Math.hypot(Math.max(Math.abs(mx - x) - h, 0), Math.max(Math.abs(mz - z) - h, 0)) / this.scale : Infinity));
+      this.set.stream.prefetch(this.pack, r, c, () => (live() && !this.paused ? this.set.stream.rank(mx, mz, h, this.scale) : Infinity));
     }
   }
 }
@@ -319,7 +408,7 @@ export class ClipSet {
   instant = true;
   decode: ClipDecode = { height: () => Promise.reject(new Error('no decoder')), mat: () => Promise.reject(new Error('no decoder')) };
   fill0 = 0;
-  ahead0 = { speed: 25, every: 400, seconds: 4, reach: 1500, texel: 4 };
+  ahead0 = { speed: 25, every: 200, seconds: 5, reach: 2600, texel: 4 };
   private lastTick = performance.now();
   private ahead = 0;
   private aheadAt = 0;
@@ -376,18 +465,21 @@ export class ClipSet {
    *  move on; and the road ahead of a fast camera prefetched */
   follow(x: number, z: number) {
     if (this.disposed) return;
-    for (const l of this.levels) l.follow(x, z);
     const now = performance.now(), dt = Math.min(0.1, (now - this.lastTick) / 1000);
     this.lastTick = now;
+    for (const l of this.levels) l.follow(x, z, dt);
     this.upload();
     let moving = false;
-    for (const l of this.levels) moving = l.tick(dt) || moving;
+    for (const l of this.levels) moving = l.tick(dt, x, z) || moving;
     this.fades = moving;
     const v = this.stream.view, speed = Math.hypot(v.vx, v.vz), A = this.ahead0;
     if (speed > A.speed && now - this.aheadAt > A.every) {
       this.aheadAt = now;
       const id = ++this.ahead, t = Math.min(A.seconds, A.reach / speed);
-      for (const l of this.levels) if (l.texel <= A.texel) l.prefetch(x + v.vx * t, z + v.vz * t, () => this.ahead === id);
+      for (const l of this.levels) if (l.texel <= A.texel && !l.paused) {
+        l.prefetch(x + v.vx * t * 0.55, z + v.vz * t * 0.55, () => this.ahead === id);
+        l.prefetch(x + v.vx * t, z + v.vz * t, () => this.ahead === id);
+      }
     }
   }
 

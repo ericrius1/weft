@@ -92,6 +92,9 @@ export class Forest {
   readonly args: StorageBuffer;
   instances: StorageBuffer | null = null;
   count = 0;
+  private instancesCap = 0;
+  private cullPass: any = null;
+  private lastBind: Record<string, unknown> | null = null;
   private computes: RunEntry[] = [];
   private thin: [number, number, number];
   private slack: number;
@@ -106,21 +109,63 @@ export class Forest {
     this.u = kit.uniforms(shader.structs.ForestU, L);
     const c = this.caps;
     this.lists = kit.storage({ label: `${L}.lists`, size: (c[0] + c[1] + c[2] + c[3]) * 16, usage: ['storage'] });
-    this.counters = kit.storage({ label: `${L}.counters`, size: 16, usage: ['storage'] });
+    this.counters = kit.storage({ label: `${L}.counters`, size: 48, usage: ['storage'] });
     this.args = kit.storage({ label: `${L}.args`, size: 64, usage: ['storage', 'indirect'] });
   }
 
+  private sameBind(bind: Record<string, unknown>): boolean {
+    if (!this.lastBind) return false;
+    const ak = Object.keys(this.lastBind), bk = Object.keys(bind);
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) if (this.lastBind[k] !== bind[k]) return false;
+    return true;
+  }
+
   /** the instances (16 bytes each: decodeForest's), and the two computes over them (`bind`: more of the world's
-   *  bindings for its hooks, over the options') */
+   *  bindings for its hooks, over the options'). Reuses the GPU buffer and compute passes whenever capacity fits. */
   load(instances: Uint32Array, bind: Record<string, unknown> = {}) {
     const kit = this.kit, L = this.label;
-    this.count = instances.length / 4;
-    this.instances = kit.storage({ label: `${L}.instances`, data: instances });
+    const maxInst = 65535 * 64;
+    const n = Math.min(maxInst, Math.floor(instances.length / 4));
+    this.count = n;
+    const src = n * 4 < instances.length ? instances.subarray(0, n * 4) : instances;
+    const bindSame = this.computes.length > 0 && this.sameBind(bind);
+    if (bindSame && this.instances && n <= this.instancesCap) {
+      if (src.byteLength) this.instances.write(src);
+      return;
+    }
+    const grow = Math.min(maxInst, Math.max(4096, Math.ceil(Math.max(1, n) * 1.5)));
+    const nextBuf = kit.storage({ label: `${L}.instances`, size: grow * 16, usage: ['storage', 'copy-dst'] });
+    if (src.byteLength) nextBuf.write(src);
+    const oldBuf = this.instances;
+    this.instances = nextBuf;
+    this.instancesCap = grow;
+    if (bindSame && this.cullPass) {
+      this.cullPass.set('forestTrees', nextBuf);
+      if (oldBuf) kit.release(oldBuf);
+      return;
+    }
+    if (this.computes.length) kit.release(...(this.computes as unknown as { dispose(): void }[]));
+    if (oldBuf) kit.release(oldBuf);
+    this.lastBind = { ...bind };
     const own = { forest: this.u, forestTrees: this.instances, forestLists: this.lists, forestCounters: this.counters, forestArgsOut: this.args };
+    this.cullPass = kit.compute(this.shader, { label: `${L}.cull`, entry: 'forestCull', threads: () => [Math.max(1, this.count)], bind: { ...this.bind, ...bind, ...own } as never });
     this.computes = [
-      kit.compute(this.shader, { label: `${L}.cull`, entry: 'forestCull', threads: [this.count], bind: { ...this.bind, ...bind, ...own } as never }),
+      this.cullPass,
       kit.compute(this.shader, { label: `${L}.args`, entry: 'forestWriteArgs', workgroups: [1], bind: { forest: this.u, forestCounters: this.counters, forestArgsOut: this.args } as never }),
     ];
+  }
+
+  /** release all GPU buffers and compute passes owned by this forest */
+  dispose() {
+    if (this.computes.length) this.kit.release(...(this.computes as unknown as { dispose(): void }[]));
+    this.computes = [];
+    this.cullPass = null;
+    this.lastBind = null;
+    this.kit.release(this.instances, this.lists, this.counters, this.args, this.u);
+    this.instances = null;
+    this.instancesCap = 0;
+    this.count = 0;
   }
 
   /** a frame's reaches, the draws' vertices, the world's own vec4s */
