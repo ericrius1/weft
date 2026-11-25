@@ -129,7 +129,9 @@ is loom's renderer with TAAU, irradiance probes and a thousand lights, and `benc
 | `kit.setGlobals(u)` | the app's globals at group 0, binding 1 | declare `@group(0) @binding(1) var<uniform> globals: MyGlobals;` in a shared include |
 | `kit.shareGroup(i, include, { name: res })` | one bind group (i ≥ 1) shared by every shader that includes `include` | declare it before the passes that use it; per pass you can swap values: `kit.pass({ shared: { 1: { shadowTex: dummy } } })` |
 | `new Ref(() => x)` | a value resolved when it's bound | e.g. "whichever texture is current". It's resolved once per run epoch (see Rule 6) |
-| `kit.release(...things)` | destroy or dispose for good | streamed-out chunks; `kit.memory()` reports the bytes held |
+| `kit.release(...things)` | destroy or dispose for good | streamed-out chunks; `kit.memory()` reports the bytes held (exact block sizes for BC/ASTC/ETC2) |
+| `kit.caps` | optional GPU capabilities enabled on this device | `{ bc, astc, etc2, f16, subgroups, timestampQuery }` — safe to branch on |
+| `loadKtx2Texture(kit, url, opts?)` | native GPU-compressed KTX2 v2.0 texture (`BC7`/`ASTC`/`ETC2`, raw or zlib) | `loadCompressedOrImageTexture(kit, fallbackUrl, { bc7, astc, etc2 }, opts)` picks `bestCompressedFormat(kit)` with automatic image fallback |
 
 Samplers: group 0 already provides `samp_linear`, `samp_repeat`, `samp_nearest` and `samp_shadow` (comparison). For a
 sampler binding of your own, pass a name (`'linear' | 'repeat' | 'nearest' | 'nearest-repeat' | 'mirror' | 'shadow'`)

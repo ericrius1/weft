@@ -55,7 +55,21 @@ export class WebGPUUnavailable extends Error {}
 
 const COMPILE_INFO_WAIT = 4000;
 
-const DEFAULT_FEATURES: GPUFeatureName[] = ['timestamp-query', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance', 'depth-clip-control'];
+const DEFAULT_FEATURES: readonly GPUFeatureName[] = [
+  'timestamp-query', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance', 'depth-clip-control',
+  'texture-compression-bc', 'texture-compression-astc', 'texture-compression-etc2', 'shader-f16',
+  'subgroups' as GPUFeatureName,
+];
+
+/** Optional hardware capabilities enabled on this GPU device (always safe to branch on). */
+export interface GpuCaps {
+  readonly bc: boolean;
+  readonly astc: boolean;
+  readonly etc2: boolean;
+  readonly f16: boolean;
+  readonly subgroups: boolean;
+  readonly timestampQuery: boolean;
+}
 const LIMITS = ['maxStorageBufferBindingSize', 'maxBufferSize', 'maxComputeWorkgroupStorageSize', 'maxStorageBuffersPerShaderStage',
   'maxStorageTexturesPerShaderStage', 'maxSampledTexturesPerShaderStage', 'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupSizeX',
   'maxComputeWorkgroupSizeY', 'maxColorAttachmentBytesPerSample', 'maxTextureArrayLayers', 'maxTextureDimension2D'];
@@ -132,6 +146,7 @@ export interface FrameTime { time: number; dt: number; frame: number }
 
 export class Kit {
   readonly features: Set<string>;
+  readonly caps: GpuCaps;
   readonly queue: GPUQueue;
   readonly format: GPUTextureFormat;
   readonly context: GPUCanvasContext;
@@ -210,6 +225,14 @@ export class Kit {
   constructor(readonly adapter: GPUAdapter, readonly device: GPUDevice, readonly canvas: HTMLCanvasElement, opts: KitOptions, readonly parent: Kit | null = null) {
     this.queue = device.queue;
     this.features = new Set([...device.features]);
+    this.caps = {
+      bc: this.features.has('texture-compression-bc'),
+      astc: this.features.has('texture-compression-astc'),
+      etc2: this.features.has('texture-compression-etc2'),
+      f16: this.features.has('shader-f16'),
+      subgroups: this.features.has('subgroups'),
+      timestampQuery: this.features.has('timestamp-query'),
+    };
     this.debug = opts.debug ?? new URLSearchParams(location.search).has('debug');
     this.renderScale = opts.renderScale ?? 1;
     this.maxPixelRatio = opts.maxPixelRatio ?? 2;

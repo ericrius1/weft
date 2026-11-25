@@ -366,13 +366,17 @@ export class Texture implements Resource {
       return null;
     }
   }
-  /** bytes it holds on the GPU: every mip of every layer, times its samples (block-compressed formats are estimated) */
+  /** bytes it holds on the GPU: every mip of every layer, times its samples (exact block sizing for BC/ETC2/ASTC) */
   get bytes() {
     if (this.destroyed) return 0;
-    const bpp = bytesPerPixel(this.format), deep = (this.desc.dimension ?? '2d') === '3d';
+    const blk = compressedBlock(this.format), deep = (this.desc.dimension ?? '2d') === '3d';
     let n = 0;
-    for (let m = 0; m < this.mips; m++) n += Math.max(1, this.width >> m) * Math.max(1, this.height >> m) * (deep ? Math.max(1, this.layers >> m) : this.layers);
-    return n * bpp * this.samples;
+    for (let m = 0; m < this.mips; m++) {
+      const mw = Math.max(1, this.width >> m), mh = Math.max(1, this.height >> m);
+      const ml = deep ? Math.max(1, this.layers >> m) : this.layers;
+      n += Math.ceil(mw / blk.bw) * Math.ceil(mh / blk.bh) * blk.bytes * ml;
+    }
+    return n * this.samples;
   }
   /** free it for good: it leaves kit.textures, so a resize doesn't reallocate it */
   destroy() {
@@ -466,6 +470,15 @@ export function bytesPerPixel(f: GPUTextureFormat): number {
   if (/^(rgba16|rg32)/.test(f)) return 8;
   if (/^rgba32/.test(f)) return 16;
   return 4;
+}
+
+/** Texel block dimensions and bytes-per-block for compressed and uncompressed WebGPU texture formats. */
+export function compressedBlock(f: GPUTextureFormat): { bw: number; bh: number; bytes: number } {
+  if (/^(bc1|bc4|etc2-rgb8|eac-r11)/.test(f)) return { bw: 4, bh: 4, bytes: 8 };
+  if (/^(bc2|bc3|bc5|bc6h|bc7|etc2-rgba8|eac-rg11)/.test(f)) return { bw: 4, bh: 4, bytes: 16 };
+  const astc = /^astc-(\d+)x(\d+)/.exec(f);
+  if (astc) return { bw: Number(astc[1]), bh: Number(astc[2]), bytes: 16 };
+  return { bw: 1, bh: 1, bytes: bytesPerPixel(f) };
 }
 
 // ---------------------------------------------------------------- ping-pong
