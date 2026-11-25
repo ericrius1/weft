@@ -41,6 +41,15 @@ export interface HdrState {
 }
 export declare class WebGPUUnavailable extends Error {
 }
+/** Optional hardware capabilities enabled on this GPU device (always safe to branch on). */
+export interface GpuCaps {
+    readonly bc: boolean;
+    readonly astc: boolean;
+    readonly etc2: boolean;
+    readonly f16: boolean;
+    readonly subgroups: boolean;
+    readonly timestampQuery: boolean;
+}
 export type RunEntry = RunItem | RunAction | null | undefined | false;
 /** a camera + its own Frame uniform and group-0 bind group (the main view, a reflection, a shadow cascade…) */
 export declare class View {
@@ -83,6 +92,7 @@ export declare class Kit {
     readonly canvas: HTMLCanvasElement;
     readonly parent: Kit | null;
     readonly features: Set<string>;
+    readonly caps: GpuCaps;
     readonly queue: GPUQueue;
     readonly format: GPUTextureFormat;
     readonly context: GPUCanvasContext;

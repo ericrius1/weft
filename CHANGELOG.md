@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.16
+
+Native GPU-compressed textures (KTX2) and hardware capability detection; 100% backwards-compatible.
+
+- **KTX2 v2.0 compressed texture loader (`ktx2.ts`)**: zero-dependency parser and minimal-header encoder (`parseKtx2`, `encodeKtx2`, `textureFromKtx2`, `loadKtx2Texture`, `loadCompressedOrImageTexture`, `bestCompressedFormat`, `supportsTextureFormat`) supporting BC1–BC7, ASTC 4×4–8×8, ETC2, and uncompressed RGBA with raw (scheme 0) and zlib (scheme 3) supercompression, exact block-aligned mip/layer uploads, and block-safe `max` top-mip trimming for mobile VRAM.
+- **Hardware capability detection (`kit.ts`)**: `createKit` optionally requests `texture-compression-bc`, `texture-compression-astc`, `texture-compression-etc2`, `shader-f16`, and `subgroups` when offered by the adapter, exposed via `kit.caps` (`{ bc, astc, etc2, f16, subgroups, timestampQuery }`).
+- **Exact compressed VRAM byte accounting & uploads (`resources.ts`)**: `compressedBlock(format)`, `Texture.bytes`, and `Texture.write()` compute true block-compressed byte sizes and block-aligned row extents across every mip and layer (4× lower than RGBA8 for BC7 / ASTC 4×4).
+
 ## 0.2.15
 
 Boot-time speedups and TAAU motion validation; 100% backwards-compatible.

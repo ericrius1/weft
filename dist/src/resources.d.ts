@@ -133,7 +133,7 @@ export declare class Texture implements Resource {
     mip(level: number, layer?: number): TexView;
     layer(i: number): TexView;
     get unfilterable(): boolean;
-    /** upload pixels (rows tightly packed unless bytesPerRow is given) */
+    /** upload pixels or compressed blocks (rows tightly packed unless bytesPerRow is given) */
     write(data: ArrayBufferView, o?: {
         mip?: number;
         layer?: number;
@@ -166,7 +166,7 @@ export declare class Texture implements Resource {
         mip?: number;
         layer?: number;
     }): Promise<ArrayBuffer | null>;
-    /** bytes it holds on the GPU: every mip of every layer, times its samples (block-compressed formats are estimated) */
+    /** bytes it holds on the GPU: every mip of every layer, times its samples (exact block sizing for BC/ETC2/ASTC) */
     get bytes(): number;
     /** free it for good: it leaves kit.textures, so a resize doesn't reallocate it */
     destroy(): void;
@@ -187,6 +187,12 @@ export declare class TexView {
     get descId(): number;
 }
 export declare function bytesPerPixel(f: GPUTextureFormat): number;
+/** Texel block dimensions and bytes-per-block for compressed and uncompressed WebGPU texture formats. */
+export declare function compressedBlock(f: GPUTextureFormat): {
+    bw: number;
+    bh: number;
+    bytes: number;
+};
 /** two resources that trade places: `read` / `write` are refs resolved when bound; `swap` is a run item */
 export declare class PingPong<T> {
     readonly a: T;

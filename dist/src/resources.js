@@ -295,11 +295,13 @@ export class Texture {
     mip(level, layer) { return new TexView(this, { baseMipLevel: level, mipLevelCount: 1, ...(layer !== undefined ? { baseArrayLayer: layer, arrayLayerCount: 1, dimension: '2d' } : {}) }); }
     layer(i) { return new TexView(this, { baseArrayLayer: i, arrayLayerCount: 1, dimension: '2d', baseMipLevel: 0, mipLevelCount: 1 }); }
     get unfilterable() { return FLOAT32.test(this.format) && !this.kit.features.has('float32-filterable'); }
-    /** upload pixels (rows tightly packed unless bytesPerRow is given) */
+    /** upload pixels or compressed blocks (rows tightly packed unless bytesPerRow is given) */
     write(data, o = {}) {
         const w = o.width ?? Math.max(1, this.width >> (o.mip ?? 0)), h = o.height ?? Math.max(1, this.height >> (o.mip ?? 0));
-        const bpp = bytesPerPixel(this.format);
-        this.kit.queue.writeTexture({ texture: this.gpu, mipLevel: o.mip ?? 0, origin: [o.origin?.[0] ?? 0, o.origin?.[1] ?? 0, o.layer ?? 0] }, data, { bytesPerRow: o.bytesPerRow ?? w * bpp, rowsPerImage: h }, [w, h, 1]);
+        const blk = compressedBlock(this.format);
+        const blocksX = Math.ceil(w / blk.bw), blocksY = Math.ceil(h / blk.bh);
+        const copyW = blocksX * blk.bw, copyH = blocksY * blk.bh;
+        this.kit.queue.writeTexture({ texture: this.gpu, mipLevel: o.mip ?? 0, origin: [o.origin?.[0] ?? 0, o.origin?.[1] ?? 0, o.layer ?? 0] }, data, { bytesPerRow: o.bytesPerRow ?? blocksX * blk.bytes, rowsPerImage: blocksY }, [copyW, copyH, 1]);
         return this;
     }
     /** copy an image in (a canvas, an ImageBitmap, a video frame…): all of it at the origin, or a part of it
@@ -379,15 +381,18 @@ export class Texture {
             return null;
         }
     }
-    /** bytes it holds on the GPU: every mip of every layer, times its samples (block-compressed formats are estimated) */
+    /** bytes it holds on the GPU: every mip of every layer, times its samples (exact block sizing for BC/ETC2/ASTC) */
     get bytes() {
         if (this.destroyed)
             return 0;
-        const bpp = bytesPerPixel(this.format), deep = (this.desc.dimension ?? '2d') === '3d';
+        const blk = compressedBlock(this.format), deep = (this.desc.dimension ?? '2d') === '3d';
         let n = 0;
-        for (let m = 0; m < this.mips; m++)
-            n += Math.max(1, this.width >> m) * Math.max(1, this.height >> m) * (deep ? Math.max(1, this.layers >> m) : this.layers);
-        return n * bpp * this.samples;
+        for (let m = 0; m < this.mips; m++) {
+            const mw = Math.max(1, this.width >> m), mh = Math.max(1, this.height >> m);
+            const ml = deep ? Math.max(1, this.layers >> m) : this.layers;
+            n += Math.ceil(mw / blk.bw) * Math.ceil(mh / blk.bh) * blk.bytes * ml;
+        }
+        return n * this.samples;
     }
     /** free it for good: it leaves kit.textures, so a resize doesn't reallocate it */
     destroy() {
@@ -496,6 +501,17 @@ export function bytesPerPixel(f) {
     if (/^rgba32/.test(f))
         return 16;
     return 4;
+}
+/** Texel block dimensions and bytes-per-block for compressed and uncompressed WebGPU texture formats. */
+export function compressedBlock(f) {
+    if (/^(bc1|bc4|etc2-rgb8|eac-r11)/.test(f))
+        return { bw: 4, bh: 4, bytes: 8 };
+    if (/^(bc2|bc3|bc5|bc6h|bc7|etc2-rgba8|eac-rg11)/.test(f))
+        return { bw: 4, bh: 4, bytes: 16 };
+    const astc = /^astc-(\d+)x(\d+)/.exec(f);
+    if (astc)
+        return { bw: Number(astc[1]), bh: Number(astc[2]), bytes: 16 };
+    return { bw: 1, bh: 1, bytes: bytesPerPixel(f) };
 }
 // ---------------------------------------------------------------- ping-pong
 /** two resources that trade places: `read` / `write` are refs resolved when bound; `swap` is a run item */

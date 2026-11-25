@@ -1,7 +1,7 @@
-export { createKit, Kit, View, AutoResolution, WebGPUUnavailable, type KitOptions, type HdrState, type FrameTime, type RunEntry } from './kit';
+export { createKit, Kit, View, AutoResolution, WebGPUUnavailable, type KitOptions, type GpuCaps, type HdrState, type FrameTime, type RunEntry } from './kit';
 export { defineShader, sourceLine, type Shader, type StructDef, type Vec2, type Vec3, type Vec4, type Mat3, type Mat4 } from './shader';
 export { StructView, StructArray, type DeepPartial } from './struct';
-export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction, type TextureDesc, type StorageOptions } from './resources';
+export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction, compressedBlock, bytesPerPixel, type TextureDesc, type StorageOptions } from './resources';
 export { Compute, RenderPass, Draw, RawItem, type ComputeOptions, type RenderPassOptions, type DrawOptions, type DrawTags, type BlendMode, type RunItem, type PassItem, type DrawEncoder, type Compiler, type PipelineRecord, type AnyPipelineRecord, type SharedPipeline, type Waitable } from './passes';
 export { FrameGraph, type GraphEntryOptions } from './graph';
 export { DrawBundle, type DrawBundleOptions } from './bundle';
@@ -19,6 +19,7 @@ export { Fulldome, type FulldomeOptions } from './dome';
 export { domeLayout, domeDirection, tileWeights, viewBasis, type DomeLayout, type DomeOptions } from './domelayout';
 export { Assets, Pack, fetchKept, isLasting, inflate, decodeH16, unpackH16, packH16, type AssetsOptions, type PackIndex, type TileIndex } from './assets';
 export { loadImageTexture, loadImageArray, loadBitmap, bitmapOf, textureFromBitmaps, generateMips, warmMips, solidTexture, type ImageTextureOptions } from './images';
+export { KTX2_MAGIC, parseKtx2, encodeKtx2, textureFromKtx2, loadKtx2Texture, loadCompressedOrImageTexture, bestCompressedFormat, supportsTextureFormat, type Ktx2Image, type Ktx2Level, type Ktx2TextureOptions, type CompressedFamily } from './ktx2';
 export { isWebKit, isPhone, gpuName, isAppleGpu, LoadGuard, type LoadGuardKeys } from './device';
 export { FrameBudget, type FrameBudgetOptions } from './budget';
 export { Taau, type TaauOptions } from './taau';

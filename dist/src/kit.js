@@ -16,7 +16,11 @@ import { warmMips } from './images';
 export class WebGPUUnavailable extends Error {
 }
 const COMPILE_INFO_WAIT = 4000;
-const DEFAULT_FEATURES = ['timestamp-query', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance', 'depth-clip-control'];
+const DEFAULT_FEATURES = [
+    'timestamp-query', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance', 'depth-clip-control',
+    'texture-compression-bc', 'texture-compression-astc', 'texture-compression-etc2', 'shader-f16',
+    'subgroups',
+];
 const LIMITS = ['maxStorageBufferBindingSize', 'maxBufferSize', 'maxComputeWorkgroupStorageSize', 'maxStorageBuffersPerShaderStage',
     'maxStorageTexturesPerShaderStage', 'maxSampledTexturesPerShaderStage', 'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupSizeX',
     'maxComputeWorkgroupSizeY', 'maxColorAttachmentBytesPerSample', 'maxTextureArrayLayers', 'maxTextureDimension2D'];
@@ -124,6 +128,7 @@ export class Kit {
     canvas;
     parent;
     features;
+    caps;
     queue;
     format;
     context;
@@ -205,6 +210,14 @@ export class Kit {
         this.parent = parent;
         this.queue = device.queue;
         this.features = new Set([...device.features]);
+        this.caps = {
+            bc: this.features.has('texture-compression-bc'),
+            astc: this.features.has('texture-compression-astc'),
+            etc2: this.features.has('texture-compression-etc2'),
+            f16: this.features.has('shader-f16'),
+            subgroups: this.features.has('subgroups'),
+            timestampQuery: this.features.has('timestamp-query'),
+        };
         this.debug = opts.debug ?? new URLSearchParams(location.search).has('debug');
         this.renderScale = opts.renderScale ?? 1;
         this.maxPixelRatio = opts.maxPixelRatio ?? 2;

@@ -2,7 +2,7 @@
 export { createKit, Kit, View, AutoResolution, WebGPUUnavailable } from './kit';
 export { defineShader, sourceLine } from './shader';
 export { StructView, StructArray } from './struct';
-export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction } from './resources';
+export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction, compressedBlock, bytesPerPixel } from './resources';
 export { Compute, RenderPass, Draw, RawItem } from './passes';
 export { FrameGraph } from './graph';
 export { DrawBundle } from './bundle';
@@ -20,6 +20,7 @@ export { Fulldome } from './dome';
 export { domeLayout, domeDirection, tileWeights, viewBasis } from './domelayout';
 export { Assets, Pack, fetchKept, isLasting, inflate, decodeH16, unpackH16, packH16 } from './assets';
 export { loadImageTexture, loadImageArray, loadBitmap, bitmapOf, textureFromBitmaps, generateMips, warmMips, solidTexture } from './images';
+export { KTX2_MAGIC, parseKtx2, encodeKtx2, textureFromKtx2, loadKtx2Texture, loadCompressedOrImageTexture, bestCompressedFormat, supportsTextureFormat } from './ktx2';
 export { isWebKit, isPhone, gpuName, isAppleGpu, LoadGuard } from './device';
 export { FrameBudget } from './budget';
 export { Taau } from './taau';
