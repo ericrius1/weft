@@ -57,7 +57,9 @@ export default defineConfig({
 ```
 
 The plugin writes a `foo.d.wgsl.ts` beside each `foo.wgsl`. These files are generated: don't edit them. Projects commit
-them, and they regenerate when the shader changes under a running dev server or build.
+them, and they regenerate when the shader changes under a running dev server or build. Pass `sharedTypes: true` to
+`weft(...)` to import/re-export structs from project-local `#include`s via `import type` instead of duplicating their
+interfaces in every generated `.d.wgsl.ts`.
 
 `@ericrius1/weft/vite` also exports dev-server sinks and build helpers. Use these instead of writing your own:
 `shotSink({ dir })` (screenshots from `shot()`), `filmSink({ dir })` (film frames and audio POSTed by a page),
@@ -137,12 +139,13 @@ or a `GPUSampler` from `kit.sampler(desc)`.
 
 | call | what |
 | --- | --- |
-| `kit.compute(shader, { entry, bind, constants, threads \| workgroups \| indirect, view, enabled })` | one dispatch. `threads` is divided by the shader's `@workgroup_size` for you |
-| `kit.pass({ color: [{ target, clear, resolve }], depth: { target, clear, readOnly }, view, viewport, shared, replay, enabled })` | a render pass. `target: 'screen'` is the canvas. `clear: false` loads what's there |
-| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled, fallback })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame. `fallback`: see Debugging. `alphaToCoverage`, `writeMask`, `vertexBuffers`: below the table |
+| `kit.compute(shader, { entry, bind, constants, threads \| workgroups \| indirect, view, enabled, tags, owner })` | one dispatch. `threads` is divided by the shader's `@workgroup_size` for you. `tags`/`owner` carry typed metadata on the record (`hasTag(t)`) |
+| `kit.pass({ color: [{ target, clear, resolve }], depth: { target, clear, readOnly }, view, viewport, shared, replay, phases, enabled })` | a render pass. `target: 'screen'` is the canvas. `clear: false` loads what's there. `phases: ['sky', 'opaque', 'water', ...]` orders draws by declared `phase` + `order` (no `place()` splicing needed) |
+| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled, fallback, phase, order, tags, owner })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame. `fallback`: see Debugging. `phase`/`order` sort within a phased pass; `tags`/`owner` replace regex-matching labels. `alphaToCoverage`, `writeMask`, `vertexBuffers`: below the table |
 | `pass.fullscreen(shader, { bind, … })` | a fullscreen triangle. The shader includes `weft/fullscreen` and has a fragment entry taking `FullscreenOut` |
-| `pass.bundle(label).draw(...)` | static draws recorded once into a `GPURenderBundle` and re-recorded only when something they use changes |
-| `pass.place(anchor, 'before' \| 'after', () => { …declare… })` | the draws and bundles declared inside go next to `anchor` (a draw or bundle of the pass, or a label) in the pass's order, not at its end. Returns them |
+| `pass.bundle(label, opts?).draw(...)` | static draws recorded once into a `GPURenderBundle` and re-recorded only when something they use changes (`opts`: `{ phase, order, tags, owner }`) |
+| `pass.place(anchor, 'before' \| 'after', () => { …declare… })` | the draws and bundles declared inside go next to `anchor` (a draw or bundle of the pass, or a label) in the pass's order, not at its end. Returns them. Prefer `phases` on `kit.pass` for new passes |
+| `kit.graph(phases)` | `FrameGraph`: register run items once into named phases (`graph.add('post', items, { order, owner })`), toggle by owner (`setOwnerEnabled`), and pass `graph.entries()` directly to `kit.run` with zero per-frame allocation |
 | `kit.copy(src, dst)`, `kit.raw(enc => …)`, `kit.action(() => …)`, `pingpong.swap` | a copy, raw encoder access, and a CPU step at that point in the list |
 | `new MipChain(kit, tex)` | fills a texture's mips |
 | `new Taau(kit, hdr, depth, opts)` | temporal AA and upscaling. Run `taau.items`, then read `taau.out`. `opts.motion`: the moving draws' own motion (Recipes) |
@@ -328,6 +331,10 @@ the kit's.
   `enabled: false`; it's drawn only while the other's pipeline has failed, and only when the other would be drawn.
   It costs one more pipeline compile, so keep it for the few draws a view can't do without.
 - `kit.memory()` returns `{ textures, buffers, total }` in bytes. `kit.errors` holds the current errors.
+- **Warm pipeline LRU** (`KitOptions.warmPipelines`, default 192; `0` disables): pipelines from disposed draws/computes
+  retire into a bounded LRU instead of being dropped immediately, so revisiting a streamed-out site pays 0 ms compile.
+  Unused `GPUShaderModule`s are released once no live or warm pipeline references them. Inspect with `kit.pipelineStats()`,
+  trim with `kit.trimWarmPipelines(n)`, pin per owner with `kit.pinPipelines(keys, owner)` / `kit.unpinPipelines(owner)`.
 - Pictures from a headless or hidden tab: `await shot(kit, 'name')` with `shotSink({ dir })` in the Vite config, or
   `new Capture(kit)` with `cap.grab()` / `cap.step(dt)`. For films, `filmSink({ dir })` takes POSTed frames and audio.
 - Device performance from a phone: `perfBeacon(kit, { url: '/__beacon' })` with `beaconSink`.
@@ -611,7 +618,7 @@ advanced by the audio's clock.
 | question | file (in `src/`, `shaders/` or `plugin/`) |
 | --- | --- |
 | what `kit.*` does, the frame loop, `View`, `AutoResolution` | `src/kit.ts` |
-| draw, compute and pass options, pipeline sharing, compile scheduling | `src/passes.ts`, `src/compile.ts` |
+| draw, compute and pass options, pipeline sharing, compile scheduling, frame graph | `src/passes.ts`, `src/compile.ts`, `src/graph.ts` |
 | how a binding resolves, the `BindError` messages, shared groups | `src/binder.ts` |
 | buffers, textures, Ref, PingPong, readback | `src/resources.ts` |
 | struct layout from reflection | `src/struct.ts`, `plugin/wgsl.ts` |

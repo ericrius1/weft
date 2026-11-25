@@ -47,9 +47,9 @@ export function weft(opts = {}) {
     const runtime = opts.runtime ?? `${PACKAGE}/runtime`;
     const compile = (file) => compileWgsl(file, { root, libs, lean: opts.lean });
     const declare = (file, s) => {
-        if (opts.types === false || file.includes('/node_modules/'))
+        if (opts.types === false || file.includes('/node_modules/') || file.includes('\\node_modules\\'))
             return;
-        writeDeclaration(file, s, typesFrom);
+        writeDeclaration(file, s, typesFrom, { file, root, sharedTypes: opts.sharedTypes });
     };
     const moduleCode = (s) => `import { defineShader } from ${JSON.stringify(runtime)};\n` +
         `export default defineShader(${JSON.stringify(s)});\n` +
@@ -93,7 +93,7 @@ export function weft(opts = {}) {
                     set.add(file);
                 }
                 declare(file, s);
-                const { includes: _i, ...rest } = s;
+                const { includes: _i, structFiles: _sf, ...rest } = s;
                 return moduleCode(rest);
             }
             catch (e) {

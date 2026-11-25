@@ -2,7 +2,7 @@ import type { Kit, View } from './kit';
 import type { Shader } from './shader';
 import { Binder, type Bindable } from './binder';
 import { Ref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat } from './resources';
-import { DrawBundle } from './bundle';
+import { DrawBundle, type DrawBundleOptions } from './bundle';
 type Num = number | (() => number);
 type Nums = number[] | (() => number[]);
 export type BindOf<S> = S extends Shader<object, infer B> ? Partial<Record<B, Bindable>> : Record<string, Bindable>;
@@ -48,15 +48,20 @@ export declare function stableKey(v: unknown): string;
  *  bind group layouts (Binder.layoutKey: equal descriptions are the same layouts, kit.bindGroupLayout) and each stage's
  *  module as the shader and version it's made from */
 export declare function pipelineKey(desc: PipelineDesc, layout: string, module: string): string;
+export type DrawTags = Record<string, string | number | boolean>;
 /** One GPU pipeline and its compile, shared by every record whose descriptor is the same (kit.pipelineCache, by
- *  pipelineKey). It leaves the cache when its last record lets it go (disposed, or rebuilt into another: a hot shader
- *  edit makes new keys), or when its compile fails (so the next record asking tries again). */
+ *  pipelineKey). When its last record lets it go, a compiled current-version pipeline moves into `kit.warmPipelines`
+ *  (bounded LRU) so revisiting a place reuses it with 0 ms compile; stale or failed ones leave at once. */
 export declare class SharedPipeline {
     readonly key: string;
+    readonly shader: Shader;
     pipeline: AnyPipeline | null;
     error: string | null;
     /** its compile's ms, from its module made to the pipeline made */
     ms: number;
+    /** shader version this compile was built from, and lean code length as a weight proxy */
+    readonly shaderVersion: number;
+    readonly weight: number;
     /** the records using it */
     readonly users: Set<AnyPipelineRecord>;
     /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
@@ -66,7 +71,7 @@ export declare class SharedPipeline {
     /** start() has been called: the GPU has been asked for it (calling it again asks nothing more) */
     asked: boolean;
     private settle;
-    constructor(key: string);
+    constructor(key: string, shader: Shader);
     /** its pipeline is made: every record using it has it (a later one, a compile finishing after one was made on the
      *  spot, is let go) */
     land(p: AnyPipeline): void;
@@ -96,11 +101,19 @@ export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipe
     changed: (() => void) | null;
     /** the compile it uses, shared with every record of the same descriptor */
     entry: SharedPipeline | null;
+    /** optional structured tags, owner and phase metadata (for schedulers and draw filtering without label regexes) */
+    readonly tags?: DrawTags;
+    readonly owner?: string;
+    readonly phase?: string;
     private serial;
     private joined;
     private started;
     /** `describe`: its descriptor now (modules left out); `layoutKey`: its layout's description (Binder.layoutKey) */
-    constructor(kit: Kit, label: string, shader: Shader, describe: () => PipelineDesc, layoutKey: () => string);
+    constructor(kit: Kit, label: string, shader: Shader, describe: () => PipelineDesc, layoutKey: () => string, meta?: {
+        tags?: DrawTags;
+        owner?: string;
+        phase?: string;
+    });
     private get self();
     get pipeline(): P | null;
     set pipeline(p: P | null);
@@ -123,11 +136,11 @@ export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipe
     /** its draw or compute had no pipeline to run with: counted, and with kit.debug the first time is said */
     skip(): void;
     build(): Promise<void>;
-    /** the compile of its descriptor as it is now: the one made or under way for the same key, or a new one */
+    /** the compile of its descriptor as it is now: the one made or under way for the same key, a warm cached one, or a new one */
     private join;
     /** ask for its compile (through the compile scheduler, if there's one): whichever ask is let through first starts it */
     private ask;
-    /** let go of its compile (the last record using it takes it out of the cache) */
+    /** let go of its compile (the last record using it retires it to the warm LRU cache, or drops it if uncompiled/stale) */
     private leave;
     /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) and lets go of its compile */
     dispose(): void;
@@ -164,6 +177,10 @@ export interface ComputeOptions<S extends Shader = Shader> {
     view?: View;
     shared?: Record<number, Record<string, unknown>>;
     enabled?: boolean | (() => boolean);
+    /** structured metadata for compile schedulers and frame routing (replaces label regexes) */
+    tags?: DrawTags;
+    owner?: string;
+    phase?: string;
 }
 export declare class Compute<S extends Shader = Shader> implements RunItem {
     private kit;
@@ -171,6 +188,9 @@ export declare class Compute<S extends Shader = Shader> implements RunItem {
     readonly opts: ComputeOptions<S>;
     readonly label: string;
     readonly timed = true;
+    readonly tags?: DrawTags;
+    readonly owner?: string;
+    readonly phase?: string;
     enabled: boolean | (() => boolean);
     binder: Binder;
     pipe: PipelineRecord<GPUComputePipeline>;
@@ -227,6 +247,9 @@ export interface RenderPassOptions {
     replay?: RenderPass;
     /** (with replay) which of the source's draws to draw: what moves (a dragon, creatures) left out of a probe's capture */
     replayFilter?: (d: Draw) => boolean;
+    /** optional ordered draw phases (e.g. ['opaque', 'alpha', 'water', 'translucent', 'skim']). When set, draws and
+     *  bundles insert into their declared phase in registration order instead of appending to the end of `draws`. */
+    phases?: readonly string[];
 }
 /** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
 export interface DrawEncoder {
@@ -298,6 +321,12 @@ export interface DrawOptions<S extends Shader = Shader> {
      *  false`, so it never draws by itself: it's drawn when this one would be (this one's `enabled`, with its own counts
      *  and bindings), and only then. Its pipeline compiles when it's declared, like any draw's. */
     fallback?: Draw<any>;
+    /** structured metadata for compile schedulers, draw filtering and phased RenderPasses */
+    tags?: DrawTags;
+    owner?: string;
+    phase?: string;
+    /** tie-breaker within a RenderPass phase (lower draws first; default 0) */
+    order?: number;
 }
 export declare class Draw<S extends Shader = Shader> {
     private kit;
@@ -308,6 +337,10 @@ export declare class Draw<S extends Shader = Shader> {
     /** (a compile scheduler checks this: weft's records support deferral) */
     static scheduled: boolean;
     readonly label: string;
+    readonly tags?: DrawTags;
+    readonly owner?: string;
+    readonly phase?: string;
+    readonly order: number;
     binder: Binder;
     pipe: PipelineRecord<GPURenderPipeline>;
     private vs;
@@ -358,11 +391,15 @@ export declare class RenderPass implements RunItem {
     readonly timed = true;
     enabled: boolean | (() => boolean);
     draws: PassItem[];
+    private phaseIdx;
+    private itemKey;
     constructor(kit: Kit, opts: RenderPassOptions);
+    private resolvePhase;
+    private insertPhased;
     draw<S extends Shader>(shader: S, opts?: DrawOptions<S>): Draw<S>;
     /** a bundle of static draws at this point of the pass's order: its draws are recorded once into a GPURenderBundle
      *  and replayed with one call a frame (see bundle.ts for what re-records it) */
-    bundle(label?: string): DrawBundle;
+    bundle(label?: string, opts?: DrawBundleOptions): DrawBundle;
     private placing;
     /** the draws and bundles `add` declares in this pass, put right before or after `anchor` in its order instead of at
      *  its end: a system declared late (a site streamed in, a chunk loaded on demand) drawn where it belongs, beside the

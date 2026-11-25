@@ -54,6 +54,9 @@ export class DrawBundle {
     /** drawn or not (a function is asked each frame) */
     enabled = true;
     draws = [];
+    tags;
+    owner;
+    phase;
     /** how many times it has been recorded */
     records = 0;
     bundle = null;
@@ -70,10 +73,17 @@ export class DrawBundle {
     epoch = -1;
     moves = false;
     now = [];
-    constructor(kit, pass, label) {
+    constructor(kit, pass, label, opts) {
         this.kit = kit;
         this.pass = pass;
         this.label = label;
+        this.tags = opts?.tags;
+        this.owner = opts?.owner;
+        this.phase = opts?.phase;
+    }
+    hasTag(key, value) {
+        const v = this.tags?.[key];
+        return value === undefined ? v !== undefined && v !== false : v === value;
     }
     draw(shader, opts = {}) {
         const d = new Draw(this.kit, this.pass, shader, opts, this);

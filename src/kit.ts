@@ -9,6 +9,7 @@ import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction, type StorageOptions, type TextureDesc } from './resources';
 import { Compute, RenderPass, RawItem, pipelinesOf, settle, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem,
   type SharedPipeline, type Waitable } from './passes';
+import { FrameGraph } from './graph';
 import { SharedGroup, type SamplerName } from './binder';
 import { STAGE, TEX } from './gpuconst';
 import { Profiler } from './profiler';
@@ -34,6 +35,8 @@ export interface KitOptions {
    *  extended tone mapping, in Display P3 where supported ('force': skip the display check). See kit.hdr for what the
    *  last pass must write then. Without it (or without the display) the canvas is SDR as always. */
   hdr?: boolean | 'force';
+  /** max unused compiled GPU pipelines kept warm in LRU across site evictions so revisits pay 0 ms compile (default 192; 0 disables) */
+  warmPipelines?: number;
 }
 
 /** how the canvas is set up: SDR (the preferred 8-bit format, values 0..1) or HDR (rgba16float with extended tone
@@ -141,6 +144,14 @@ export class Kit {
   readonly pipelines: AnyPipelineRecord[] = [];
   /** the GPU pipelines the records share, one per distinct descriptor (passes.ts pipelineKey) */
   readonly pipelineCache = new Map<string, SharedPipeline>();
+  /** recently-disposed compiled pipelines held warm in LRU order (oldest first) so revisiting a place costs 0 ms compile */
+  readonly warmPipelines = new Map<string, SharedPipeline>();
+  /** pipeline keys pinned against warm-LRU eviction (e.g. active Arrival Plan) */
+  readonly pinnedByOwner = new Map<string, Set<string>>();
+  /** max entries held in `warmPipelines` (0 disables warm retention) */
+  warmLimit: number;
+  private warmHits = 0;
+  private warmEvictions = 0;
   readonly uniformBuffers = new Set<UniformBuffer<any>>();
   readonly textures = new Set<Texture>();
   /** the storage buffers made by kit.storage (for the memory tally) */
@@ -190,6 +201,8 @@ export class Kit {
   private lastNow_ = 0;
   private lastTick = 0;
   private ran: string[] = [];
+  private cbPool: GPUCommandBuffer[][] = [];
+  private runDepth = 0;
 
   /** `parent`: the kit whose device this one shares (see sibling) */
   constructor(readonly adapter: GPUAdapter, readonly device: GPUDevice, readonly canvas: HTMLCanvasElement, opts: KitOptions, readonly parent: Kit | null = null) {
@@ -198,6 +211,7 @@ export class Kit {
     this.debug = opts.debug ?? new URLSearchParams(location.search).has('debug');
     this.renderScale = opts.renderScale ?? 1;
     this.maxPixelRatio = opts.maxPixelRatio ?? 2;
+    this.warmLimit = opts.warmPipelines ?? 192;
     const ctx = canvas.getContext('webgpu');
     if (!ctx) throw new WebGPUUnavailable('Could not create a WebGPU canvas context.');
     this.context = ctx;
@@ -327,6 +341,8 @@ export class Kit {
     }, label);
   }
   action(fn: () => void, label = 'action') { return new RunAction(fn, label); }
+  /** create an explicit phase-ordered FrameGraph whose cached RunEntry[] passes straight to `kit.run(g.entries())` */
+  graph(phases: readonly string[]) { return new FrameGraph(phases); }
   view(camera = new Camera(), size: [number, number] | number | null = null, label = 'view') {
     const v = new View(this, camera, size, label);
     this.views.push(v);
@@ -364,6 +380,87 @@ export class Kit {
     for (const b of this.buffers) buffers += b.size;
     for (const u of this.uniformBuffers) buffers += u.gpu.size;
     return { textures, buffers, total: textures + buffers };
+  }
+
+  /** promote a recently-evicted compiled pipeline back out of the warm LRU cache (0 ms compile on revisit) */
+  takeWarmPipeline(key: string): SharedPipeline | undefined {
+    const e = this.warmPipelines.get(key);
+    if (!e) return undefined;
+    this.warmPipelines.delete(key);
+    if (!e.pipeline || e.shaderVersion !== e.shader.version) {
+      this.releaseModuleIfUnused(e.shader);
+      return undefined;
+    }
+    this.warmHits++;
+    return e;
+  }
+
+  /** retire an active pipeline whose last user disposed: hold compiled current-version ones in warm LRU, drop stale/failed */
+  retirePipeline(e: SharedPipeline) {
+    if (e.pipeline && e.shaderVersion === e.shader.version && this.warmLimit > 0) {
+      this.warmPipelines.delete(e.key);
+      this.warmPipelines.set(e.key, e);
+      this.trimWarmPipelines();
+    } else {
+      this.releaseModuleIfUnused(e.shader);
+    }
+  }
+
+  private isPinned(key: string): boolean {
+    for (const set of this.pinnedByOwner.values()) if (set.has(key)) return true;
+    return false;
+  }
+
+  /** evict oldest unpinned warm pipelines past `limit` and release any GPUShaderModule no longer referenced */
+  trimWarmPipelines(limit = this.warmLimit) {
+    if (this.warmPipelines.size <= limit) return;
+    for (const [k, e] of this.warmPipelines) {
+      if (this.warmPipelines.size <= limit) break;
+      if (this.isPinned(k)) continue;
+      this.warmPipelines.delete(k);
+      this.warmEvictions++;
+      this.releaseModuleIfUnused(e.shader);
+    }
+  }
+
+  /** pin a set of pipeline keys for `owner` against warm-LRU eviction (replaces only that owner's pins) */
+  pinPipelines(keys: Iterable<string>, owner = 'default') {
+    let set = this.pinnedByOwner.get(owner);
+    if (!set) { set = new Set(); this.pinnedByOwner.set(owner, set); }
+    else set.clear();
+    for (const k of keys) set.add(k);
+    if (!set.size) this.pinnedByOwner.delete(owner);
+  }
+
+  /** release all warm-LRU pins held by `owner` */
+  unpinPipelines(owner = 'default') {
+    this.pinnedByOwner.delete(owner);
+  }
+
+  /** drop all unpinned warm pipelines (e.g. under memory pressure) */
+  clearWarmPipelines() { this.trimWarmPipelines(0); }
+
+  /** release a shader's GPUShaderModule once no live record, active cache entry, or warm pipeline references it */
+  releaseModuleIfUnused(shader: Shader) {
+    if (!this.modules.has(shader)) return;
+    for (const e of this.pipelineCache.values()) if (e.shader === shader) return;
+    for (const e of this.warmPipelines.values()) if (e.shader === shader) return;
+    for (let i = 0; i < this.pipelines.length; i++) if (this.pipelines[i].shader === shader) return;
+    this.modules.delete(shader);
+  }
+
+  /** live vs warm pipeline and module retention stats */
+  pipelineStats() {
+    let warmBytes = 0;
+    for (const e of this.warmPipelines.values()) warmBytes += e.weight;
+    return {
+      active: this.pipelineCache.size,
+      warm: this.warmPipelines.size,
+      modules: this.modules.size,
+      warmHits: this.warmHits,
+      warmEvictions: this.warmEvictions,
+      warmBytes,
+    };
   }
 
   /** (re)configure the canvas as the kit set it up (SDR or HDR), with extra usage (Capture adds copy-src) */
@@ -493,7 +590,7 @@ export class Kit {
     this.frameIndex++;
     // (the frame's own state first: a resize that throws mustn't leave last frame's swapchain view to be drawn into)
     this.screen = null;
-    this.ran = [];
+    this.ran.length = 0;
     this.profiler.beginFrame();
     this.applySize();
   }
@@ -523,36 +620,44 @@ export class Kit {
   }
 
   /** encode + submit an ordered list of passes */
-  run(items: RunEntry[]) {
+  run(items: readonly RunEntry[]) {
     this.bindEpoch++;
     this.mainView.update();
     for (const v of this.views) v.update();
     for (const u of this.uniformBuffers) u.upload();
-    const list = items.filter(Boolean) as (RunItem | RunAction)[];
     const scoped = this.debug;
-    const cbs: GPUCommandBuffer[] = [];
-    let enc = this.device.createCommandEncoder({ label: 'weft.run' });
-    for (const it of list) {
-      if (!this.overlay.isEnabled(it.label)) continue;
-      const en = it.enabled;
-      if (en === false || (typeof en === 'function' && !en())) continue;
-      if (it instanceof RunAction) { it.fn(); this.bindEpoch++; continue; }
-      const ts = it.timed ? this.profiler.writes(it.label) : undefined;
-      if (scoped) {
-        this.device.pushErrorScope('validation');
-        const e1 = this.device.createCommandEncoder({ label: it.label });
-        try { it.encode(e1, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
-        cbs.push(e1.finish());
-        const label = it.label;
-        this.device.popErrorScope().then((err) => { if (err) this.report('validation', label, err.message); });
-      } else {
-        try { it.encode(enc, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
+    const depth = this.runDepth++;
+    const cbs = this.cbPool[depth] ?? (this.cbPool[depth] = []);
+    cbs.length = 0;
+    try {
+      let enc = this.device.createCommandEncoder({ label: 'weft.run' });
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (!it) continue;
+        if (!this.overlay.isEnabled(it.label)) continue;
+        const en = it.enabled;
+        if (en === false || (typeof en === 'function' && !en())) continue;
+        if (it instanceof RunAction) { it.fn(); this.bindEpoch++; continue; }
+        const ts = it.timed ? this.profiler.writes(it.label) : undefined;
+        if (scoped) {
+          this.device.pushErrorScope('validation');
+          const e1 = this.device.createCommandEncoder({ label: it.label });
+          try { it.encode(e1, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
+          cbs.push(e1.finish());
+          const label = it.label;
+          this.device.popErrorScope().then((err) => { if (err) this.report('validation', label, err.message); });
+        } else {
+          try { it.encode(enc, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
+        }
+        this.ran.push(it.label);
       }
-      this.ran.push(it.label);
+      if (!scoped) cbs.push(enc.finish());
+      this.profiler.resolve(cbs);
+      this.queue.submit(cbs);
+    } finally {
+      cbs.length = 0;
+      this.runDepth--;
     }
-    if (!scoped) cbs.push(enc.finish());
-    this.profiler.resolve(cbs);
-    this.queue.submit(cbs);
   }
 
   /** run `cb` every animation frame (resize, time and the overlay are handled; whatever throws, the loop goes on) */

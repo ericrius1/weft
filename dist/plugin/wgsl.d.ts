@@ -64,6 +64,8 @@ export interface CompiledShader {
     /** contiguous runs of output lines: [firstOutLine, fileIndex, firstSourceLine] … (1-based lines) */
     runs: number[];
     includes: string[];
+    /** build-time only: absolute path of the .wgsl file that declared each struct (omitted from runtime bundle) */
+    structFiles?: Record<string, string>;
     reflect: ShaderReflection;
 }
 export interface CompileOptions {
@@ -80,6 +82,7 @@ export declare function preprocess(entry: string, opts: CompileOptions): {
     files: string[];
     runs: number[];
     includes: string[];
+    structFiles: Record<string, string>;
 };
 /** maps a 1-based output line back to { file, line } */
 export declare function mapLine(runs: number[], files: string[], line: number): {
@@ -89,6 +92,14 @@ export declare function mapLine(runs: number[], files: string[], line: number): 
 export declare function normType(t: string): string;
 export declare function reflectWgsl(code: string): ShaderReflection;
 export declare function compileWgsl(file: string, opts: CompileOptions): CompiledShader;
-export declare function declaration(s: CompiledShader, weftImport: string): string;
-export declare function writeDeclaration(file: string, s: CompiledShader, weftImport: string): boolean;
+export interface DeclarationOptions {
+    /** absolute path of the shader file being declared */
+    file?: string;
+    /** project root; only included shaders inside `root` (and outside `node_modules`) are imported by type */
+    root?: string;
+    /** import structs declared in project-local included .wgsl files instead of copying them into every .d.wgsl.ts */
+    sharedTypes?: boolean;
+}
+export declare function declaration(s: CompiledShader, weftImport: string, opts?: DeclarationOptions): string;
+export declare function writeDeclaration(file: string, s: CompiledShader, weftImport: string, opts?: DeclarationOptions): boolean;
 //# sourceMappingURL=wgsl.d.ts.map

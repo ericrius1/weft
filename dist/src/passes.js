@@ -56,14 +56,18 @@ function makePipeline(kit, desc, module, async) {
     return async ? dev.createRenderPipelineAsync(d) : dev.createRenderPipeline(d);
 }
 /** One GPU pipeline and its compile, shared by every record whose descriptor is the same (kit.pipelineCache, by
- *  pipelineKey). It leaves the cache when its last record lets it go (disposed, or rebuilt into another: a hot shader
- *  edit makes new keys), or when its compile fails (so the next record asking tries again). */
+ *  pipelineKey). When its last record lets it go, a compiled current-version pipeline moves into `kit.warmPipelines`
+ *  (bounded LRU) so revisiting a place reuses it with 0 ms compile; stale or failed ones leave at once. */
 export class SharedPipeline {
     key;
+    shader;
     pipeline = null;
     error = null;
     /** its compile's ms, from its module made to the pipeline made */
     ms = 0;
+    /** shader version this compile was built from, and lean code length as a weight proxy */
+    shaderVersion;
+    weight;
     /** the records using it */
     users = new Set();
     /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
@@ -73,8 +77,11 @@ export class SharedPipeline {
     /** start() has been called: the GPU has been asked for it (calling it again asks nothing more) */
     asked = false;
     settle;
-    constructor(key) {
+    constructor(key, shader) {
         this.key = key;
+        this.shader = shader;
+        this.shaderVersion = shader.version;
+        this.weight = shader.code.length;
         this.done = new Promise((ok, fail) => { this.settle = { ok, fail }; });
         this.done.catch(() => { });
     }
@@ -119,18 +126,25 @@ export class PipelineRecord {
     changed = null;
     /** the compile it uses, shared with every record of the same descriptor */
     entry = null;
+    /** optional structured tags, owner and phase metadata (for schedulers and draw filtering without label regexes) */
+    tags;
+    owner;
+    phase;
     // (its builds counted: a build overtaken by a newer one, or by dispose, lets go; `joined`, the build that joined entry;
     // `started`, the compile it started last)
     serial = 0;
     joined = 0;
     started = null;
     /** `describe`: its descriptor now (modules left out); `layoutKey`: its layout's description (Binder.layoutKey) */
-    constructor(kit, label, shader, describe, layoutKey) {
+    constructor(kit, label, shader, describe, layoutKey, meta) {
         this.kit = kit;
         this.label = label;
         this.shader = shader;
         this.describe = describe;
         this.layoutKey = layoutKey;
+        this.tags = meta?.tags;
+        this.owner = meta?.owner;
+        this.phase = meta?.phase;
         kit.pipelines.push(this.self);
     }
     get self() { return this; }
@@ -200,15 +214,22 @@ export class PipelineRecord {
         const wrapped = this.pending;
         return this.pending;
     }
-    /** the compile of its descriptor as it is now: the one made or under way for the same key, or a new one */
+    /** the compile of its descriptor as it is now: the one made or under way for the same key, a warm cached one, or a new one */
     join(module) {
         const kit = this.kit, desc = this.describe();
         const key = pipelineKey(desc, this.layoutKey(), shaderTag(this.shader));
         let e = kit.pipelineCache.get(key);
+        if (!e) {
+            const warm = kit.takeWarmPipeline?.(key);
+            if (warm) {
+                kit.pipelineCache.set(key, warm);
+                e = warm;
+            }
+        }
         if (!e || e !== this.entry) {
             this.leave();
             if (!e) {
-                const made = this.started = e = new SharedPipeline(key);
+                const made = this.started = e = new SharedPipeline(key, this.shader);
                 kit.pipelineCache.set(key, made);
                 let p = null;
                 made.start = () => (made.asked = true) && (p ??= made.pipeline
@@ -241,17 +262,23 @@ export class PipelineRecord {
     ask(e) {
         const kit = this.kit, c = kit.compiler, t0 = performance.now();
         new Promise((r) => r(c ? c.compile(this.self, e.start, () => e.asked || !!e.pipeline) : e.start())).then((pipe) => { if (!e.pipeline)
-            e.ms = performance.now() - t0; e.land(pipe); }, (err) => { e.failed(err); if (kit.pipelineCache.get(e.key) === e)
-            kit.pipelineCache.delete(e.key); });
+            e.ms = performance.now() - t0; e.land(pipe); }, (err) => {
+            e.failed(err);
+            if (kit.pipelineCache.get(e.key) === e)
+                kit.pipelineCache.delete(e.key);
+            kit.releaseModuleIfUnused?.(e.shader);
+        });
     }
-    /** let go of its compile (the last record using it takes it out of the cache) */
+    /** let go of its compile (the last record using it retires it to the warm LRU cache, or drops it if uncompiled/stale) */
     leave() {
         const e = this.entry;
         if (!e)
             return;
         e.users.delete(this.self);
-        if (!e.users.size && this.kit.pipelineCache.get(e.key) === e)
+        if (!e.users.size && this.kit.pipelineCache.get(e.key) === e) {
             this.kit.pipelineCache.delete(e.key);
+            this.kit.retirePipeline?.(e);
+        }
         this.entry = null;
     }
     /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) and lets go of its compile */
@@ -347,6 +374,9 @@ export class Compute {
     opts;
     label;
     timed = true;
+    tags;
+    owner;
+    phase;
     enabled;
     binder;
     pipe;
@@ -357,6 +387,9 @@ export class Compute {
         this.shader = shader;
         this.opts = opts;
         this.label = opts.label ?? shader.label;
+        this.tags = opts.tags;
+        this.owner = opts.owner;
+        this.phase = opts.phase;
         this.enabled = opts.enabled ?? true;
         this.entry = pickEntry(shader, 'compute', opts.entry, this.label);
         this.binder = new Binder(kit, shader, [this.entry], { ...(opts.bind ?? {}) }, this.label);
@@ -364,7 +397,7 @@ export class Compute {
             label: this.label, layout: this.binder.layout,
             compute: { module: NO_MODULE, entryPoint: this.entry, constants: constantsFor(shader, this.entry, opts.constants) },
         });
-        this.pipe = new PipelineRecord(kit, this.label, shader, desc, () => this.binder.layoutKey);
+        this.pipe = new PipelineRecord(kit, this.label, shader, desc, () => this.binder.layoutKey, { tags: opts.tags, owner: opts.owner, phase: opts.phase });
         this.pipe.build();
         this.unsub = shader.onChange(() => this.rebuild());
     }
@@ -450,6 +483,10 @@ export class Draw {
     /** (a compile scheduler checks this: weft's records support deferral) */
     static scheduled = true;
     label;
+    tags;
+    owner;
+    phase;
+    order;
     binder;
     pipe;
     vs;
@@ -464,12 +501,16 @@ export class Draw {
         this.opts = opts;
         this.bundle = bundle;
         this.label = opts.label ?? shader.label;
+        this.tags = opts.tags;
+        this.owner = opts.owner;
+        this.phase = opts.phase;
+        this.order = opts.order ?? 0;
         if (bundle && opts.encode)
             throw new BindError(`${this.label}: a bundled draw can't issue its own calls (encode)`);
         this.on_ = opts.enabled ?? true;
         this.pickEntries();
         this.binder = new Binder(kit, shader, this.fs ? [this.vs, this.fs] : [this.vs], { ...(opts.bind ?? {}) }, this.label);
-        this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(), () => this.binder.layoutKey);
+        this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(), () => this.binder.layoutKey, { tags: opts.tags, owner: opts.owner, phase: opts.phase });
         this.pipe.changed = () => this.bundle?.invalidate();
         this.pipe.build();
         this.unsub = shader.onChange(() => this.rebuild());
@@ -659,22 +700,92 @@ export class RenderPass {
     timed = true;
     enabled;
     draws = [];
+    phaseIdx = null;
+    itemKey = new WeakMap();
     constructor(kit, opts) {
         this.kit = kit;
         this.opts = opts;
         this.label = opts.label ?? 'pass';
         this.enabled = opts.enabled ?? true;
+        if (opts.phases?.length) {
+            this.phaseIdx = new Map();
+            for (let i = 0; i < opts.phases.length; i++)
+                this.phaseIdx.set(opts.phases[i], i);
+        }
+    }
+    resolvePhase(phase, blend, depthWrite) {
+        if (!this.phaseIdx)
+            return 0;
+        if (phase !== undefined) {
+            const idx = this.phaseIdx.get(phase);
+            if (idx !== undefined)
+                return idx;
+            this.kit.warnOnce(`phase:${this.label}:${phase}`, `${this.label}: unknown phase '${phase}' (has: ${this.opts.phases.join(', ')})`);
+        }
+        // (sensible default when a legacy caller omits `phase` on a phased pass)
+        const isTranslucent = (blend !== undefined && blend !== 'opaque' && (!Array.isArray(blend) || blend.some((b) => b && b !== 'opaque'))) || depthWrite === false;
+        if (isTranslucent) {
+            const t = this.phaseIdx.get('translucent');
+            if (t !== undefined)
+                return t;
+        }
+        else {
+            const o = this.phaseIdx.get('opaque');
+            if (o !== undefined)
+                return o;
+        }
+        return this.phaseIdx.size;
+    }
+    insertPhased(item, phaseIdx, order) {
+        this.itemKey.set(item, [phaseIdx, order]);
+        if (!this.phaseIdx || this.placing.length) {
+            this.draws.push(item);
+            return;
+        }
+        const draws = this.draws, n = draws.length;
+        if (!n) {
+            draws.push(item);
+            return;
+        }
+        const last = this.itemKey.get(draws[n - 1]);
+        if (!last || phaseIdx > last[0] || (phaseIdx === last[0] && order >= last[1])) {
+            draws.push(item);
+            return;
+        }
+        // Binary search upper bound for (phaseIdx, order) — O(log N) comparisons
+        let lo = 0, hi = n;
+        while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            const k = this.itemKey.get(draws[mid]);
+            if (!k || k[0] < phaseIdx || (k[0] === phaseIdx && k[1] <= order))
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        draws.splice(lo, 0, item);
     }
     draw(shader, opts = {}) {
         const d = new Draw(this.kit, this, shader, opts);
-        this.draws.push(d);
+        if (this.phaseIdx) {
+            const p = this.resolvePhase(opts.phase, opts.blend, opts.depthWrite);
+            this.insertPhased(d, p, opts.order ?? 0);
+        }
+        else {
+            this.draws.push(d);
+        }
         return d;
     }
     /** a bundle of static draws at this point of the pass's order: its draws are recorded once into a GPURenderBundle
      *  and replayed with one call a frame (see bundle.ts for what re-records it) */
-    bundle(label = `${this.label}.bundle`) {
-        const b = new DrawBundle(this.kit, this, label);
-        this.draws.push(b);
+    bundle(label = `${this.label}.bundle`, opts) {
+        const b = new DrawBundle(this.kit, this, label, opts);
+        if (this.phaseIdx) {
+            const p = this.resolvePhase(opts?.phase, undefined, undefined);
+            this.insertPhased(b, p, opts?.order ?? 0);
+        }
+        else {
+            this.draws.push(b);
+        }
         return b;
     }
     // (place: where each call under way began in `draws`, the outermost first)

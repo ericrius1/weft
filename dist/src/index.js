@@ -4,6 +4,7 @@ export { defineShader, sourceLine } from './shader';
 export { StructView, StructArray } from './struct';
 export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction } from './resources';
 export { Compute, RenderPass, Draw, RawItem } from './passes';
+export { FrameGraph } from './graph';
 export { DrawBundle } from './bundle';
 export { SerialCompiler } from './compile';
 export { BindError, SharedGroup } from './binder';

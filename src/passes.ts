@@ -12,7 +12,7 @@ import type { Kit, View } from './kit';
 import type { Shader } from './shader';
 import { Binder, BindError, forgetBindings, type Bindable } from './binder';
 import { Ref, deref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat, rawUid } from './resources';
-import { DrawBundle } from './bundle';
+import { DrawBundle, type DrawBundleOptions } from './bundle';
 
 type Num = number | (() => number);
 type Nums = number[] | (() => number[]);
@@ -94,14 +94,19 @@ function makePipeline(kit: Kit, desc: PipelineDesc, module: GPUShaderModule, asy
   return async ? dev.createRenderPipelineAsync(d as unknown as GPURenderPipelineDescriptor) : dev.createRenderPipeline(d as unknown as GPURenderPipelineDescriptor);
 }
 
+export type DrawTags = Record<string, string | number | boolean>;
+
 /** One GPU pipeline and its compile, shared by every record whose descriptor is the same (kit.pipelineCache, by
- *  pipelineKey). It leaves the cache when its last record lets it go (disposed, or rebuilt into another: a hot shader
- *  edit makes new keys), or when its compile fails (so the next record asking tries again). */
+ *  pipelineKey). When its last record lets it go, a compiled current-version pipeline moves into `kit.warmPipelines`
+ *  (bounded LRU) so revisiting a place reuses it with 0 ms compile; stale or failed ones leave at once. */
 export class SharedPipeline {
   pipeline: AnyPipeline | null = null;
   error: string | null = null;
   /** its compile's ms, from its module made to the pipeline made */
   ms = 0;
+  /** shader version this compile was built from, and lean code length as a weight proxy */
+  readonly shaderVersion: number;
+  readonly weight: number;
   /** the records using it */
   readonly users = new Set<AnyPipelineRecord>();
   /** settles once its pipeline is made (compiled, or made on the spot by a compile scheduler) or its compile fails */
@@ -111,7 +116,9 @@ export class SharedPipeline {
   /** start() has been called: the GPU has been asked for it (calling it again asks nothing more) */
   asked = false;
   private settle!: { ok: (p: AnyPipeline) => void; fail: (e: unknown) => void };
-  constructor(readonly key: string) {
+  constructor(readonly key: string, readonly shader: Shader) {
+    this.shaderVersion = shader.version;
+    this.weight = shader.code.length;
     this.done = new Promise<AnyPipeline>((ok, fail) => { this.settle = { ok, fail }; });
     this.done.catch(() => {});
   }
@@ -149,6 +156,10 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   changed: (() => void) | null = null;
   /** the compile it uses, shared with every record of the same descriptor */
   entry: SharedPipeline | null = null;
+  /** optional structured tags, owner and phase metadata (for schedulers and draw filtering without label regexes) */
+  readonly tags?: DrawTags;
+  readonly owner?: string;
+  readonly phase?: string;
   // (its builds counted: a build overtaken by a newer one, or by dispose, lets go; `joined`, the build that joined entry;
   // `started`, the compile it started last)
   private serial = 0;
@@ -156,7 +167,10 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
   private started: SharedPipeline | null = null;
   /** `describe`: its descriptor now (modules left out); `layoutKey`: its layout's description (Binder.layoutKey) */
   constructor(readonly kit: Kit, readonly label: string, readonly shader: Shader, readonly describe: () => PipelineDesc,
-    readonly layoutKey: () => string) {
+    readonly layoutKey: () => string, meta?: { tags?: DrawTags; owner?: string; phase?: string }) {
+    this.tags = meta?.tags;
+    this.owner = meta?.owner;
+    this.phase = meta?.phase;
     kit.pipelines.push(this.self);
   }
   private get self() { return this as unknown as AnyPipelineRecord; }
@@ -216,15 +230,22 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
     const wrapped = this.pending;
     return this.pending;
   }
-  /** the compile of its descriptor as it is now: the one made or under way for the same key, or a new one */
+  /** the compile of its descriptor as it is now: the one made or under way for the same key, a warm cached one, or a new one */
   private join(module: GPUShaderModule): SharedPipeline {
     const kit = this.kit, desc = this.describe();
     const key = pipelineKey(desc, this.layoutKey(), shaderTag(this.shader));
     let e = kit.pipelineCache.get(key);
+    if (!e) {
+      const warm = kit.takeWarmPipeline?.(key);
+      if (warm) {
+        kit.pipelineCache.set(key, warm);
+        e = warm;
+      }
+    }
     if (!e || e !== this.entry) {
       this.leave();
       if (!e) {
-        const made = this.started = e = new SharedPipeline(key);
+        const made = this.started = e = new SharedPipeline(key, this.shader);
         kit.pipelineCache.set(key, made);
         let p: Promise<AnyPipeline> | null = null;
         made.start = () => (made.asked = true) && (p ??= made.pipeline
@@ -255,14 +276,21 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
     const kit = this.kit, c = kit.compiler, t0 = performance.now();
     new Promise((r) => r(c ? c.compile(this.self, e.start, () => e.asked || !!e.pipeline) : e.start())).then(
       (pipe) => { if (!e.pipeline) e.ms = performance.now() - t0; e.land(pipe as AnyPipeline); },
-      (err) => { e.failed(err); if (kit.pipelineCache.get(e.key) === e) kit.pipelineCache.delete(e.key); });
+      (err) => {
+        e.failed(err);
+        if (kit.pipelineCache.get(e.key) === e) kit.pipelineCache.delete(e.key);
+        kit.releaseModuleIfUnused?.(e.shader);
+      });
   }
-  /** let go of its compile (the last record using it takes it out of the cache) */
+  /** let go of its compile (the last record using it retires it to the warm LRU cache, or drops it if uncompiled/stale) */
   private leave() {
     const e = this.entry;
     if (!e) return;
     e.users.delete(this.self);
-    if (!e.users.size && this.kit.pipelineCache.get(e.key) === e) this.kit.pipelineCache.delete(e.key);
+    if (!e.users.size && this.kit.pipelineCache.get(e.key) === e) {
+      this.kit.pipelineCache.delete(e.key);
+      this.kit.retirePipeline?.(e);
+    }
     this.entry = null;
   }
   /** forget it: it leaves kit.pipelines (kit.ready() and the overlay stop counting it) and lets go of its compile */
@@ -356,11 +384,18 @@ export interface ComputeOptions<S extends Shader = Shader> {
   view?: View;
   shared?: Record<number, Record<string, unknown>>;
   enabled?: boolean | (() => boolean);
+  /** structured metadata for compile schedulers and frame routing (replaces label regexes) */
+  tags?: DrawTags;
+  owner?: string;
+  phase?: string;
 }
 
 export class Compute<S extends Shader = Shader> implements RunItem {
   readonly label: string;
   readonly timed = true;
+  readonly tags?: DrawTags;
+  readonly owner?: string;
+  readonly phase?: string;
   enabled: boolean | (() => boolean);
   binder: Binder;
   pipe: PipelineRecord<GPUComputePipeline>;
@@ -368,6 +403,9 @@ export class Compute<S extends Shader = Shader> implements RunItem {
   private unsub: () => void;
   constructor(private kit: Kit, readonly shader: S, readonly opts: ComputeOptions<S>) {
     this.label = opts.label ?? shader.label;
+    this.tags = opts.tags;
+    this.owner = opts.owner;
+    this.phase = opts.phase;
     this.enabled = opts.enabled ?? true;
     this.entry = pickEntry(shader, 'compute', opts.entry, this.label);
     this.binder = new Binder(kit, shader, [this.entry], { ...(opts.bind ?? {}) } as Record<string, unknown>, this.label);
@@ -375,7 +413,7 @@ export class Compute<S extends Shader = Shader> implements RunItem {
       label: this.label, layout: this.binder.layout,
       compute: { module: NO_MODULE, entryPoint: this.entry, constants: constantsFor(shader, this.entry, opts.constants) },
     });
-    this.pipe = new PipelineRecord(kit, this.label, shader, desc, () => this.binder.layoutKey);
+    this.pipe = new PipelineRecord(kit, this.label, shader, desc, () => this.binder.layoutKey, { tags: opts.tags, owner: opts.owner, phase: opts.phase });
     this.pipe.build();
     this.unsub = shader.onChange(() => this.rebuild());
   }
@@ -449,6 +487,9 @@ export interface RenderPassOptions {
   replay?: RenderPass;
   /** (with replay) which of the source's draws to draw: what moves (a dragon, creatures) left out of a probe's capture */
   replayFilter?: (d: Draw) => boolean;
+  /** optional ordered draw phases (e.g. ['opaque', 'alpha', 'water', 'translucent', 'skim']). When set, draws and
+   *  bundles insert into their declared phase in registration order instead of appending to the end of `draws`. */
+  phases?: readonly string[];
 }
 
 /** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
@@ -524,6 +565,12 @@ export interface DrawOptions<S extends Shader = Shader> {
    *  false`, so it never draws by itself: it's drawn when this one would be (this one's `enabled`, with its own counts
    *  and bindings), and only then. Its pipeline compiles when it's declared, like any draw's. */
   fallback?: Draw<any>;
+  /** structured metadata for compile schedulers, draw filtering and phased RenderPasses */
+  tags?: DrawTags;
+  owner?: string;
+  phase?: string;
+  /** tie-breaker within a RenderPass phase (lower draws first; default 0) */
+  order?: number;
 }
 
 const gpuBuf = (b: unknown) => { const v = deref(b); return v instanceof StorageBuffer ? v.gpu : (v as GPUBuffer); };
@@ -532,6 +579,10 @@ export class Draw<S extends Shader = Shader> {
   /** (a compile scheduler checks this: weft's records support deferral) */
   static scheduled = true;
   readonly label: string;
+  readonly tags?: DrawTags;
+  readonly owner?: string;
+  readonly phase?: string;
+  readonly order: number;
   binder: Binder;
   pipe: PipelineRecord<GPURenderPipeline>;
   private vs!: string;
@@ -541,11 +592,15 @@ export class Draw<S extends Shader = Shader> {
   /** `bundle`: the DrawBundle it's baked into (pass.bundle().draw makes these) */
   constructor(private kit: Kit, readonly pass: RenderPass, readonly shader: S, readonly opts: DrawOptions<S>, readonly bundle: DrawBundle | null = null) {
     this.label = opts.label ?? shader.label;
+    this.tags = opts.tags;
+    this.owner = opts.owner;
+    this.phase = opts.phase;
+    this.order = opts.order ?? 0;
     if (bundle && opts.encode) throw new BindError(`${this.label}: a bundled draw can't issue its own calls (encode)`);
     this.on_ = opts.enabled ?? true;
     this.pickEntries();
     this.binder = new Binder(kit, shader, this.fs ? [this.vs, this.fs] : [this.vs], { ...(opts.bind ?? {}) } as Record<string, unknown>, this.label);
-    this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(), () => this.binder.layoutKey);
+    this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(), () => this.binder.layoutKey, { tags: opts.tags, owner: opts.owner, phase: opts.phase });
     this.pipe.changed = () => this.bundle?.invalidate();
     this.pipe.build();
     this.unsub = shader.onChange(() => this.rebuild());
@@ -702,20 +757,77 @@ export class RenderPass implements RunItem {
   readonly timed = true;
   enabled: boolean | (() => boolean);
   draws: PassItem[] = [];
+  private phaseIdx: Map<string, number> | null = null;
+  private itemKey = new WeakMap<PassItem, [number, number]>();
   constructor(private kit: Kit, readonly opts: RenderPassOptions) {
     this.label = opts.label ?? 'pass';
     this.enabled = opts.enabled ?? true;
+    if (opts.phases?.length) {
+      this.phaseIdx = new Map();
+      for (let i = 0; i < opts.phases.length; i++) this.phaseIdx.set(opts.phases[i], i);
+    }
+  }
+  private resolvePhase(phase: string | undefined, blend: BlendMode | BlendMode[] | undefined, depthWrite: boolean | undefined): number {
+    if (!this.phaseIdx) return 0;
+    if (phase !== undefined) {
+      const idx = this.phaseIdx.get(phase);
+      if (idx !== undefined) return idx;
+      this.kit.warnOnce(`phase:${this.label}:${phase}`, `${this.label}: unknown phase '${phase}' (has: ${this.opts.phases!.join(', ')})`);
+    }
+    // (sensible default when a legacy caller omits `phase` on a phased pass)
+    const isTranslucent = (blend !== undefined && blend !== 'opaque' && (!Array.isArray(blend) || blend.some((b) => b && b !== 'opaque'))) || depthWrite === false;
+    if (isTranslucent) {
+      const t = this.phaseIdx.get('translucent');
+      if (t !== undefined) return t;
+    } else {
+      const o = this.phaseIdx.get('opaque');
+      if (o !== undefined) return o;
+    }
+    return this.phaseIdx.size;
+  }
+  private insertPhased(item: PassItem, phaseIdx: number, order: number) {
+    this.itemKey.set(item, [phaseIdx, order]);
+    if (!this.phaseIdx || this.placing.length) {
+      this.draws.push(item);
+      return;
+    }
+    const draws = this.draws, n = draws.length;
+    if (!n) { draws.push(item); return; }
+    const last = this.itemKey.get(draws[n - 1]);
+    if (!last || phaseIdx > last[0] || (phaseIdx === last[0] && order >= last[1])) {
+      draws.push(item);
+      return;
+    }
+    // Binary search upper bound for (phaseIdx, order) — O(log N) comparisons
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      const k = this.itemKey.get(draws[mid]);
+      if (!k || k[0] < phaseIdx || (k[0] === phaseIdx && k[1] <= order)) lo = mid + 1;
+      else hi = mid;
+    }
+    draws.splice(lo, 0, item);
   }
   draw<S extends Shader>(shader: S, opts: DrawOptions<S> = {}): Draw<S> {
     const d = new Draw(this.kit, this, shader, opts);
-    this.draws.push(d as unknown as Draw);
+    if (this.phaseIdx) {
+      const p = this.resolvePhase(opts.phase, opts.blend, opts.depthWrite);
+      this.insertPhased(d as unknown as Draw, p, opts.order ?? 0);
+    } else {
+      this.draws.push(d as unknown as Draw);
+    }
     return d;
   }
   /** a bundle of static draws at this point of the pass's order: its draws are recorded once into a GPURenderBundle
    *  and replayed with one call a frame (see bundle.ts for what re-records it) */
-  bundle(label = `${this.label}.bundle`): DrawBundle {
-    const b = new DrawBundle(this.kit, this, label);
-    this.draws.push(b);
+  bundle(label = `${this.label}.bundle`, opts?: DrawBundleOptions): DrawBundle {
+    const b = new DrawBundle(this.kit, this, label, opts);
+    if (this.phaseIdx) {
+      const p = this.resolvePhase(opts?.phase, undefined, undefined);
+      this.insertPhased(b, p, opts?.order ?? 0);
+    } else {
+      this.draws.push(b);
+    }
     return b;
   }
   // (place: where each call under way began in `draws`, the outermost first)

@@ -2,6 +2,7 @@ import type { Shader, StructDef } from './shader';
 import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction, type StorageOptions, type TextureDesc } from './resources';
 import { Compute, RenderPass, RawItem, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem, type SharedPipeline, type Waitable } from './passes';
+import { FrameGraph } from './graph';
 import { SharedGroup, type SamplerName } from './binder';
 import { Profiler } from './profiler';
 import { DebugOverlay } from './debug';
@@ -25,6 +26,8 @@ export interface KitOptions {
      *  extended tone mapping, in Display P3 where supported ('force': skip the display check). See kit.hdr for what the
      *  last pass must write then. Without it (or without the display) the canvas is SDR as always. */
     hdr?: boolean | 'force';
+    /** max unused compiled GPU pipelines kept warm in LRU across site evictions so revisits pay 0 ms compile (default 192; 0 disables) */
+    warmPipelines?: number;
 }
 /** how the canvas is set up: SDR (the preferred 8-bit format, values 0..1) or HDR (rgba16float with extended tone
  *  mapping: values past 1 are brighter than SDR white, up to the display's headroom). Either way the last pass writes
@@ -93,6 +96,14 @@ export declare class Kit {
     readonly pipelines: AnyPipelineRecord[];
     /** the GPU pipelines the records share, one per distinct descriptor (passes.ts pipelineKey) */
     readonly pipelineCache: Map<string, SharedPipeline>;
+    /** recently-disposed compiled pipelines held warm in LRU order (oldest first) so revisiting a place costs 0 ms compile */
+    readonly warmPipelines: Map<string, SharedPipeline>;
+    /** pipeline keys pinned against warm-LRU eviction (e.g. active Arrival Plan) */
+    readonly pinnedByOwner: Map<string, Set<string>>;
+    /** max entries held in `warmPipelines` (0 disables warm retention) */
+    warmLimit: number;
+    private warmHits;
+    private warmEvictions;
     readonly uniformBuffers: Set<UniformBuffer<any>>;
     readonly textures: Set<Texture>;
     /** the storage buffers made by kit.storage (for the memory tally) */
@@ -151,6 +162,8 @@ export declare class Kit {
     private lastNow_;
     private lastTick;
     private ran;
+    private cbPool;
+    private runDepth;
     /** `parent`: the kit whose device this one shares (see sibling) */
     constructor(adapter: GPUAdapter, device: GPUDevice, canvas: HTMLCanvasElement, opts: KitOptions, parent?: Kit | null);
     get camera(): Camera;
@@ -176,6 +189,8 @@ export declare class Kit {
         size?: () => [number, number, number];
     }): RawItem;
     action(fn: () => void, label?: string): RunAction;
+    /** create an explicit phase-ordered FrameGraph whose cached RunEntry[] passes straight to `kit.run(g.entries())` */
+    graph(phases: readonly string[]): FrameGraph;
     view(camera?: Camera, size?: [number, number] | number | null, label?: string): View;
     /** every view made by kit.view (each is brought up to date once a frame, at the first run) */
     readonly views: View[];
@@ -196,6 +211,30 @@ export declare class Kit {
         textures: number;
         buffers: number;
         total: number;
+    };
+    /** promote a recently-evicted compiled pipeline back out of the warm LRU cache (0 ms compile on revisit) */
+    takeWarmPipeline(key: string): SharedPipeline | undefined;
+    /** retire an active pipeline whose last user disposed: hold compiled current-version ones in warm LRU, drop stale/failed */
+    retirePipeline(e: SharedPipeline): void;
+    private isPinned;
+    /** evict oldest unpinned warm pipelines past `limit` and release any GPUShaderModule no longer referenced */
+    trimWarmPipelines(limit?: number): void;
+    /** pin a set of pipeline keys for `owner` against warm-LRU eviction (replaces only that owner's pins) */
+    pinPipelines(keys: Iterable<string>, owner?: string): void;
+    /** release all warm-LRU pins held by `owner` */
+    unpinPipelines(owner?: string): void;
+    /** drop all unpinned warm pipelines (e.g. under memory pressure) */
+    clearWarmPipelines(): void;
+    /** release a shader's GPUShaderModule once no live record, active cache entry, or warm pipeline references it */
+    releaseModuleIfUnused(shader: Shader): void;
+    /** live vs warm pipeline and module retention stats */
+    pipelineStats(): {
+        active: number;
+        warm: number;
+        modules: number;
+        warmHits: number;
+        warmEvictions: number;
+        warmBytes: number;
     };
     /** (re)configure the canvas as the kit set it up (SDR or HDR), with extra usage (Capture adds copy-src) */
     configureCanvas(usage?: number): void;
@@ -241,7 +280,7 @@ export declare class Kit {
     /** the swapchain view for this frame (acquired on first use) */
     screenView(): GPUTextureView;
     /** encode + submit an ordered list of passes */
-    run(items: RunEntry[]): void;
+    run(items: readonly RunEntry[]): void;
     /** run `cb` every animation frame (resize, time and the overlay are handled; whatever throws, the loop goes on) */
     loop(cb: (t: FrameTime) => void): void;
     /** the animation frame the loop last stepped on: its timestamp (ms, performance.now()'s clock, as

@@ -8,6 +8,8 @@ export interface WeftOptions {
     typesFrom?: string;
     /** write .d.wgsl.ts declarations next to the app's shaders (default true; never inside node_modules) */
     types?: boolean;
+    /** import structs declared in project-local included .wgsl files instead of copying them into every .d.wgsl.ts (default false) */
+    sharedTypes?: boolean;
     /** the browser given each shader's comment-free code, only what its entry points reach (plugin/lean.ts), so a
      *  change elsewhere in an included file leaves its pipelines in the browser's cache. Default true */
     lean?: boolean;
