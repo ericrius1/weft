@@ -15,7 +15,7 @@
 import type { Kit, View } from './kit';
 import type { Shader } from './shader';
 import type { SharedGroup } from './binder';
-import { Draw, forgetPassState, type DrawEncoder, type DrawOptions, type RenderPass } from './passes';
+import { Draw, forgetPassState, type DrawEncoder, type DrawOptions, type DrawTags, type RenderPass } from './passes';
 
 const on = (e: boolean | (() => boolean)) => (typeof e === 'function' ? e() : e);
 
@@ -52,10 +52,20 @@ type Formats = ReturnType<RenderPass['formats']>;
 const sameFormats = (a: Formats, b: Formats) =>
   a.depth === b.depth && a.samples === b.samples && a.depthReadOnly === b.depthReadOnly && a.colors.length === b.colors.length && a.colors.every((c, i) => c === b.colors[i]);
 
+export interface DrawBundleOptions {
+  phase?: string;
+  order?: number;
+  tags?: DrawTags;
+  owner?: string;
+}
+
 export class DrawBundle {
   /** drawn or not (a function is asked each frame) */
   enabled: boolean | (() => boolean) = true;
   readonly draws: Draw[] = [];
+  readonly tags?: DrawTags;
+  readonly owner?: string;
+  readonly phase?: string;
   /** how many times it has been recorded */
   records = 0;
   private bundle: GPURenderBundle | null = null;
@@ -73,7 +83,16 @@ export class DrawBundle {
   private moves = false;
   private now: number[] = [];
 
-  constructor(private kit: Kit, readonly pass: RenderPass, readonly label: string) {}
+  constructor(private kit: Kit, readonly pass: RenderPass, readonly label: string, opts?: DrawBundleOptions) {
+    this.tags = opts?.tags;
+    this.owner = opts?.owner;
+    this.phase = opts?.phase;
+  }
+
+  hasTag(key: string, value?: string | number | boolean): boolean {
+    const v = this.tags?.[key];
+    return value === undefined ? v !== undefined && v !== false : v === value;
+  }
 
   draw<S extends Shader>(shader: S, opts: DrawOptions<S> = {}): Draw<S> {
     const d = new Draw(this.kit, this.pass, shader, opts, this);

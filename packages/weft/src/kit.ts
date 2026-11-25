@@ -147,7 +147,7 @@ export class Kit {
   /** recently-disposed compiled pipelines held warm in LRU order (oldest first) so revisiting a place costs 0 ms compile */
   readonly warmPipelines = new Map<string, SharedPipeline>();
   /** pipeline keys pinned against warm-LRU eviction (e.g. active Arrival Plan) */
-  readonly pinnedPipelines = new Set<string>();
+  readonly pinnedByOwner = new Map<string, Set<string>>();
   /** max entries held in `warmPipelines` (0 disables warm retention) */
   warmLimit: number;
   private warmHits = 0;
@@ -201,7 +201,8 @@ export class Kit {
   private lastNow_ = 0;
   private lastTick = 0;
   private ran: string[] = [];
-  private cbs: GPUCommandBuffer[] = [];
+  private cbPool: GPUCommandBuffer[][] = [];
+  private runDepth = 0;
 
   /** `parent`: the kit whose device this one shares (see sibling) */
   constructor(readonly adapter: GPUAdapter, readonly device: GPUDevice, readonly canvas: HTMLCanvasElement, opts: KitOptions, readonly parent: Kit | null = null) {
@@ -405,22 +406,35 @@ export class Kit {
     }
   }
 
+  private isPinned(key: string): boolean {
+    for (const set of this.pinnedByOwner.values()) if (set.has(key)) return true;
+    return false;
+  }
+
   /** evict oldest unpinned warm pipelines past `limit` and release any GPUShaderModule no longer referenced */
   trimWarmPipelines(limit = this.warmLimit) {
     if (this.warmPipelines.size <= limit) return;
     for (const [k, e] of this.warmPipelines) {
       if (this.warmPipelines.size <= limit) break;
-      if (this.pinnedPipelines.has(k)) continue;
+      if (this.isPinned(k)) continue;
       this.warmPipelines.delete(k);
       this.warmEvictions++;
       this.releaseModuleIfUnused(e.shader);
     }
   }
 
-  /** pin a set of pipeline keys against warm-LRU eviction (replaces previous pins) */
-  pinPipelines(keys: Iterable<string>) {
-    this.pinnedPipelines.clear();
-    for (const k of keys) this.pinnedPipelines.add(k);
+  /** pin a set of pipeline keys for `owner` against warm-LRU eviction (replaces only that owner's pins) */
+  pinPipelines(keys: Iterable<string>, owner = 'default') {
+    let set = this.pinnedByOwner.get(owner);
+    if (!set) { set = new Set(); this.pinnedByOwner.set(owner, set); }
+    else set.clear();
+    for (const k of keys) set.add(k);
+    if (!set.size) this.pinnedByOwner.delete(owner);
+  }
+
+  /** release all warm-LRU pins held by `owner` */
+  unpinPipelines(owner = 'default') {
+    this.pinnedByOwner.delete(owner);
   }
 
   /** drop all unpinned warm pipelines (e.g. under memory pressure) */
@@ -612,33 +626,38 @@ export class Kit {
     for (const v of this.views) v.update();
     for (const u of this.uniformBuffers) u.upload();
     const scoped = this.debug;
-    const cbs = this.cbs;
+    const depth = this.runDepth++;
+    const cbs = this.cbPool[depth] ?? (this.cbPool[depth] = []);
     cbs.length = 0;
-    let enc = this.device.createCommandEncoder({ label: 'weft.run' });
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      if (!it) continue;
-      if (!this.overlay.isEnabled(it.label)) continue;
-      const en = it.enabled;
-      if (en === false || (typeof en === 'function' && !en())) continue;
-      if (it instanceof RunAction) { it.fn(); this.bindEpoch++; continue; }
-      const ts = it.timed ? this.profiler.writes(it.label) : undefined;
-      if (scoped) {
-        this.device.pushErrorScope('validation');
-        const e1 = this.device.createCommandEncoder({ label: it.label });
-        try { it.encode(e1, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
-        cbs.push(e1.finish());
-        const label = it.label;
-        this.device.popErrorScope().then((err) => { if (err) this.report('validation', label, err.message); });
-      } else {
-        try { it.encode(enc, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
+    try {
+      let enc = this.device.createCommandEncoder({ label: 'weft.run' });
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (!it) continue;
+        if (!this.overlay.isEnabled(it.label)) continue;
+        const en = it.enabled;
+        if (en === false || (typeof en === 'function' && !en())) continue;
+        if (it instanceof RunAction) { it.fn(); this.bindEpoch++; continue; }
+        const ts = it.timed ? this.profiler.writes(it.label) : undefined;
+        if (scoped) {
+          this.device.pushErrorScope('validation');
+          const e1 = this.device.createCommandEncoder({ label: it.label });
+          try { it.encode(e1, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
+          cbs.push(e1.finish());
+          const label = it.label;
+          this.device.popErrorScope().then((err) => { if (err) this.report('validation', label, err.message); });
+        } else {
+          try { it.encode(enc, ts); } catch (e) { this.report('encode', it.label, (e as Error).message); }
+        }
+        this.ran.push(it.label);
       }
-      this.ran.push(it.label);
+      if (!scoped) cbs.push(enc.finish());
+      this.profiler.resolve(cbs);
+      this.queue.submit(cbs);
+    } finally {
+      cbs.length = 0;
+      this.runDepth--;
     }
-    if (!scoped) cbs.push(enc.finish());
-    this.profiler.resolve(cbs);
-    this.queue.submit(cbs);
-    cbs.length = 0;
   }
 
   /** run `cb` every animation frame (resize, time and the overlay are handled; whatever throws, the loop goes on) */

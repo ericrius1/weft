@@ -153,9 +153,18 @@ test('RenderPass phases insert draws in phase + order buckets regardless of decl
   pass.draw(sh, { label: 'sky', phase: 'sky' });
   pass.draw(sh, { label: 'lateSite', phase: 'opaque', order: 5 });
 
+  const warnings = [];
+  kit.warnOnce = (k, m) => warnings.push([k, m]);
+  const b = pass.bundle('city', { phase: 'opaque', order: -1, tags: { kind: 'city' }, owner: 'earth' });
+  assert.equal(b.owner, 'earth');
+  assert.equal(b.hasTag('kind', 'city'), true);
+  assert.equal(b.hasTag('kind', 'sky'), false);
+  pass.draw(sh, { label: 'typo', phase: 'doesNotExist' });
+  assert.equal(warnings.length, 1);
+
   assert.deepEqual(
     pass.draws.map((d) => d.label),
-    ['sky', 'ground', 'building', 'lateSite', 'sea', 'glass', 'spray'],
+    ['sky', 'ground', 'city', 'building', 'typo', 'lateSite', 'sea', 'glass', 'spray'],
   );
 });
 

@@ -6,7 +6,7 @@ export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunActio
 export { Compute, RenderPass, Draw, RawItem, type ComputeOptions, type RenderPassOptions, type DrawOptions, type DrawTags, type BlendMode, type RunItem,
   type PassItem, type DrawEncoder, type Compiler, type PipelineRecord, type AnyPipelineRecord, type SharedPipeline, type Waitable } from './passes';
 export { FrameGraph, type GraphEntryOptions } from './graph';
-export { DrawBundle } from './bundle';
+export { DrawBundle, type DrawBundleOptions } from './bundle';
 export { SerialCompiler } from './compile';
 export { BindError, SharedGroup, type Bindable, type SamplerName } from './binder';
 export { Camera } from './camera';

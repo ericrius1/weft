@@ -12,7 +12,7 @@ import type { Kit, View } from './kit';
 import type { Shader } from './shader';
 import { Binder, BindError, forgetBindings, type Bindable } from './binder';
 import { Ref, deref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat, rawUid } from './resources';
-import { DrawBundle } from './bundle';
+import { DrawBundle, type DrawBundleOptions } from './bundle';
 
 type Num = number | (() => number);
 type Nums = number[] | (() => number[]);
@@ -772,6 +772,7 @@ export class RenderPass implements RunItem {
     if (phase !== undefined) {
       const idx = this.phaseIdx.get(phase);
       if (idx !== undefined) return idx;
+      this.kit.warnOnce(`phase:${this.label}:${phase}`, `${this.label}: unknown phase '${phase}' (has: ${this.opts.phases!.join(', ')})`);
     }
     // (sensible default when a legacy caller omits `phase` on a phased pass)
     const isTranslucent = (blend !== undefined && blend !== 'opaque' && (!Array.isArray(blend) || blend.some((b) => b && b !== 'opaque'))) || depthWrite === false;
@@ -790,13 +791,22 @@ export class RenderPass implements RunItem {
       this.draws.push(item);
       return;
     }
-    let at = this.draws.length;
-    for (let i = 0; i < this.draws.length; i++) {
-      const k = this.itemKey.get(this.draws[i]);
-      if (!k) continue;
-      if (phaseIdx < k[0] || (phaseIdx === k[0] && order < k[1])) { at = i; break; }
+    const draws = this.draws, n = draws.length;
+    if (!n) { draws.push(item); return; }
+    const last = this.itemKey.get(draws[n - 1]);
+    if (!last || phaseIdx > last[0] || (phaseIdx === last[0] && order >= last[1])) {
+      draws.push(item);
+      return;
     }
-    this.draws.splice(at, 0, item);
+    // Binary search upper bound for (phaseIdx, order) — O(log N) comparisons
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      const k = this.itemKey.get(draws[mid]);
+      if (!k || k[0] < phaseIdx || (k[0] === phaseIdx && k[1] <= order)) lo = mid + 1;
+      else hi = mid;
+    }
+    draws.splice(lo, 0, item);
   }
   draw<S extends Shader>(shader: S, opts: DrawOptions<S> = {}): Draw<S> {
     const d = new Draw(this.kit, this, shader, opts);
@@ -810,8 +820,8 @@ export class RenderPass implements RunItem {
   }
   /** a bundle of static draws at this point of the pass's order: its draws are recorded once into a GPURenderBundle
    *  and replayed with one call a frame (see bundle.ts for what re-records it) */
-  bundle(label = `${this.label}.bundle`, opts?: { phase?: string; order?: number }): DrawBundle {
-    const b = new DrawBundle(this.kit, this, label);
+  bundle(label = `${this.label}.bundle`, opts?: DrawBundleOptions): DrawBundle {
+    const b = new DrawBundle(this.kit, this, label, opts);
     if (this.phaseIdx) {
       const p = this.resolvePhase(opts?.phase, undefined, undefined);
       this.insertPhased(b, p, opts?.order ?? 0);
