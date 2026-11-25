@@ -32,9 +32,11 @@ export const MAX_LEVELS = 9;
 export interface ClipStream {
   /** the camera's motion (m/s): a fast camera's road ahead is fetched early */
   readonly view: { vx: number; vz: number };
-  /** the queue's order for a square (`cx`, `cz` its middle, `half` its half side, `scale` how much detail it adds):
-   *  lower is sooner, Infinity drops it */
-  rank(cx: number, cz: number, half: number, scale: number): number;
+  /** optional estimated network latency (s) for velocity-aware prefetch horizons */
+  readonly latencyS?: number;
+  /** the queue's order for a square (`cx`, `cz` its middle, `half` its half side, `scale` how much detail it adds,
+   *  optional `tGone` seconds until the tile leaves the window): lower is sooner, Infinity drops it */
+  rank(cx: number, cz: number, half: number, scale: number, tGone?: number): number;
   /** a tile's bytes (null: there's no tile; undefined: dropped or failed), asked at `prio` (Infinity: let go) */
   get(pack: Pack, r: number, c: number, prio: () => number): Promise<ArrayBuffer | null | undefined>;
   /** whether `bytes` more may go up to the GPU this frame (the frame's allowance; taken if so) */
@@ -109,6 +111,8 @@ export class ClipLevel {
   private lastZ = NaN;
   /** true when camera forward is roughly aligned with horizontal velocity (or forward wasn't supplied) */
   private aligned = true;
+  /** persistent forward prefetch capsule tile ids (r * grid + c) kept alive without round-ID churn */
+  private capsule = new Set<number>();
   /** when true (high-speed LOD), this level pauses new fetches and gently fades its rect out */
   paused = false;
 
@@ -120,7 +124,9 @@ export class ClipLevel {
     this.half = ix.half;
     this.n = Math.min(window / ix.tile, ix.grid, Math.sqrt(MAX_SLOTS));
     this.whole = this.n >= this.grid;
-    this.scale = kind === 'color' ? ix.texel * 2 : ix.texel;
+    // Surface-class tiles ('mat', ~25 KB) carry street/sidewalk paint and night lamp grids; give them the same
+    // detail scale as colour so distant far-building blocks don't starve leading street tiles ahead of the camera.
+    this.scale = kind === 'height' ? ix.texel : ix.texel * 2;
     this.coarsest = kind !== 'mat' && layer === levels - 1;
     this.slots = Array.from({ length: this.n * this.n }, () => ({ r: -1, c: -1, state: 'loading' as const, retry: 0, res: -1, alpha: 0 }));
     this.blend = Math.max(this.n * this.tile * this.texel * 0.1, this.texel * 8);
@@ -181,20 +187,36 @@ export class ClipLevel {
     return [-this.half + (c + 0.5) * s, -this.half + (r + 0.5) * s, s / 2];
   }
 
+  /** seconds until tile (r, c) exits the trailing edge of this shifted window along current velocity */
+  private tGoneOf(r: number, c: number): number {
+    if (this.whole) return Infinity;
+    const v = this.set.stream.view, speed = Math.hypot(v.vx, v.vz);
+    if (speed <= 30 || !Number.isFinite(this.lastX) || !Number.isFinite(this.lastZ)) return Infinity;
+    const s = this.tile * this.texel;
+    const [mx, mz] = this.middle(r, c);
+    let t = Infinity;
+    if (v.vx > 1) t = Math.min(t, ((mx - this.lastX) + (this.n / 2 - this.bx) * s) / v.vx);
+    else if (v.vx < -1) t = Math.min(t, ((this.lastX - mx) + (this.n / 2 + this.bx) * s) / (-v.vx));
+    if (v.vz > 1) t = Math.min(t, ((mz - this.lastZ) + (this.n / 2 - this.bz) * s) / v.vz);
+    else if (v.vz < -1) t = Math.min(t, ((this.lastZ - mz) + (this.n / 2 + this.bz) * s) / (-v.vz));
+    return Math.max(0, t);
+  }
+
   /** the queue's order for a tile of this level (Infinity once the window's let it go) */
   prio(r: number, c: number) {
     if (this.paused || !this.wants(r, c)) return Infinity;
     // (the coarsest levels a little ahead of the rest: under everything, where they're missing the land's flat)
     const [x, z, h] = this.middle(r, c);
-    return this.set.stream.rank(x, z, h, this.scale) - (this.coarsest ? 100 : 0);
+    return this.set.stream.rank(x, z, h, this.scale, this.tGoneOf(r, c)) - (this.coarsest ? 100 : 0);
   }
 
   /** follow the camera: slide the window when the velocity-biased centre leaves the middle tile */
   follow(x: number, z: number, dt = 0.016, fx?: number, fz?: number) {
-    // Reset stale bias immediately on first placement or after a teleport/cut (> 400 m jump)
+    // Reset stale bias and prefetch capsule immediately on first placement or after a teleport/cut (> 400 m jump)
     if (!this.placed || (Number.isFinite(this.lastX) && Math.hypot(x - this.lastX, z - this.lastZ) > 400)) {
       this.bx = 0;
       this.bz = 0;
+      this.capsule.clear();
     }
     this.lastX = x;
     this.lastZ = z;
@@ -389,6 +411,44 @@ export class ClipLevel {
     return (a * (1 - fx) + b * fx) * (1 - fz) + (c * (1 - fx) + d * fx) * fz;
   }
 
+  /** maintain a persistent forward prefetch capsule along velocity with hysteresis (no 200 ms round-ID churn) */
+  updateCapsule(x: number, z: number, reach: number, seconds: number) {
+    if (this.whole || this.paused) { this.capsule.clear(); return; }
+    const v = this.set.stream.view, speed = Math.hypot(v.vx, v.vz);
+    if (speed < 20 || !this.aligned) { this.capsule.clear(); return; }
+    const ux = v.vx / speed, uz = v.vz / speed, rx = -uz, rz = ux;
+    const s = this.tile * this.texel;
+    const latS = this.set.stream.latencyS ?? 0.25;
+    const horizon = Math.min(reach, Math.max(s * this.n * 0.75, speed * (latS + seconds)));
+    const halfW = Math.max(s * 2.5, 450);
+    for (const id of this.capsule) {
+      const r = Math.floor(id / this.grid), c = id % this.grid;
+      if (this.wants(r, c) || this.set.stream.cached(this.pack, r, c)) { this.capsule.delete(id); continue; }
+      const [mx, mz] = this.middle(r, c);
+      const dx = mx - x, dz = mz - z;
+      const along = dx * ux + dz * uz, across = Math.abs(dx * rx + dz * rz);
+      if (along < -s || along > horizon + s * 2 || across > halfW * 1.4) this.capsule.delete(id);
+    }
+    const x1 = x + ux * horizon, z1 = z + uz * horizon;
+    const cMin = Math.max(0, Math.floor((Math.min(x, x1) - halfW + this.half) / s));
+    const cMax = Math.min(this.grid - 1, Math.floor((Math.max(x, x1) + halfW + this.half) / s));
+    const rMin = Math.max(0, Math.floor((Math.min(z, z1) - halfW + this.half) / s));
+    const rMax = Math.min(this.grid - 1, Math.floor((Math.max(z, z1) + halfW + this.half) / s));
+    for (let r = rMin; r <= rMax; r++) for (let c = cMin; c <= cMax; c++) {
+      const id = r * this.grid + c;
+      if (this.capsule.has(id) || this.wants(r, c) || !this.pack.has(r, c) || this.set.stream.cached(this.pack, r, c)) continue;
+      const [mx, mz, h] = this.middle(r, c);
+      const dx = mx - x, dz = mz - z;
+      const along = dx * ux + dz * uz, across = Math.abs(dx * rx + dz * rz);
+      if (along < 0 || along > horizon || across > halfW) continue;
+      this.capsule.add(id);
+      this.set.stream.prefetch(this.pack, r, c, () => {
+        if (this.set.disposed || this.paused || !this.capsule.has(id) || this.wants(r, c)) return Infinity;
+        return this.set.stream.rank(mx, mz, h, this.scale, this.tGoneOf(r, c));
+      });
+    }
+  }
+
   /** the window round (x, z)'s tiles that aren't here or in the cache, fetched into it (a flight's destination, the
    *  road ahead); `live` says when it's moot; `fromTarget` ranks center-out around `(x, z)` for destinations */
   prefetch(x: number, z: number, live: () => boolean, fromTarget = false) {
@@ -399,7 +459,7 @@ export class ClipLevel {
       const [mx, mz, h] = this.middle(r, c);
       this.set.stream.prefetch(this.pack, r, c, () => {
         if (!live() || this.paused) return Infinity;
-        return fromTarget ? Math.hypot(mx - x, mz - z) / this.scale : this.set.stream.rank(mx, mz, h, this.scale);
+        return fromTarget ? Math.hypot(mx - x, mz - z) / this.scale : this.set.stream.rank(mx, mz, h, this.scale, this.tGoneOf(r, c));
       });
     }
   }
@@ -431,9 +491,8 @@ export class ClipSet {
   instant = true;
   decode: ClipDecode = { height: () => Promise.reject(new Error('no decoder')), mat: () => Promise.reject(new Error('no decoder')) };
   fill0 = 0;
-  ahead0 = { speed: 25, every: 200, seconds: 5, reach: 2600, texel: 4 };
+  ahead0 = { speed: 25, every: 150, seconds: 3.5, reach: 3600, texel: 4 };
   private lastTick = performance.now();
-  private ahead = 0;
   private aheadAt = 0;
   private dest = 0;
   /** freed for good (dispose) */
@@ -495,14 +554,10 @@ export class ClipSet {
     let moving = false;
     for (const l of this.levels) moving = l.tick(dt, x, z) || moving;
     this.fades = moving;
-    const v = this.stream.view, speed = Math.hypot(v.vx, v.vz), A = this.ahead0;
-    if (speed > A.speed && now - this.aheadAt > A.every) {
+    const A = this.ahead0;
+    if (now - this.aheadAt > A.every) {
       this.aheadAt = now;
-      const id = ++this.ahead, t = Math.min(A.seconds, A.reach / speed);
-      for (const l of this.levels) if (l.texel <= A.texel && !l.paused) {
-        l.prefetch(x + v.vx * t * 0.55, z + v.vz * t * 0.55, () => this.ahead === id, false);
-        l.prefetch(x + v.vx * t, z + v.vz * t, () => this.ahead === id, false);
-      }
+      for (const l of this.levels) if (l.texel <= A.texel) l.updateCapsule(x, z, A.reach, A.seconds);
     }
   }
 
