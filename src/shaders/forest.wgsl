@@ -3,8 +3,9 @@
 // it. `forestCull` takes each instance, stands it on the ground, tests it against the view and sorts it by distance
 // into four lists: near (closer than lod.x), far (to lod.y, overlapping the next over the crossfade band lod.w),
 // impostor (past lod.y - band, to lod.z: thinned by seed, below), and the shadows' casters (near enough, in view or
-// not); `forestWriteArgs` writes the four indirect draws' counts and clears the counters. The draws are the world's:
-// they read the lists through forestVisible (forestListBase(list) + instance_index).
+// not); `forestWriteArgs` writes the four indirect draws' counts, updates overflow-thinning ratios from pre-thin
+// candidate counts (preventing spatial-tail strip truncation when a list overflows), and clears the counters. The
+// draws are the world's: they read the lists through forestVisible (forestListBase(list) + instance_index).
 //
 // An instance is 16 bytes: x, z, y (f32 bits: y its stored foot, for the early reject before the ground's sampled)
 // and a packed u32: bits 0-5 its archetype, 6-15 its height (dm), 16-23 its crown's radius (dm), 24-31 its seed
@@ -32,7 +33,8 @@ struct ForestU {
 @group(2) @binding(0) var<uniform> forest: ForestU;
 @group(2) @binding(1) var<storage, read> forestTrees: array<vec4u>;
 @group(2) @binding(2) var<storage, read_write> forestLists: array<vec4f>;      // [near | far | impostor | shadow]
-@group(2) @binding(3) var<storage, read_write> forestCounters: array<atomic<u32>, 4>;
+// [0..3] emitted counts, [4..7] pre-overflow candidate counts, [8..11] smoothed overflow keep ratio (fixed-point * 65536)
+@group(2) @binding(3) var<storage, read_write> forestCounters: array<atomic<u32>, 12>;
 @group(2) @binding(4) var<storage, read_write> forestArgsOut: array<u32, 16>;
 @group(2) @binding(5) var<storage, read> forestVisible: array<vec4f>;          // x, y (the ground's), z, packed
 
@@ -57,6 +59,23 @@ fn forestListBase(list: u32) -> u32 {
   return 0u;
 }
 
+// position-stable, index-independent uniform integer hash in [0, 1) (exact at any world coordinate, avoiding sin(1e6)
+// precision loss) so overflow thinning drops evenly across space and stays stable when Earth units arrive or depart
+fn forestKeepHash(xz: vec2f, packed: u32) -> f32 {
+  var h = (bitcast<u32>(i32(round(xz.x * 4.0))) * 0x9e3779b1u) ^ (bitcast<u32>(i32(round(xz.y * 4.0))) * 0x85ebca77u) ^ packed;
+  h ^= h >> 16u;
+  h *= 0x7feb352du;
+  h ^= h >> 15u;
+  h *= 0x846ca68bu;
+  h ^= h >> 16u;
+  return f32(h & 0xffffffu) / 16777216.0;
+}
+
+fn forestOvKeep(list: u32) -> f32 {
+  let raw = atomicLoad(&forestCounters[8u + list]);
+  return select(f32(raw) / 65536.0, 1.0, raw == 0u);
+}
+
 // ------------------------------------------------------------------ the cull
 @compute @workgroup_size(64) fn forestCull(@builtin(global_invocation_id) id: vec3u) {
   let i = id.x;
@@ -75,10 +94,14 @@ fn forestListBase(list: u32) -> u32 {
   let rad = max(t.h * 0.6, t.r);
   let entry = vec4f(xz.x, ground, xz.y, bitcast<f32>(raw.w));
   let lim = forestReach(t);
+  let kh = forestKeepHash(xz, raw.w);
   // (the shadows' casters: near enough, in view or not)
   if (d < min(forest.counts.y, lim * 0.35) && d > 0.0) {
-    let k = atomicAdd(&forestCounters[3], 1u);
-    if (k < forest.caps.w) { forestLists[forest.caps.x + forest.caps.y + forest.caps.z + k] = entry; }
+    atomicAdd(&forestCounters[7], 1u);
+    if (kh <= forestOvKeep(3u)) {
+      let k = atomicAdd(&forestCounters[3], 1u);
+      if (k < forest.caps.w) { forestLists[forest.caps.x + forest.caps.y + forest.caps.z + k] = entry; }
+    }
   }
   if (d > min(forest.lod.z, lim)) { return; }
   // in view: the frustum's side planes (the view-projection's rows), and in front
@@ -93,27 +116,39 @@ fn forestListBase(list: u32) -> u32 {
   if (clip.w < -rad) { return; }
   let band = forest.lod.w;
   if (d < forest.lod.x) {
-    let k = atomicAdd(&forestCounters[0], 1u);
-    if (k < forest.caps.x) { forestLists[k] = entry; }
+    atomicAdd(&forestCounters[4], 1u);
+    if (kh <= forestOvKeep(0u)) {
+      let k = atomicAdd(&forestCounters[0], 1u);
+      if (k < forest.caps.x) { forestLists[k] = entry; }
+    }
   } else if (d < forest.lod.y + band) {
-    let k = atomicAdd(&forestCounters[1], 1u);
-    if (k < forest.caps.y) { forestLists[forest.caps.x + k] = entry; }
+    atomicAdd(&forestCounters[5], 1u);
+    if (kh <= forestOvKeep(1u)) {
+      let k = atomicAdd(&forestCounters[1], 1u);
+      if (k < forest.caps.y) { forestLists[forest.caps.x + k] = entry; }
+    }
   }
   if (d > forest.lod.y - band) {
     // (far off, thinned: a share kept that falls with the distance, each one kept widened to cover for those let go)
-    let keep = clamp(pow(forest.lod.y * forest.thin.x / d, 2.0), forest.thin.y, 1.0);
+    let keep = clamp(pow(forest.lod.y * forest.thin.x / max(d, 1.0), 2.0), forest.thin.y, 1.0);
     // (those let go shrink away over a band of the seeds as the share falls, rather than going at once)
     let thin = forest.thin.z;
     if (t.seed <= keep + thin) {
-      var e = entry;
-      let s = saturate((keep + thin - t.seed) / thin);
-      if (keep < 1.0 || s < 1.0) {
-        let r = min(255u, u32(t.r * 10.0 / sqrt(keep) * s));
-        let hh = min(1023u, u32(t.h * 10.0 * s));
-        e.w = bitcast<f32>((raw.w & 0xff00003fu) | (r << 16u) | (hh << 6u));
+      atomicAdd(&forestCounters[6], 1u);
+      let ov = forestOvKeep(2u);
+      if (kh <= ov) {
+        var e = entry;
+        let ovS = select(1.0, saturate((ov - kh) / thin), ov < 0.999);
+        let s = saturate((keep + thin - t.seed) / thin) * ovS;
+        let effKeep = max(keep * ov, 0.05);
+        if (effKeep < 1.0 || s < 1.0) {
+          let r = min(255u, u32(t.r * 10.0 / sqrt(effKeep) * s));
+          let hh = min(1023u, u32(t.h * 10.0 * s));
+          e.w = bitcast<f32>((raw.w & 0xff00003fu) | (r << 16u) | (hh << 6u));
+        }
+        let k = atomicAdd(&forestCounters[2], 1u);
+        if (k < forest.caps.z) { forestLists[forest.caps.x + forest.caps.y + k] = e; }
       }
-      let k = atomicAdd(&forestCounters[2], 1u);
-      if (k < forest.caps.z) { forestLists[forest.caps.x + forest.caps.y + k] = e; }
     }
   }
 }
@@ -127,5 +162,17 @@ fn forestListBase(list: u32) -> u32 {
   forestArgsOut[4] = forest.verts.y; forestArgsOut[5] = n1; forestArgsOut[6] = 0u; forestArgsOut[7] = 0u;
   forestArgsOut[8] = forest.verts.z; forestArgsOut[9] = n2; forestArgsOut[10] = 0u; forestArgsOut[11] = 0u;
   forestArgsOut[12] = forest.verts.w; forestArgsOut[13] = n3; forestArgsOut[14] = 0u; forestArgsOut[15] = 0u;
-  for (var k = 0; k < 4; k++) { atomicStore(&forestCounters[k], 0u); }
+  var caps = array<u32, 4>(forest.caps.x, forest.caps.y, forest.caps.z, forest.caps.w);
+  for (var k = 0u; k < 4u; k++) {
+    let cand = atomicLoad(&forestCounters[4u + k]);
+    let cap = caps[k];
+    let goal = select(1.0, clamp(f32(cap) * 0.96 / f32(cand), 0.05, 1.0), cand > cap && cap > 0u);
+    let prevRaw = atomicLoad(&forestCounters[8u + k]);
+    let prev = select(f32(prevRaw) / 65536.0, 1.0, prevRaw == 0u);
+    // Drop quickly on overflow so no strip forms, recover gently to avoid flicker
+    let next = select(min(1.0, prev + (goal - prev) * 0.12), min(prev, goal), goal < prev);
+    atomicStore(&forestCounters[8u + k], max(1u, u32(round(next * 65536.0))));
+    atomicStore(&forestCounters[k], 0u);
+    atomicStore(&forestCounters[4u + k], 0u);
+  }
 }

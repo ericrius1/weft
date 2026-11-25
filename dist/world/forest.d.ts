@@ -25,6 +25,8 @@ export interface ForestFrame {
     band: number;
     /** the shadows' casters' reach (m) */
     shadow: number;
+    /** optional reference far reach (m) for impostor thinning so shrinking `far` during fast flight keeps mid-distance impostor density steady */
+    thinFar?: number;
     /** the four draws' vertices an instance: near, far, impostor, shadow */
     verts: [number, number, number, number];
     /** the world's own vec4s for its draws (up to 4) */
@@ -56,14 +58,20 @@ export declare class Forest {
     readonly args: StorageBuffer;
     instances: StorageBuffer | null;
     count: number;
+    private instancesCap;
+    private cullPass;
+    private lastBind;
     private computes;
     private thin;
     private slack;
     private bind;
     constructor(kit: Kit, shader: Shader<any, any>, opts: ForestOptions);
+    private sameBind;
     /** the instances (16 bytes each: decodeForest's), and the two computes over them (`bind`: more of the world's
-     *  bindings for its hooks, over the options') */
+     *  bindings for its hooks, over the options'). Reuses the GPU buffer and compute passes whenever capacity fits. */
     load(instances: Uint32Array, bind?: Record<string, unknown>): void;
+    /** release all GPU buffers and compute passes owned by this forest */
+    dispose(): void;
     /** a frame's reaches, the draws' vertices, the world's own vec4s */
     update(f: ForestFrame): void;
     /** what a draw binds to read the lists: the uniform and forestVisible */

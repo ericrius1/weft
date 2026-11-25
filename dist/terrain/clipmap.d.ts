@@ -11,9 +11,13 @@ export interface ClipStream {
         vx: number;
         vz: number;
     };
-    /** the queue's order for a square (`cx`, `cz` its middle, `half` its half side, `scale` how much detail it adds):
-     *  lower is sooner, Infinity drops it */
-    rank(cx: number, cz: number, half: number, scale: number): number;
+    /** optional hysteresis-gated fast-flight state */
+    readonly fast?: boolean;
+    /** optional estimated network latency (s) for velocity-aware prefetch horizons */
+    readonly latencyS?: number;
+    /** the queue's order for a square (`cx`, `cz` its middle, `half` its half side, `scale` how much detail it adds,
+     *  optional `tGone` seconds until the tile leaves the window): lower is sooner, Infinity drops it */
+    rank(cx: number, cz: number, half: number, scale: number, tGone?: number): number;
     /** a tile's bytes (null: there's no tile; undefined: dropped or failed), asked at `prio` (Infinity: let go) */
     get(pack: Pack, r: number, c: number, prio: () => number): Promise<ArrayBuffer | null | undefined>;
     /** whether `bytes` more may go up to the GPU this frame (the frame's allowance; taken if so) */
@@ -80,6 +84,17 @@ export declare class ClipLevel {
     readonly coarsest: boolean;
     private slots;
     placed: boolean;
+    /** smoothed velocity window bias (tiles) so fast flight places more runway ahead without oscillating */
+    private bx;
+    private bz;
+    private lastX;
+    private lastZ;
+    /** true when camera forward is roughly aligned with horizontal velocity (or forward wasn't supplied) */
+    private aligned;
+    /** persistent forward prefetch capsule tile ids (r * grid + c) kept alive without round-ID churn */
+    private capsule;
+    /** when true (high-speed LOD), this level pauses new fetches and gently fades its rect out */
+    paused: boolean;
     constructor(set: ClipSet, kind: LayerKind, layer: number, index: number, pack: Pack, window: number, shrink: number, levels?: number);
     /** the uniform: texel (m), window (px), half extent (m), blend (m) */
     get uniform(): [number, number, number, number];
@@ -87,14 +102,21 @@ export declare class ClipLevel {
     get tileInfo(): [number, number, number, number];
     /** a world point's tile coordinates (fractional) */
     private tileOf;
-    /** the window's first tile for a camera at (x, z) */
+    /** centered window's first tile for an arbitrary target point (x, z) (used for prefetch) */
+    private windowCentered;
+    /** the window's first tile for a camera at (x, z), shifted ahead along smoothed velocity when flying fast */
     windowAt(x: number, z: number): [number, number];
+    private updateBias;
     /** a tile's middle and half its side (m) */
     middle(r: number, c: number): [number, number, number];
+    /** seconds until tile (r, c) exits the trailing edge of this shifted window along current velocity */
+    private tGoneOf;
     /** the queue's order for a tile of this level (Infinity once the window's let it go) */
     prio(r: number, c: number): number;
-    /** follow the camera: slide the window when it's left the middle tile by most of a tile */
-    follow(x: number, z: number): void;
+    /** follow the camera: slide the window when the velocity-biased centre leaves the middle tile */
+    follow(x: number, z: number, dt?: number, fx?: number, fz?: number, rawDt?: number): void;
+    /** snap only trailing edges of `shown` that shrank behind velocity while looking forward and keeping eye inside `shown` */
+    private snapTrailing;
     /** whether (r, c) is still this window's, in its slot */
     wants(r: number, c: number): boolean;
     /** whether a tile's data may be written over its slot's now: the slot's old tile is out of the drawn rect */
@@ -104,18 +126,23 @@ export declare class ClipLevel {
     /** a tile that couldn't be had: asked again on the next follow */
     failed(r: number, c: number): void;
     /** the fades and the rect's easing, a frame on; whether anything's still moving */
-    tick(dt: number): boolean;
+    tick(dt: number, eyeX?: number, eyeZ?: number): boolean;
     /** the slots' residency for the shader: (tile + 1) << 8 | fade, row by row of the window's slots */
     residency(out: Uint32Array, at: number): void;
-    /** the rect that's in: the window, its edges pulled in past any row or column still loading */
+    /** the rect that's in: tight bounding box of loaded tiles inside the active window (per-tile tileFade + neighbor
+     *  guard in clipmap.wgsl blends individual unloaded tiles cleanly without collapsing a whole row on one corner tile) */
     private measure;
+    /** exact shader levelWeight (rectWeight * tileFade with neighbor guard) at world point (x, z), for telemetry */
+    fadeAt(x: number, z: number): number;
     /** the share of the window's tiles in */
     get progress(): number;
-    /** a height from the CPU's copy (NaN where it's not in) */
+    /** a height from the CPU's copy (NaN where it's not in, or faded out while paused) */
     heightAt(x: number, z: number): number;
+    /** maintain a persistent forward prefetch capsule along velocity with hysteresis (no 200 ms round-ID churn) */
+    updateCapsule(x: number, z: number, reach: number, seconds: number): void;
     /** the window round (x, z)'s tiles that aren't here or in the cache, fetched into it (a flight's destination, the
-     *  road ahead); `live` says when it's moot */
-    prefetch(x: number, z: number, live: () => boolean): void;
+     *  road ahead); `live` says when it's moot; `fromTarget` ranks center-out around `(x, z)` for destinations */
+    prefetch(x: number, z: number, live: () => boolean, fromTarget?: boolean): void;
 }
 /** the uniform fields `fill` writes (a world's own struct may hold more) */
 export interface ClipUniform {
@@ -163,7 +190,6 @@ export declare class ClipSet {
         texel: number;
     };
     private lastTick;
-    private ahead;
     private aheadAt;
     private dest;
     /** freed for good (dispose) */
@@ -180,7 +206,7 @@ export declare class ClipSet {
     dispose(): void;
     /** each frame: the windows follow the camera, the decoded tiles go up (within the frame's allowance), the fades
      *  move on; and the road ahead of a fast camera prefetched */
-    follow(x: number, z: number): void;
+    follow(x: number, z: number, fx?: number, fz?: number): void;
     /** the land round a place fetched ahead of arriving there (a flight's destination): until the next, or 30 s */
     prefetch(x: number, z: number): void;
     /** a tile asked of the streamer, decoded, and queued for its upload */

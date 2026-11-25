@@ -56,6 +56,9 @@ export class Forest {
     args;
     instances = null;
     count = 0;
+    instancesCap = 0;
+    cullPass = null;
+    lastBind = null;
     computes = [];
     thin;
     slack;
@@ -71,30 +74,81 @@ export class Forest {
         this.u = kit.uniforms(shader.structs.ForestU, L);
         const c = this.caps;
         this.lists = kit.storage({ label: `${L}.lists`, size: (c[0] + c[1] + c[2] + c[3]) * 16, usage: ['storage'] });
-        this.counters = kit.storage({ label: `${L}.counters`, size: 16, usage: ['storage'] });
+        this.counters = kit.storage({ label: `${L}.counters`, size: 48, usage: ['storage'] });
         this.args = kit.storage({ label: `${L}.args`, size: 64, usage: ['storage', 'indirect'] });
     }
+    sameBind(bind) {
+        if (!this.lastBind)
+            return false;
+        const ak = Object.keys(this.lastBind), bk = Object.keys(bind);
+        if (ak.length !== bk.length)
+            return false;
+        for (const k of ak)
+            if (this.lastBind[k] !== bind[k])
+                return false;
+        return true;
+    }
     /** the instances (16 bytes each: decodeForest's), and the two computes over them (`bind`: more of the world's
-     *  bindings for its hooks, over the options') */
+     *  bindings for its hooks, over the options'). Reuses the GPU buffer and compute passes whenever capacity fits. */
     load(instances, bind = {}) {
         const kit = this.kit, L = this.label;
-        this.count = instances.length / 4;
-        this.instances = kit.storage({ label: `${L}.instances`, data: instances });
+        const maxInst = 65535 * 64;
+        const n = Math.min(maxInst, Math.floor(instances.length / 4));
+        this.count = n;
+        const src = n * 4 < instances.length ? instances.subarray(0, n * 4) : instances;
+        const bindSame = this.computes.length > 0 && this.sameBind(bind);
+        if (bindSame && this.instances && n <= this.instancesCap) {
+            if (src.byteLength)
+                this.instances.write(src);
+            return;
+        }
+        const grow = Math.min(maxInst, Math.max(4096, Math.ceil(Math.max(1, n) * 1.5)));
+        const nextBuf = kit.storage({ label: `${L}.instances`, size: grow * 16, usage: ['storage', 'copy-dst'] });
+        if (src.byteLength)
+            nextBuf.write(src);
+        const oldBuf = this.instances;
+        this.instances = nextBuf;
+        this.instancesCap = grow;
+        if (bindSame && this.cullPass) {
+            this.cullPass.set('forestTrees', nextBuf);
+            if (oldBuf)
+                kit.release(oldBuf);
+            return;
+        }
+        if (this.computes.length)
+            kit.release(...this.computes);
+        if (oldBuf)
+            kit.release(oldBuf);
+        this.lastBind = { ...bind };
         const own = { forest: this.u, forestTrees: this.instances, forestLists: this.lists, forestCounters: this.counters, forestArgsOut: this.args };
+        this.cullPass = kit.compute(this.shader, { label: `${L}.cull`, entry: 'forestCull', threads: () => [Math.max(1, this.count)], bind: { ...this.bind, ...bind, ...own } });
         this.computes = [
-            kit.compute(this.shader, { label: `${L}.cull`, entry: 'forestCull', threads: [this.count], bind: { ...this.bind, ...bind, ...own } }),
+            this.cullPass,
             kit.compute(this.shader, { label: `${L}.args`, entry: 'forestWriteArgs', workgroups: [1], bind: { forest: this.u, forestCounters: this.counters, forestArgsOut: this.args } }),
         ];
+    }
+    /** release all GPU buffers and compute passes owned by this forest */
+    dispose() {
+        if (this.computes.length)
+            this.kit.release(...this.computes);
+        this.computes = [];
+        this.cullPass = null;
+        this.lastBind = null;
+        this.kit.release(this.instances, this.lists, this.counters, this.args, this.u);
+        this.instances = null;
+        this.instancesCap = 0;
+        this.count = 0;
     }
     /** a frame's reaches, the draws' vertices, the world's own vec4s */
     update(f) {
         const u = [0, 1, 2, 3].map((k) => (f.user?.[k] ? [f.user[k][0] ?? 0, f.user[k][1] ?? 0, f.user[k][2] ?? 0, f.user[k][3] ?? 0] : [0, 0, 0, 0]));
+        const thinFactor = f.thinFar ? this.thin[0] * (f.thinFar / Math.max(1, f.far)) : this.thin[0];
         this.u.set({
             lod: [f.near, f.far, f.imp, f.band],
             caps: this.caps,
             verts: f.verts,
             counts: [this.count, f.shadow, this.slack, 0],
-            thin: [...this.thin, 0],
+            thin: [thinFactor, this.thin[1], this.thin[2], 0],
             user: u,
         });
     }
