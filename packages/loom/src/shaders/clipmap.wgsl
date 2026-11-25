@@ -14,9 +14,9 @@
 
 const CLIP_SLOTS = 64u;
 // Guard band (tile fraction): exact 0 within 0.035 tile (~9 texels on a 256px tile, covering bilinear, 3-mip colour,
-// normal finite differences, and 7x7 road-fit footprints), fading smoothly to 1 by 0.10 tile from an unloaded neighbour.
+// normal finite differences, and 7x7 road-fit footprints), fading smoothly to 1 by 0.22 tile from an unloaded neighbour.
 const CLIP_GUARD_IN = 0.035;
-const CLIP_GUARD_OUT = 0.10;
+const CLIP_GUARD_OUT = 0.22;
 
 fn rectWeight(r: vec4f, blend: f32, xz: vec2f) -> f32 {
   let e = min(min(xz.x - r.x, r.z - xz.x), min(xz.y - r.y, r.w - xz.y));

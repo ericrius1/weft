@@ -59,10 +59,16 @@ fn forestListBase(list: u32) -> u32 {
   return 0u;
 }
 
-// position-stable, index-independent uniform hash in [0, 1) so overflow thinning drops evenly across space and stays
-// stable when Earth units arrive or depart
-fn forestKeepHash(xz: vec2f, seed: f32) -> f32 {
-  return fract(sin(dot(xz, vec2f(12.9898, 78.233)) + seed * 37.719) * 43758.5453);
+// position-stable, index-independent uniform integer hash in [0, 1) (exact at any world coordinate, avoiding sin(1e6)
+// precision loss) so overflow thinning drops evenly across space and stays stable when Earth units arrive or depart
+fn forestKeepHash(xz: vec2f, packed: u32) -> f32 {
+  var h = (bitcast<u32>(i32(round(xz.x * 4.0))) * 0x9e3779b1u) ^ (bitcast<u32>(i32(round(xz.y * 4.0))) * 0x85ebca77u) ^ packed;
+  h ^= h >> 16u;
+  h *= 0x7feb352du;
+  h ^= h >> 15u;
+  h *= 0x846ca68bu;
+  h ^= h >> 16u;
+  return f32(h & 0xffffffu) / 16777216.0;
 }
 
 fn forestOvKeep(list: u32) -> f32 {
@@ -88,7 +94,7 @@ fn forestOvKeep(list: u32) -> f32 {
   let rad = max(t.h * 0.6, t.r);
   let entry = vec4f(xz.x, ground, xz.y, bitcast<f32>(raw.w));
   let lim = forestReach(t);
-  let kh = forestKeepHash(xz, t.seed);
+  let kh = forestKeepHash(xz, raw.w);
   // (the shadows' casters: near enough, in view or not)
   if (d < min(forest.counts.y, lim * 0.35) && d > 0.0) {
     atomicAdd(&forestCounters[7], 1u);
@@ -130,9 +136,10 @@ fn forestOvKeep(list: u32) -> f32 {
     if (t.seed <= keep + thin) {
       atomicAdd(&forestCounters[6], 1u);
       let ov = forestOvKeep(2u);
-      if (kh <= ov + thin) {
+      if (kh <= ov) {
         var e = entry;
-        let s = saturate((keep + thin - t.seed) / thin) * saturate((ov + thin - kh) / thin);
+        let ovS = select(1.0, saturate((ov - kh) / thin), ov < 0.999);
+        let s = saturate((keep + thin - t.seed) / thin) * ovS;
         let effKeep = max(keep * ov, 0.05);
         if (effKeep < 1.0 || s < 1.0) {
           let r = min(255u, u32(t.r * 10.0 / sqrt(effKeep) * s));
@@ -155,7 +162,7 @@ fn forestOvKeep(list: u32) -> f32 {
   forestArgsOut[4] = forest.verts.y; forestArgsOut[5] = n1; forestArgsOut[6] = 0u; forestArgsOut[7] = 0u;
   forestArgsOut[8] = forest.verts.z; forestArgsOut[9] = n2; forestArgsOut[10] = 0u; forestArgsOut[11] = 0u;
   forestArgsOut[12] = forest.verts.w; forestArgsOut[13] = n3; forestArgsOut[14] = 0u; forestArgsOut[15] = 0u;
-  let caps = array<u32, 4>(forest.caps.x, forest.caps.y, forest.caps.z, forest.caps.w);
+  var caps = array<u32, 4>(forest.caps.x, forest.caps.y, forest.caps.z, forest.caps.w);
   for (var k = 0u; k < 4u; k++) {
     let cand = atomicLoad(&forestCounters[4u + k]);
     let cap = caps[k];

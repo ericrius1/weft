@@ -105,6 +105,10 @@ export class ClipLevel {
   /** smoothed velocity window bias (tiles) so fast flight places more runway ahead without oscillating */
   private bx = 0;
   private bz = 0;
+  private lastX = NaN;
+  private lastZ = NaN;
+  /** true when camera forward is roughly aligned with horizontal velocity (or forward wasn't supplied) */
+  private aligned = true;
   /** when true (high-speed LOD), this level pauses new fetches and gently fades its rect out */
   paused = false;
 
@@ -147,13 +151,20 @@ export class ClipLevel {
     return [want(tx + this.bx), want(tz + this.bz)];
   }
 
-  private updateBias(dt: number) {
-    if (this.whole || this.n <= 4) { this.bx = 0; this.bz = 0; return; }
+  private updateBias(dt: number, fx?: number, fz?: number) {
+    if (this.whole || this.n <= 4) { this.bx = 0; this.bz = 0; this.aligned = true; return; }
     const v = this.set.stream.view;
     const speed = Math.hypot(v.vx, v.vz);
+    // Gate forward bias and trailing snap on looking roughly along travel so look-back/orbit views don't shift away or snap-pop
+    let aligned = true;
+    if (fx !== undefined && fz !== undefined && speed > 1) {
+      const fl = Math.hypot(fx, fz);
+      aligned = fl < 1e-3 || (fx * v.vx + fz * v.vz) / (fl * speed) > 0.5;
+    }
+    this.aligned = aligned;
     // Keep at least ~1.4 tiles behind the eye on an 8x8 window (358 m > blend + hysteresis) so heightAt() never falls off
     const maxBias = Math.max(0, this.n / 2 - 1.85);
-    const u = speed > 25 ? Math.min(1, (speed - 25) / 95) : 0;
+    const u = aligned && speed > 25 ? Math.min(1, (speed - 25) / 95) : 0;
     const gx = u > 0 ? (v.vx / speed) * maxBias * u : 0;
     const gz = u > 0 ? (v.vz / speed) * maxBias * u : 0;
     const tau = u > 0 ? 0.55 : 0.9;
@@ -179,8 +190,15 @@ export class ClipLevel {
   }
 
   /** follow the camera: slide the window when the velocity-biased centre leaves the middle tile */
-  follow(x: number, z: number, dt = 0.016) {
-    this.updateBias(dt);
+  follow(x: number, z: number, dt = 0.016, fx?: number, fz?: number) {
+    // Reset stale bias immediately on first placement or after a teleport/cut (> 400 m jump)
+    if (!this.placed || (Number.isFinite(this.lastX) && Math.hypot(x - this.lastX, z - this.lastZ) > 400)) {
+      this.bx = 0;
+      this.bz = 0;
+    }
+    this.lastX = x;
+    this.lastZ = z;
+    this.updateBias(dt, fx, fz);
     const [tx, tz] = this.tileOf(x, z), n = this.n;
     const cx = tx + this.bx, cz = tz + this.bz;
     let shifted = false;
@@ -212,8 +230,9 @@ export class ClipLevel {
     }
   }
 
-  /** snap only trailing edges of `shown` that shrank behind velocity while keeping the eye safely inside `shown` */
+  /** snap only trailing edges of `shown` that shrank behind velocity while looking forward and keeping eye inside `shown` */
   private snapTrailing(x: number, z: number) {
+    if (!this.aligned) return;
     const t = this.rect, q = this.shown;
     if (t[2] <= t[0] || t[3] <= t[1] || q[2] <= q[0] || q[3] <= q[1]) return;
     const { vx, vz } = this.set.stream.view;
@@ -331,13 +350,14 @@ export class ClipLevel {
       return sl && sl.res === cz * g + cx ? sl.alpha : 0;
     };
     const ss = (a: number, b: number, v: number) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
-    const ef = (nf: number, d: number) => (nf <= 0 ? ss(0.035, 0.1, d) : nf + (1 - nf) * ss(0, 0.1, d));
+    const GO = 0.22;
+    const ef = (nf: number, d: number) => (nf <= 0 ? ss(0.035, GO, d) : nf + (1 - nf) * ss(0, GO, d));
     let w = slotW(tx, tz);
     if (w <= 0) return 0;
     const fx = px - tx, fz = pz - tz;
-    let ox = 0, dx = 0.1, oy = 0, dy = 0.1;
-    if (fx < 0.1 && tx > 0) { ox = -1; dx = fx; } else if (fx > 0.9 && tx + 1 < g) { ox = 1; dx = 1 - fx; }
-    if (fz < 0.1 && tz > 0) { oy = -1; dy = fz; } else if (fz > 0.9 && tz + 1 < g) { oy = 1; dy = 1 - fz; }
+    let ox = 0, dx = GO, oy = 0, dy = GO;
+    if (fx < GO && tx > 0) { ox = -1; dx = fx; } else if (fx > 1 - GO && tx + 1 < g) { ox = 1; dx = 1 - fx; }
+    if (fz < GO && tz > 0) { oy = -1; dy = fz; } else if (fz > 1 - GO && tz + 1 < g) { oy = 1; dy = 1 - fz; }
     if (ox) w *= ef(slotW(tx + ox, tz), dx);
     if (oy) w *= ef(slotW(tx, tz + oy), dy);
     if (ox && oy) w *= ef(slotW(tx + ox, tz + oy), Math.max(dx, dy));
@@ -351,7 +371,7 @@ export class ClipLevel {
     return k / this.slots.length;
   }
 
-  /** a height from the CPU's copy (NaN where it's not in) */
+  /** a height from the CPU's copy (NaN where it's not in, or faded out while paused) */
   heightAt(x: number, z: number): number {
     const q = this.shown;
     if (x < q[0] || x > q[2] || z < q[1] || z > q[3]) return NaN;
@@ -362,7 +382,7 @@ export class ClipLevel {
       const tc = Math.floor(cx / T), tr = Math.floor(cz / T);
       if (tc < 0 || tc >= g || tr < 0 || tr >= g) return NaN;
       const s = this.slots[(((tr % n) + n) % n) * n + (((tc % n) + n) % n)];
-      if (!s || !s.data || s.res !== tr * g + tc) return NaN;
+      if (!s || !s.data || s.res !== tr * g + tc || (this.paused && s.alpha < 0.5)) return NaN;
       return s.data[(cz - tr * T) * T + (cx - tc * T)];
     };
     const a = at(ix, iz), b = at(ix + 1, iz), c = at(ix, iz + 1), d = at(ix + 1, iz + 1);
@@ -370,14 +390,17 @@ export class ClipLevel {
   }
 
   /** the window round (x, z)'s tiles that aren't here or in the cache, fetched into it (a flight's destination, the
-   *  road ahead); `live` says when it's moot */
-  prefetch(x: number, z: number, live: () => boolean) {
+   *  road ahead); `live` says when it's moot; `fromTarget` ranks center-out around `(x, z)` for destinations */
+  prefetch(x: number, z: number, live: () => boolean, fromTarget = false) {
     if (this.whole || this.paused) return;
     const [c0, r0] = this.windowCentered(x, z), n = this.n;
     for (let r = r0; r < r0 + n; r++) for (let c = c0; c < c0 + n; c++) {
       if (this.wants(r, c) || this.set.stream.cached(this.pack, r, c)) continue;
       const [mx, mz, h] = this.middle(r, c);
-      this.set.stream.prefetch(this.pack, r, c, () => (live() && !this.paused ? this.set.stream.rank(mx, mz, h, this.scale) : Infinity));
+      this.set.stream.prefetch(this.pack, r, c, () => {
+        if (!live() || this.paused) return Infinity;
+        return fromTarget ? Math.hypot(mx - x, mz - z) / this.scale : this.set.stream.rank(mx, mz, h, this.scale);
+      });
     }
   }
 }
@@ -463,11 +486,11 @@ export class ClipSet {
 
   /** each frame: the windows follow the camera, the decoded tiles go up (within the frame's allowance), the fades
    *  move on; and the road ahead of a fast camera prefetched */
-  follow(x: number, z: number) {
+  follow(x: number, z: number, fx?: number, fz?: number) {
     if (this.disposed) return;
     const now = performance.now(), dt = Math.min(0.1, (now - this.lastTick) / 1000);
     this.lastTick = now;
-    for (const l of this.levels) l.follow(x, z, dt);
+    for (const l of this.levels) l.follow(x, z, dt, fx, fz);
     this.upload();
     let moving = false;
     for (const l of this.levels) moving = l.tick(dt, x, z) || moving;
@@ -477,8 +500,8 @@ export class ClipSet {
       this.aheadAt = now;
       const id = ++this.ahead, t = Math.min(A.seconds, A.reach / speed);
       for (const l of this.levels) if (l.texel <= A.texel && !l.paused) {
-        l.prefetch(x + v.vx * t * 0.55, z + v.vz * t * 0.55, () => this.ahead === id);
-        l.prefetch(x + v.vx * t, z + v.vz * t, () => this.ahead === id);
+        l.prefetch(x + v.vx * t * 0.55, z + v.vz * t * 0.55, () => this.ahead === id, false);
+        l.prefetch(x + v.vx * t, z + v.vz * t, () => this.ahead === id, false);
       }
     }
   }
@@ -486,7 +509,7 @@ export class ClipSet {
   /** the land round a place fetched ahead of arriving there (a flight's destination): until the next, or 30 s */
   prefetch(x: number, z: number) {
     const id = ++this.dest, until = performance.now() + 30000;
-    for (const l of this.levels) l.prefetch(x, z, () => this.dest === id && performance.now() < until);
+    for (const l of this.levels) l.prefetch(x, z, () => this.dest === id && performance.now() < until, true);
   }
 
   /** a tile asked of the streamer, decoded, and queued for its upload */
