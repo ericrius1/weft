@@ -449,7 +449,14 @@ export function solveBody(M: BodyModel, G: BodyGoal, S: BodyState, iters = 4, de
     return a;
   }
   let x: number[];
-  // (where the trunk was, and its goal's frame, for an `ease`)
+  // carry last frame's trunk along with the goal's frame (a body on a moving ride — bike, car, board, dragon — stays
+  // in the ride's own frame instead of being pulled behind by the world-space continuity residual)
+  if (S.x && S.at) {
+    S.x[0] += G.at[0] - S.at[0];
+    S.x[1] += G.at[1] - S.at[1];
+    S.x[2] += G.at[2] - S.at[2];
+  }
+  // (where the trunk was, already carried into this frame's goal origin, for an `ease`)
   const x0 = S.x ? S.x.slice() : null, at0 = S.at;
   S.at = [G.at[0], G.at[1], G.at[2]];
   if (S.x) x = S.x.slice();
@@ -522,7 +529,8 @@ export function solveBody(M: BodyModel, G: BodyGoal, S: BodyState, iters = 4, de
   if (G.ease && G.ease > 0 && S.dt > 0 && x0 && at0) {
     const w = 2 / G.ease, dt = S.dt, e = Math.exp(-w * dt), v = S.v ?? (S.v = new Array(9).fill(0));
     for (let j = 0; j < 9; j++) {
-      const shift = j < 3 ? G.at[j] - at0[j] : 0, from = x0[j] + shift, d = from - x[j];
+      // (x0[0..2] was already carried by G.at - at0 above)
+      const from = x0[j], d = from - x[j];
       const tmp = (v[j] + w * d) * dt;
       v[j] = (v[j] - w * tmp) * e;
       x[j] = x[j] + (d + tmp) * e;

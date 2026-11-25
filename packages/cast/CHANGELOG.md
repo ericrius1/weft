@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.4
+
+Against 0.7.3. One fix for bodies on moving frames (bikes, cars, boards, mounts) and floating-origin rebases.
+
+- **Moving-frame continuity in `solveBody` and `HeroRig.shift(d)` (`body/solve.ts`, `rig.ts`)**: `solveBody` now carries `S.x[0..2]` by `G.at - S.at` before fitting and before `G.ease`, so the trunk continuity residual acts in the goal's own frame instead of pulling a seated/riding body behind its mount at speed. `HeroRig.shift(d)` likewise shifts `this.bodyS.x[0..2]` alongside `this.bodyS.at` on origin rebases.
+
 ## 0.7.3
 
 Against 0.7.2. Disney 12 Principles of Animation pass across character locomotion, facial expression, dance/groove, performance sway, and tea-drinking. Zero public API changes.
