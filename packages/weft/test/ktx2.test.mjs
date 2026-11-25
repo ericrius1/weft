@@ -77,3 +77,26 @@ test('textureFromKtx2 trims top mips past max and uploads block-aligned extents'
   assert.equal(writes[1].bytes, 16);
   assert.deepEqual(writes[1].size, [4, 4, 1]);
 });
+
+test('textureFromKtx2 stops max trim before block-unaligned non-POT mip and rejects unaligned or 3D inputs', async () => {
+  const mk = (w, h) => new Uint8Array(Math.ceil(w / 4) * Math.ceil(h / 4) * 16).fill(7);
+  // 1000x600 (mult of 4) -> 500x300 (mult of 4) -> 250x150 (NOT mult of 4): max=300 must stop at 500x300
+  const bin = encodeKtx2({ format: 'bc7-rgba-unorm', width: 1000, height: 600, levels: [mk(1000, 600), mk(500, 300), mk(250, 150)] });
+  let created = null;
+  const fakeKit = {
+    features: new Set(['texture-compression-bc']),
+    texture(desc) { created = desc; return { gpu: { label: desc.label }, ...desc }; },
+    queue: { writeTexture() {} },
+  };
+  await textureFromKtx2(fakeKit, bin, { label: 'npot.ktx2', max: 300 });
+  assert.deepEqual(created.size, [500, 300, 1]);
+  assert.equal(created.mips, 2);
+
+  // Unaligned top level throws synchronously before kit.texture
+  const bad = encodeKtx2({ format: 'bc7-rgba-unorm', width: 10, height: 10, levels: [mk(10, 10)] });
+  await assert.rejects(() => textureFromKtx2(fakeKit, bad), /not a multiple/);
+
+  // 3D KTX2 throws cleanly
+  const vol = encodeKtx2({ format: 'rgba8unorm', width: 4, height: 4, depth: 2, levels: [new Uint8Array(4 * 4 * 2 * 4)] });
+  await assert.rejects(() => textureFromKtx2(fakeKit, vol), /3D textures/);
+});

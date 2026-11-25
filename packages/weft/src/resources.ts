@@ -290,13 +290,18 @@ export class Texture implements Resource {
   mip(level: number, layer?: number) { return new TexView(this, { baseMipLevel: level, mipLevelCount: 1, ...(layer !== undefined ? { baseArrayLayer: layer, arrayLayerCount: 1, dimension: '2d' as const } : {}) }); }
   layer(i: number) { return new TexView(this, { baseArrayLayer: i, arrayLayerCount: 1, dimension: '2d', baseMipLevel: 0, mipLevelCount: 1 }); }
   get unfilterable() { return FLOAT32.test(this.format) && !this.kit.features.has('float32-filterable'); }
-  /** upload pixels (rows tightly packed unless bytesPerRow is given) */
+  /** upload pixels or compressed blocks (rows tightly packed unless bytesPerRow is given) */
   write(data: ArrayBufferView, o: { mip?: number; layer?: number; width?: number; height?: number; bytesPerRow?: number; origin?: [number, number] } = {}) {
     const w = o.width ?? Math.max(1, this.width >> (o.mip ?? 0)), h = o.height ?? Math.max(1, this.height >> (o.mip ?? 0));
-    const bpp = bytesPerPixel(this.format);
+    const blk = compressedBlock(this.format);
+    const blocksX = Math.ceil(w / blk.bw), blocksY = Math.ceil(h / blk.bh);
+    const copyW = blocksX * blk.bw, copyH = blocksY * blk.bh;
     this.kit.queue.writeTexture(
       { texture: this.gpu, mipLevel: o.mip ?? 0, origin: [o.origin?.[0] ?? 0, o.origin?.[1] ?? 0, o.layer ?? 0] },
-      data as GPUAllowSharedBufferSource, { bytesPerRow: o.bytesPerRow ?? w * bpp, rowsPerImage: h }, [w, h, 1]);
+      data as GPUAllowSharedBufferSource,
+      { bytesPerRow: o.bytesPerRow ?? blocksX * blk.bytes, rowsPerImage: blocksY },
+      [copyW, copyH, 1],
+    );
     return this;
   }
   /** copy an image in (a canvas, an ImageBitmap, a video frame…): all of it at the origin, or a part of it

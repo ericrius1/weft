@@ -164,7 +164,7 @@ export async function parseKtx2(bytes: ArrayBuffer | Uint8Array): Promise<Ktx2Im
   return { format, vkFormat, width, height, depth, layers, faces, supercompression, levels };
 }
 
-/** Encode raw mip level buffers into a valid KTX2 v2.0 container (for build tools, asset packers, and tests). */
+/** Encode raw mip level buffers into a minimal KTX2 v2.0 container (no Khronos DFD; for internal build tools, packers, and tests). */
 export function encodeKtx2(opts: {
   format: GPUTextureFormat;
   width: number;
@@ -216,13 +216,26 @@ export function encodeKtx2(opts: {
 /** Upload a KTX2 binary container straight into a GPU Texture (respecting `max` mip trim for mobile VRAM). */
 export async function textureFromKtx2(kit: Kit, bytes: ArrayBuffer | Uint8Array, o: Ktx2TextureOptions = {}): Promise<Texture> {
   const img = await parseKtx2(bytes);
+  if (img.depth > 1) {
+    throw new Error(`ktx2: 3D textures (depth=${img.depth}) are not supported`);
+  }
   if (!supportsTextureFormat(kit, img.format)) {
     throw new Error(`ktx2: GPU does not support texture format '${img.format}'`);
   }
+  const blk = compressedBlock(img.format);
   let skip = 0;
   const cap = o.max ?? Infinity;
-  while (skip < img.levels.length - 1 && Math.max(img.levels[skip].width, img.levels[skip].height) > cap) skip++;
+  // WebGPU requires a compressed texture's top mip dimensions to be exact multiples of its block size:
+  // only trim to the next mip when that mip stays block-aligned.
+  while (skip < img.levels.length - 1 && Math.max(img.levels[skip].width, img.levels[skip].height) > cap) {
+    const next = img.levels[skip + 1];
+    if (blk.bw > 1 && (next.width % blk.bw !== 0 || next.height % blk.bh !== 0)) break;
+    skip++;
+  }
   const top = img.levels[skip];
+  if (blk.bw > 1 && (top.width % blk.bw !== 0 || top.height % blk.bh !== 0)) {
+    throw new Error(`ktx2: top mip ${top.width}x${top.height} is not a multiple of ${img.format} block size ${blk.bw}x${blk.bh}`);
+  }
   const mips = img.levels.length - skip;
   const totalLayers = img.layers * img.faces;
   const view: GPUTextureViewDimension | undefined = img.faces === 6
@@ -272,7 +285,14 @@ export async function loadCompressedOrImageTexture(
   const ktxUrl = fam ? variants?.[fam] : undefined;
   if (ktxUrl) {
     try {
-      return await loadKtx2Texture(kit, ktxUrl, { label: o.label ?? ktxUrl, max: o.max }, init);
+      const tex = await loadKtx2Texture(kit, ktxUrl, { label: o.label ?? ktxUrl, max: o.max }, init);
+      if (o.srgb !== undefined) {
+        const isSrgb = tex.format.endsWith('-srgb');
+        if (isSrgb !== o.srgb) {
+          kit.warnOnce?.(`ktx2:srgb:${ktxUrl}`, `ktx2: ${ktxUrl} format '${tex.format}' disagrees with requested srgb=${o.srgb}`);
+        }
+      }
+      return tex;
     } catch { /* fall back to standard image texture */ }
   }
   return loadImageTexture(kit, fallbackUrl, o, init);
