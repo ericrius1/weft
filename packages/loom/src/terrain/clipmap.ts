@@ -245,7 +245,12 @@ export class ClipLevel {
       this.measure();
       this.snapTrailing(x, z);
     }
-    if (this.paused) return;
+    if (this.paused) {
+      // Clear non-resident loading slots and prefetch capsule so unpausing immediately requests the new window with zero retry delay.
+      this.capsule.clear();
+      for (const s of this.slots) if (s.state !== 'in') { s.r = -1; s.c = -1; s.retry = 0; }
+      return;
+    }
     // (every tile of the window asked for; a slot whose tile has left is taken over, its old tile kept until the new
     // one's written over it)
     const now = performance.now();
@@ -460,13 +465,13 @@ export class ClipLevel {
   /** the window round (x, z)'s tiles that aren't here or in the cache, fetched into it (a flight's destination, the
    *  road ahead); `live` says when it's moot; `fromTarget` ranks center-out around `(x, z)` for destinations */
   prefetch(x: number, z: number, live: () => boolean, fromTarget = false) {
-    if (this.whole || this.paused) return;
+    if (this.whole || (this.paused && !fromTarget)) return;
     const [c0, r0] = this.windowCentered(x, z), n = this.n;
     for (let r = r0; r < r0 + n; r++) for (let c = c0; c < c0 + n; c++) {
       if (this.wants(r, c) || this.set.stream.cached(this.pack, r, c)) continue;
       const [mx, mz, h] = this.middle(r, c);
       this.set.stream.prefetch(this.pack, r, c, () => {
-        if (!live() || this.paused) return Infinity;
+        if (!live() || (this.paused && !fromTarget)) return Infinity;
         return fromTarget ? Math.hypot(mx - x, mz - z) / this.scale : this.set.stream.rank(mx, mz, h, this.scale, this.tGoneOf(r, c));
       });
     }
