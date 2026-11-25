@@ -45,6 +45,7 @@ export interface ForestTree {
   h: number;
   r: number;
   seed: number;
+  pinned: unknown;
 }
 
 declare const shader: Shader<{ Frame: Frame; ForestU: ForestU; ForestTree: ForestTree }, 'frame' | 'forest' | 'forestTrees' | 'forestLists' | 'forestCounters' | 'forestArgsOut' | 'forestVisible' | 'samp_linear' | 'samp_repeat' | 'samp_nearest' | 'samp_shadow'>;

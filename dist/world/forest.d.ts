@@ -6,7 +6,7 @@ export interface ForestOptions {
     caps: [number, number, number, number];
     /** more bindings for the cull (the world's group 2 from binding 6, what its hooks read) */
     bind?: Record<string, unknown>;
-    /** the impostors' thinning: the share kept is clamp((far * factor / d)^2, least, 1), those going shrink over `band`
+    /** the impostors' thinning: the share kept is clamp((far * factor / d)^2, thin.least, 1), those going shrink over `band`
      *  of the seeds (1.4, 0.3, 0.06) */
     thin?: {
         factor?: number;
@@ -39,12 +39,30 @@ export interface ForestFrameOfReference {
 }
 /** 'TRE2' */
 export declare const FOREST_MAGIC = 843403860;
-/** a compact forest ('TRE2': magic, n, then byte planes x lo, x hi, z lo, z hi, y, and the packed u32's four bytes)
- *  back into 16 bytes an instance (x z y as f32, then the packed u32) — and shuffled, so when a list fills, the ones it
- *  can't take are spread evenly rather than a neighbourhood. Anything else is taken as the 16-byte records already. */
+/** archetype slot mask in the runtime packed u32 (bits 0..7, 0..255) */
+export declare const FOREST_ARCH_MASK = 255;
+/** pinned-y flag in the runtime packed u32 (bit 31: 1 = use stored y directly, 0 = drape via forestGround) */
+export declare const FOREST_PINNED_BIT = 2147483648;
+/** an instance's packed u32 (forest.wgsl forestUnpack):
+ *  - bits  0..7  (8b): archetype slot (0..255)
+ *  - bits  8..16 (9b): piecewise height (0..383 -> 0..38.3 m at 0.1 m; 384..511 -> 38.4..140.0 m at 0.8 m)
+ *  - bits 17..23 (7b): piecewise crown radius (0..95 -> 0..9.5 m at 0.1 m; 96..127 -> 9.6..25.1 m at 0.5 m)
+ *  - bits 24..30 (7b): seed (0..127 -> 0..1)
+ *  - bit  31     (1b): pinnedY (1 = use exact stored y, 0 = drape on terrain via forestGround) */
+export declare function packForest(arch: number, h: number, r: number, seed: number, pinned?: boolean): number;
+/** unpack a runtime packed u32 produced by `packForest` */
+export declare function unpackForest(k: number): {
+    arch: number;
+    h: number;
+    r: number;
+    seed: number;
+    pinned: boolean;
+};
+/** a compact forest ('TRE2': magic, n, then byte planes x lo, x hi, z lo, z hi, y, and the legacy packed u32's four
+ *  bytes) back into 16 bytes an instance (x z y as f32, then the runtime packed u32) — and shuffled, so when a list
+ *  fills, the ones it can't take are spread evenly rather than a neighbourhood. Anything else is taken as the 16-byte
+ *  runtime records already. */
 export declare function decodeForest(raw: Uint8Array, ref: ForestFrameOfReference, shuffle?: boolean): Uint32Array;
-/** an instance's packed u32 (forest.wgsl forestUnpack): archetype (0..63), height and crown radius (m, to 0.1), seed (0..1) */
-export declare function packForest(arch: number, h: number, r: number, seed: number): number;
 export declare class Forest {
     readonly kit: Kit;
     readonly shader: Shader<any, any>;
@@ -57,8 +75,15 @@ export declare class Forest {
     /** the four indirect draws' args (16 bytes each: near, far, impostor, shadow) */
     readonly args: StorageBuffer;
     instances: StorageBuffer | null;
+    /** total active instances (`staticCount + dynamicCount`) */
     count: number;
+    /** static instances loaded via `load()` at `[0 .. staticCount)` */
+    staticCount: number;
+    /** dynamic tail instances written via `setDynamic()` at `[staticCount .. staticCount + dynamicCount)` */
+    dynamicCount: number;
     private instancesCap;
+    private staticSrc;
+    private dynamicSrc;
     private cullPass;
     private lastBind;
     private computes;
@@ -67,9 +92,14 @@ export declare class Forest {
     private bind;
     constructor(kit: Kit, shader: Shader<any, any>, opts: ForestOptions);
     private sameBind;
-    /** the instances (16 bytes each: decodeForest's), and the two computes over them (`bind`: more of the world's
-     *  bindings for its hooks, over the options'). Reuses the GPU buffer and compute passes whenever capacity fits. */
+    private ensureInstances;
+    /** the static instances (16 bytes each: decodeForest's), and the two computes over them (`bind`: more of the world's
+     *  bindings for its hooks, over the options'). Reuses the GPU buffer and compute passes whenever capacity fits, and
+     *  preserves any active dynamic tail set via `setDynamic()`. */
     load(instances: Uint32Array, bind?: Record<string, unknown>): void;
+    /** write only the dynamic tail slice `[staticCount .. staticCount + dynamicCount)` without copying or re-uploading
+     *  the static instances. Safe to call before or after `load()`. */
+    setDynamic(instances: Uint32Array): void;
     /** release all GPU buffers and compute passes owned by this forest */
     dispose(): void;
     /** a frame's reaches, the draws' vertices, the world's own vec4s */

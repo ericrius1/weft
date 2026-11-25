@@ -1,17 +1,23 @@
 // A forest's worth of trees (or rocks, shrubs, anything stood on the ground in the hundreds of thousands) culled and
 // sorted on the GPU each frame (world/forest.ts runs it): San Francisco's trees' frame, with nothing of its trees in
-// it. `forestCull` takes each instance, stands it on the ground, tests it against the view and sorts it by distance
-// into four lists: near (closer than lod.x), far (to lod.y, overlapping the next over the crossfade band lod.w),
-// impostor (past lod.y - band, to lod.z: thinned by seed, below), and the shadows' casters (near enough, in view or
-// not); `forestWriteArgs` writes the four indirect draws' counts, updates overflow-thinning ratios from pre-thin
-// candidate counts (preventing spatial-tail strip truncation when a list overflows), and clears the counters. The
-// draws are the world's: they read the lists through forestVisible (forestListBase(list) + instance_index).
+// it. `forestCull` takes each instance, stands it on the ground (or uses its stored y directly when bit 31 `pinned` is
+// set), tests it against the view and sorts it by distance into four lists: near (closer than lod.x), far (to lod.y,
+// overlapping the next over the crossfade band lod.w), impostor (past lod.y - band, to lod.z: thinned by seed, below),
+// and the shadows' casters (near enough, in view or not); `forestWriteArgs` writes the four indirect draws' counts,
+// updates overflow-thinning ratios from pre-thin candidate counts (preventing spatial-tail strip truncation when a list
+// overflows), and clears the counters. The draws are the world's: they read the lists through forestVisible
+// (forestListBase(list) + instance_index).
 //
-// An instance is 16 bytes: x, z, y (f32 bits: y its stored foot, for the early reject before the ground's sampled)
-// and a packed u32: bits 0-5 its archetype, 6-15 its height (dm), 16-23 its crown's radius (dm), 24-31 its seed
-// (x 255). Far off the impostors are thinned: a share keep = clamp((lod.y * thin.x / d)^2, thin.y, 1) of the seeds
-// stays, each kept one's crown widened by 1/sqrt(keep) to cover for those let go, and those going shrink away over a
-// band thin.z of the seeds rather than at once — a wood's look kept and its count bounded.
+// An instance is 16 bytes: x, z, y (f32 bits: y its stored foot, for the early reject before the ground's sampled or
+// exact foot when pinned) and a packed u32:
+//   bits  0-7  (8b): archetype slot (0..255)
+//   bits  8-16 (9b): piecewise height (0..383 -> 0..38.3 m at 0.1 m; 384..511 -> 38.4..140.0 m at 0.8 m)
+//   bits 17-23 (7b): piecewise crown radius (0..95 -> 0..9.5 m at 0.1 m; 96..127 -> 9.6..25.1 m at 0.5 m)
+//   bits 24-30 (7b): seed (0..127 -> 0..1)
+//   bit  31    (1b): pinnedY (1 = use exact stored y, 0 = drape via forestGround)
+// Far off the impostors are thinned: a share keep = clamp((lod.y * thin.x / d)^2, thin.y, 1) of the seeds stays, each
+// kept one's crown widened by 1/sqrt(keep) to cover for those let go, and those going shrink away over a band thin.z
+// of the seeds rather than at once — a wood's look kept and its count bounded.
 //
 // A library: the including shader defines
 //   fn forestGround(xz: vec2f, stored: f32) -> f32       the ground's height under an instance (stored: its foot as baked)
@@ -26,7 +32,7 @@ struct ForestU {
   lod: vec4f,                // x near's end (m), y far's end, z the impostors' end, w the far/impostor crossfade band
   caps: vec4u,               // the lists' capacities: near, far, impostor, shadow
   verts: vec4u,              // the four draws' vertices an instance: near, far, impostor, shadow
-  counts: vec4f,             // x the instances, y the shadows' reach (m), z the reject's slack (m)
+  counts: vec4f,             // x total instances, y the shadows' reach (m), z the reject's slack (m), w static instances
   thin: vec4f,               // the impostors' thinning: x the distance factor, y the least share kept, z the seed band
   user: array<vec4f, 4>,     // the world's own, for its draws (the wind, say)
 }
@@ -38,14 +44,40 @@ struct ForestU {
 @group(2) @binding(4) var<storage, read_write> forestArgsOut: array<u32, 16>;
 @group(2) @binding(5) var<storage, read> forestVisible: array<vec4f>;          // x, y (the ground's), z, packed
 
-struct ForestTree { p: vec3f, a: u32, h: f32, r: f32, seed: f32 }
+struct ForestTree { p: vec3f, a: u32, h: f32, r: f32, seed: f32, pinned: bool }
+
+fn forestUnpackH(hh: u32) -> f32 {
+  return select(f32(hh) * 0.1, 38.4 + f32(hh - 384u) * 0.8, hh >= 384u);
+}
+
+fn forestUnpackR(rr: u32) -> f32 {
+  return select(f32(rr) * 0.1, 9.6 + f32(rr - 96u) * 0.5, rr >= 96u);
+}
+
+fn forestPackH(h: f32) -> u32 {
+  let dm = i32(round(h * 10.0));
+  if (dm <= 383) { return u32(max(0, dm)); }
+  return min(511u, 384u + u32(max(0, i32(round((h - 38.4) * 1.25)))));
+}
+
+fn forestPackR(r: f32) -> u32 {
+  let rm = i32(round(r * 10.0));
+  if (rm <= 95) { return u32(max(0, rm)); }
+  return min(127u, 96u + u32(max(0, i32(round((r - 9.6) * 2.0)))));
+}
+
+fn forestRepackSize(rawW: u32, h: f32, r: f32) -> u32 {
+  return (rawW & 0xff0000ffu) | (forestPackH(h) << 8u) | (forestPackR(r) << 17u);
+}
+
 fn forestUnpack(x: f32, y: f32, z: f32, k: u32) -> ForestTree {
   var t: ForestTree;
   t.p = vec3f(x, y, z);
-  t.a = k & 63u;
-  t.h = f32((k >> 6u) & 1023u) * 0.1;
-  t.r = f32((k >> 16u) & 255u) * 0.1;
-  t.seed = f32(k >> 24u) / 255.0;
+  t.a = k & 255u;
+  t.h = forestUnpackH((k >> 8u) & 511u);
+  t.r = forestUnpackR((k >> 17u) & 127u);
+  t.seed = f32((k >> 24u) & 127u) / 127.0;
+  t.pinned = (k & 0x80000000u) != 0u;
   return t;
 }
 // a list's entry (from forestVisible)
@@ -82,11 +114,14 @@ fn forestOvKeep(list: u32) -> f32 {
   if (i >= u32(forest.counts.x)) { return; }
   let raw = forestTrees[i];
   let xz = vec2f(bitcast<f32>(raw.x), bitcast<f32>(raw.y));
+  let storedY = bitcast<f32>(raw.z);
   // (most are far beyond every reach: let go on their stored foot's height before the ground's sampled)
   let reach = max(forest.lod.z, forest.counts.y) + forest.counts.z;
-  let dq = vec3f(xz.x, bitcast<f32>(raw.z), xz.y) - frame.camPos;
+  let dq = vec3f(xz.x, storedY, xz.y) - frame.camPos;
   if (dot(dq, dq) > reach * reach) { return; }
-  let ground = forestGround(xz, bitcast<f32>(raw.z));
+  let pinned = (raw.w & 0x80000000u) != 0u;
+  var ground = storedY;
+  if (!pinned) { ground = forestGround(xz, storedY); }
   var t = forestUnpack(xz.x, ground, xz.y, raw.w);
   if (!forestAccept(xz, ground)) { return; }
   let c = vec3f(xz.x, ground + t.h * 0.55, xz.y);
@@ -142,9 +177,7 @@ fn forestOvKeep(list: u32) -> f32 {
         let s = saturate((keep + thin - t.seed) / thin) * ovS;
         let effKeep = max(keep * ov, 0.05);
         if (effKeep < 1.0 || s < 1.0) {
-          let r = min(255u, u32(t.r * 10.0 / sqrt(effKeep) * s));
-          let hh = min(1023u, u32(t.h * 10.0 * s));
-          e.w = bitcast<f32>((raw.w & 0xff00003fu) | (r << 16u) | (hh << 6u));
+          e.w = bitcast<f32>(forestRepackSize(raw.w, t.h * s, t.r / sqrt(effKeep) * s));
         }
         let k = atomicAdd(&forestCounters[2], 1u);
         if (k < forest.caps.z) { forestLists[forest.caps.x + forest.caps.y + k] = e; }
