@@ -29,16 +29,31 @@ export interface AssetsOptions {
   /** what the page already asked for before the bundle ran (a build's index.html: plugin/vite.ts earlyFetch), path →
    *  its fetch; each taken once, by init (the manifest) or a plain fetch(rel) — e.g. `globalThis.__early` */
   early?: Record<string, Promise<Response | null>> | null;
+  /** HTTP cache mode for fetching the manifest (default 'no-cache'; pass 'default' for content-hashed manifest names) */
+  manifestCache?: RequestCache;
+  /** initial path → URL entries available immediately before init() resolves (e.g. an inlined boot subset of remote.json) */
+  initial?: Record<string, string> | null;
 }
 
 /** a content-addressed object's URL: objects/<sha256>/<name> (it never changes, so it can be kept) */
 export const isLasting = (url: string) => /\/objects\/[0-9a-f]{64}\//.test(url);
 
+const openCaches = new Map<string, Promise<Cache | null>>();
+function openCache(name: string): Promise<Cache | null> {
+  let p = openCaches.get(name);
+  if (!p) {
+    p = caches.open(name).catch(() => { openCaches.delete(name); return null; });
+    openCaches.set(name, p);
+  }
+  return p;
+}
+
 /** fetch, through Cache Storage `cache` for a content-addressed object (any other URL, or no Cache Storage: as usual) */
 export async function fetchKept(url: string, init: RequestInit | undefined, cache: string | null): Promise<Response> {
   if (!cache || !isLasting(url) || typeof caches === 'undefined' || (init?.headers && new Headers(init.headers).has('range'))) return fetch(url, init);
   try {
-    const c = await caches.open(cache);
+    const c = await openCache(cache);
+    if (!c) return fetch(url, init);
     const hit = await c.match(url);
     if (hit) return hit;
     const r = await fetch(url, init);
@@ -55,12 +70,15 @@ export class Assets {
   /** path under root → its URL (the manifest; empty until init, or with none) */
   remote: Record<string, string> = {};
   private manifest: string | null;
+  private manifestCache: RequestCache;
   private early: Record<string, Promise<Response | null>>;
   constructor(opts: AssetsOptions = {}) {
     this.root = opts.root ?? (typeof document === 'undefined' ? '/assets' : new URL('assets', document.baseURI).pathname);
     this.manifest = opts.manifest === undefined ? 'remote.json' : opts.manifest;
+    this.manifestCache = opts.manifestCache ?? 'no-cache';
     this.keep = opts.keep ?? null;
     this.early = opts.early ?? {};
+    if (opts.initial) this.remote = { ...opts.initial };
   }
 
   /** the page's early fetch of `rel`, once (null: none, or already taken) */
@@ -71,13 +89,14 @@ export class Assets {
     return e;
   }
 
-  /** read the manifest (revalidated every load: a map cached from the last deploy would send moved files to this one's
-   *  404s). None, or not JSON (a dev server's index.html fallback): everything's beside the app */
+  /** read the manifest (revalidated every load by default: a map cached from the last deploy would send moved files to
+   *  this one's 404s; pass `manifestCache: 'default'` for immutable hashed manifest filenames). None, or not JSON
+   *  (a dev server's index.html fallback): keeps any `initial` entries, everything else beside the app */
   async init(): Promise<this> {
     if (!this.manifest) return this;
     try {
-      const r = (await this.takeEarly(this.manifest)) ?? await fetch(`${this.root}/${this.manifest}`, { cache: 'no-cache' });
-      if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) this.remote = await r.json();
+      const r = (await this.takeEarly(this.manifest)) ?? await fetch(`${this.root}/${this.manifest}`, { cache: this.manifestCache });
+      if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) Object.assign(this.remote, await r.json());
     } catch { /* none */ }
     return this;
   }
@@ -99,7 +118,8 @@ export class Assets {
   async forgetExcept(keep: Iterable<string> = Object.values(this.remote)) {
     if (!this.keep || typeof caches === 'undefined') return;
     const want = new Set([...keep].map((u) => new URL(u, location.href).href));
-    const c = await caches.open(this.keep);
+    const c = await openCache(this.keep);
+    if (!c) return;
     for (const req of await c.keys()) if (!want.has(req.url)) await c.delete(req);
   }
 }
@@ -161,7 +181,7 @@ export class Pack<I extends PackIndex = TileIndex> {
   async range(a: number, n: number, signal?: AbortSignal): Promise<ArrayBuffer> {
     for (let tries = 0; ; tries++) {
       try {
-        const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, signal });
+        const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, cache: 'no-store', signal });
         if (res.status === 206) return await res.arrayBuffer();
         // (a server that ignores the range sends the whole pack: take our part of it)
         if (res.ok) return (await res.arrayBuffer()).slice(a, a + n);

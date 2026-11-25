@@ -437,7 +437,8 @@ export class Binder {
         }
         const layoutKey = keyParts.join('/');
         if (layoutKey !== this.layoutKey || !this.layout) {
-            this.layout = this.kit.device.createPipelineLayout({ label: this.label, bindGroupLayouts: bgls });
+            const k = this.kit;
+            this.layout = k.pipelineLayout ? k.pipelineLayout(bgls, this.label, layoutKey) : this.kit.device.createPipelineLayout({ label: this.label, bindGroupLayouts: bgls });
             this.layoutKey = layoutKey;
         }
         this.groups = groups;

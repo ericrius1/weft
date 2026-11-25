@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.15
+
+Boot-time speedups and TAAU motion validation; 100% backwards-compatible.
+
+- **Production shader & reflection deduplication (`plugin/vite.ts`, `plugin/lean.ts`)**: in production builds (`!isServe`), repeated reflected `StructLayout` objects (>= 150 chars) and repeated top-level WGSL declarations (>= 120 chars, split verbatim via `splitDeclarations()`) are hoisted into shared virtual modules (`virtual:weft-s/*`, `virtual:weft-d/*`), and `defineShader(...)` calls are marked `/*#__PURE__*/` for tree-shaking. Generated `shader.code`, `files`, and `runs` stay byte-identical.
+- **Non-blocking shader compilation in production (`kit.ts`, `passes.ts`)**: `kit.module()` skips awaiting `getCompilationInfo()` when `!kit.debug` so pipeline queueing isn't stalled on every module; on a pipeline compile failure, `kit.diagnoseShader(shader)` inspects compile info lazily and maps errors back to `file:line`.
+- **Cached `GPUPipelineLayout`s (`kit.ts`, `binder.ts`)**: `kit.pipelineLayout(bgls, label, key)` caches `GPUPipelineLayout` by layout key across pipelines sharing the same bind-group layouts.
+- **Async per-format mip warming (`images.ts`, `kit.ts`)**: `warmMips(kit, formats)` compiles only the requested formats asynchronously and returns a `Promise<void>`; `Kit` pre-warms `rgba8unorm` and `rgba8unorm-srgb` at startup, `loadImageTexture` / `loadImageArray` warm the target format in parallel with image fetch/decode, and `generateMips` defers remaining formats to idle.
+- **Single HDR canvas configure & asset cache polish (`kit.ts`, `assets.ts`)**: skips redundant `ctx.configure()` when HDR setup already configured the canvas; memoizes `caches.open(name)` in `fetchKept`/`forgetExcept`, uses `cache: 'no-store'` on `Pack.range()` to avoid browser HTTP range-cache stalls, and adds `AssetsOptions.initial` (pre-seeded boot manifest entries) and `AssetsOptions.manifestCache` (HTTP cache mode for hashed manifests).
+- **TAAU motion attachment validation (`taau.ts`, `shaders/motion.wgsl`)**: `new Taau(kit, hdr, depth, { motion })` now throws immediately if `motion.samples !== depth.samples` instead of failing later in WebGPU pass validation.
+
 ## 0.2.14
 
 Foundation upgrades for multi-place residency, zero-alloc frames, and shader/pipeline economy; 100% backwards-compatible.

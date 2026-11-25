@@ -116,6 +116,8 @@ export class Taau {
         const ms = depth.samples > 1;
         this.velocity = opts.motion ? null : opts.velocity ?? null;
         const mo = opts.motion ?? null;
+        if (mo && mo.samples !== depth.samples)
+            throw new Error(`Taau: the motion target has ${mo.samples} sample(s), the depth ${depth.samples}: give it the scene pass's sample count (it is one of that pass's targets)`);
         this.motion = mo;
         // (a motion target: its own shader file, so an app without one is given the same code as before; read like the
         // depth, its first sample when multisampled)

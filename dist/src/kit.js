@@ -12,6 +12,7 @@ import { SharedGroup } from './binder';
 import { STAGE, TEX } from './gpuconst';
 import { Profiler } from './profiler';
 import { DebugOverlay } from './debug';
+import { warmMips } from './images';
 export class WebGPUUnavailable extends Error {
 }
 const COMPILE_INFO_WAIT = 4000;
@@ -184,6 +185,7 @@ export class Kit {
      *  bind groups of direct resources are checked again then, and only then */
     resourceGen = 0;
     bgls = new Map();
+    pls = new Map();
     modules = new Map();
     warned = new Set();
     canvasConfig;
@@ -214,10 +216,11 @@ export class Kit {
         const sdr = { device, format: navigator.gpu.getPreferredCanvasFormat(), alphaMode: opts.alphaMode ?? 'opaque' };
         this.canvasConfig = sdr;
         this.hdr = { enabled: false, format: sdr.format, colorSpace: 'srgb', toneMapping: 'standard' };
+        let configured = false;
         if (opts.hdr === 'force' || (opts.hdr && matchMedia('(dynamic-range: high)').matches)) {
             // (a browser that can't tone-map a canvas leaves toneMapping out of getConfiguration: then it stays SDR)
             for (const colorSpace of ['display-p3', 'srgb']) {
-                const want = { ...sdr, format: 'rgba16float', colorSpace, toneMapping: { mode: 'extended' } };
+                const want = { ...sdr, format: 'rgba16float', colorSpace, toneMapping: { mode: 'extended' }, usage: TEX.RENDER_ATTACHMENT };
                 try {
                     ctx.configure(want);
                     const got = ctx.getConfiguration?.();
@@ -225,6 +228,7 @@ export class Kit {
                         break;
                     this.canvasConfig = want;
                     this.hdr = { enabled: true, format: want.format, colorSpace: got.colorSpace, toneMapping: 'extended' };
+                    configured = true;
                     break;
                 }
                 catch (e) {
@@ -233,7 +237,8 @@ export class Kit {
             }
         }
         this.format = this.hdr.format;
-        this.configureCanvas();
+        if (!configured)
+            this.configureCanvas();
         const all = STAGE.VERTEX | STAGE.FRAGMENT | STAGE.COMPUTE;
         this.frameLayout = device.createBindGroupLayout({
             label: 'weft.frame',
@@ -288,6 +293,9 @@ export class Kit {
             this.mouse[2] = e.buttons;
         });
         this.applySize();
+        // (warm common mip blit pipelines asynchronously so generateMips() on early textures doesn't stall synchronously)
+        if (!parent)
+            void warmMips(this, ['rgba8unorm', 'rgba8unorm-srgb']);
     }
     get camera() { return this.mainView.camera; }
     /** a kit for another canvas, drawn with this kit's device: an overlay over this one (crisp type at the display's
@@ -492,7 +500,15 @@ export class Kit {
             this.bgls.set(key, (l = this.device.createBindGroupLayout({ label, entries })));
         return l;
     }
-    /** a compiled shader module (once per shader version); compile errors are mapped back to file:line */
+    pipelineLayout(bindGroupLayouts, label, key) {
+        let l = this.pls.get(key);
+        if (!l)
+            this.pls.set(key, (l = this.device.createPipelineLayout({ label, bindGroupLayouts })));
+        return l;
+    }
+    /** a compiled shader module (once per shader version); in debug mode compile info is awaited up front so warnings and
+     *  errors appear immediately; in production the module is returned without blocking pipeline queueing and compile info
+     *  is queried lazily via diagnoseShader() only if a pipeline fails */
     module(shader) {
         const c = this.modules.get(shader);
         if (c && c.version === shader.version)
@@ -501,43 +517,57 @@ export class Kit {
         const p = (async () => {
             if (shader.error)
                 throw new Error(shader.error);
-            // (scoped, so a bad shader is reported once — mapped to file:line below — not again as an uncaptured error)
+            // (scoped, so a bad shader is reported once — mapped to file:line on diagnose — not again as an uncaptured error)
             this.device.pushErrorScope('validation');
             const m = this.device.createShaderModule({ label: shader.id, code: shader.code });
             entry.raw = m;
             void this.device.popErrorScope();
-            // (WebKit now and then never answers getCompilationInfo: after a few seconds the module is used as it is — a bad
-            // one then fails its pipelines instead — so a shader can't hold kit.ready() for ever)
-            let timer;
-            const late = new Promise((r) => { timer = setTimeout(() => r(null), COMPILE_INFO_WAIT); });
-            const info = await Promise.race([m.getCompilationInfo(), late]).finally(() => clearTimeout(timer));
-            if (!info) {
-                this.warnOnce(`info:${shader.id}`, `${shader.id}: no compile info after ${COMPILE_INFO_WAIT / 1000} s, using the module as it is`);
+            if (!this.debug)
                 return m;
-            }
-            const errs = info.messages.filter((x) => x.type === 'error');
-            for (const msg of info.messages) {
-                if (msg.type === 'info')
-                    continue;
-                const at = sourceLine(shader, msg.lineNum);
-                const text = `${at.file}:${at.line}:${msg.linePos} ${msg.message}\n    ${(shader.code.split('\n')[msg.lineNum - 1] ?? '').trim()}`;
-                if (msg.type === 'warning')
-                    console.warn('[weft]', text);
-            }
-            if (errs.length) {
-                const text = errs.map((msg) => {
-                    const at = sourceLine(shader, msg.lineNum);
-                    return `${at.file}:${at.line}:${msg.linePos} ${msg.message}\n    ${(shader.code.split('\n')[msg.lineNum - 1] ?? '').trim()}`;
-                }).join('\n');
-                this.report('shader', shader.id, text);
-                throw new Error(`shader ${shader.id} failed to compile`);
-            }
-            this.clearError(shader.id);
+            entry.checked = true;
+            await this.checkCompilationInfo(shader, m);
             return m;
         })();
         entry.module = p;
         this.modules.set(shader, entry);
         return p;
+    }
+    /** inspect a shader module's compilation info (mapped to source file:line), called eagerly in debug mode or lazily on pipeline failure */
+    async diagnoseShader(shader) {
+        const c = this.modules.get(shader);
+        if (!c?.raw || c.checked)
+            return;
+        c.checked = true;
+        await this.checkCompilationInfo(shader, c.raw).catch(() => { });
+    }
+    async checkCompilationInfo(shader, m) {
+        // (WebKit now and then never answers getCompilationInfo: after a few seconds the module is used as it is — a bad
+        // one then fails its pipelines instead — so a shader can't hold kit.ready() for ever)
+        let timer;
+        const late = new Promise((r) => { timer = setTimeout(() => r(null), COMPILE_INFO_WAIT); });
+        const info = await Promise.race([m.getCompilationInfo(), late]).finally(() => clearTimeout(timer));
+        if (!info) {
+            this.warnOnce(`info:${shader.id}`, `${shader.id}: no compile info after ${COMPILE_INFO_WAIT / 1000} s, using the module as it is`);
+            return;
+        }
+        const errs = info.messages.filter((x) => x.type === 'error');
+        for (const msg of info.messages) {
+            if (msg.type === 'info')
+                continue;
+            const at = sourceLine(shader, msg.lineNum);
+            const text = `${at.file}:${at.line}:${msg.linePos} ${msg.message}\n    ${(shader.code.split('\n')[msg.lineNum - 1] ?? '').trim()}`;
+            if (msg.type === 'warning')
+                console.warn('[weft]', text);
+        }
+        if (errs.length) {
+            const text = errs.map((msg) => {
+                const at = sourceLine(shader, msg.lineNum);
+                return `${at.file}:${at.line}:${msg.linePos} ${msg.message}\n    ${(shader.code.split('\n')[msg.lineNum - 1] ?? '').trim()}`;
+            }).join('\n');
+            this.report('shader', shader.id, text);
+            throw new Error(`shader ${shader.id} failed to compile`);
+        }
+        this.clearError(shader.id);
     }
     /** the shader's module now, made if it isn't yet (null if the shader has an error): a compile scheduler making a
      *  pipeline on the spot doesn't wait for the module's compile info */

@@ -5,4 +5,6 @@ export declare function leanWgsl(code: string, runs: number[]): {
     code: string;
     runs: number[];
 };
+/** Split comment-free WGSL into contiguous slices aligned to top-level declarations; `parts.join('') === code`. */
+export declare function splitDeclarations(code: string): string[];
 //# sourceMappingURL=lean.d.ts.map

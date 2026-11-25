@@ -17,12 +17,23 @@
 //   const metres = await decodeH16(bytes!, 256, pack.index.q!);
 /** a content-addressed object's URL: objects/<sha256>/<name> (it never changes, so it can be kept) */
 export const isLasting = (url) => /\/objects\/[0-9a-f]{64}\//.test(url);
+const openCaches = new Map();
+function openCache(name) {
+    let p = openCaches.get(name);
+    if (!p) {
+        p = caches.open(name).catch(() => { openCaches.delete(name); return null; });
+        openCaches.set(name, p);
+    }
+    return p;
+}
 /** fetch, through Cache Storage `cache` for a content-addressed object (any other URL, or no Cache Storage: as usual) */
 export async function fetchKept(url, init, cache) {
     if (!cache || !isLasting(url) || typeof caches === 'undefined' || (init?.headers && new Headers(init.headers).has('range')))
         return fetch(url, init);
     try {
-        const c = await caches.open(cache);
+        const c = await openCache(cache);
+        if (!c)
+            return fetch(url, init);
         const hit = await c.match(url);
         if (hit)
             return hit;
@@ -41,12 +52,16 @@ export class Assets {
     /** path under root → its URL (the manifest; empty until init, or with none) */
     remote = {};
     manifest;
+    manifestCache;
     early;
     constructor(opts = {}) {
         this.root = opts.root ?? (typeof document === 'undefined' ? '/assets' : new URL('assets', document.baseURI).pathname);
         this.manifest = opts.manifest === undefined ? 'remote.json' : opts.manifest;
+        this.manifestCache = opts.manifestCache ?? 'no-cache';
         this.keep = opts.keep ?? null;
         this.early = opts.early ?? {};
+        if (opts.initial)
+            this.remote = { ...opts.initial };
     }
     /** the page's early fetch of `rel`, once (null: none, or already taken) */
     takeEarly(rel) {
@@ -56,15 +71,16 @@ export class Assets {
         delete this.early[rel];
         return e;
     }
-    /** read the manifest (revalidated every load: a map cached from the last deploy would send moved files to this one's
-     *  404s). None, or not JSON (a dev server's index.html fallback): everything's beside the app */
+    /** read the manifest (revalidated every load by default: a map cached from the last deploy would send moved files to
+     *  this one's 404s; pass `manifestCache: 'default'` for immutable hashed manifest filenames). None, or not JSON
+     *  (a dev server's index.html fallback): keeps any `initial` entries, everything else beside the app */
     async init() {
         if (!this.manifest)
             return this;
         try {
-            const r = (await this.takeEarly(this.manifest)) ?? await fetch(`${this.root}/${this.manifest}`, { cache: 'no-cache' });
+            const r = (await this.takeEarly(this.manifest)) ?? await fetch(`${this.root}/${this.manifest}`, { cache: this.manifestCache });
             if (r.ok && (r.headers.get('content-type') ?? '').includes('json'))
-                this.remote = await r.json();
+                Object.assign(this.remote, await r.json());
         }
         catch { /* none */ }
         return this;
@@ -86,7 +102,9 @@ export class Assets {
         if (!this.keep || typeof caches === 'undefined')
             return;
         const want = new Set([...keep].map((u) => new URL(u, location.href).href));
-        const c = await caches.open(this.keep);
+        const c = await openCache(this.keep);
+        if (!c)
+            return;
         for (const req of await c.keys())
             if (!want.has(req.url))
                 await c.delete(req);
@@ -129,7 +147,7 @@ export class Pack {
     async range(a, n, signal) {
         for (let tries = 0;; tries++) {
             try {
-                const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, signal });
+                const res = await fetch(this.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, cache: 'no-store', signal });
                 if (res.status === 206)
                     return await res.arrayBuffer();
                 // (a server that ignores the range sends the whole pack: take our part of it)

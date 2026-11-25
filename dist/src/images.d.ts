@@ -19,8 +19,8 @@ export declare function textureFromBitmaps(kit: Kit, bitmaps: ImageBitmap[], o?:
 export declare function loadImageTexture(kit: Kit, url: string, o?: ImageTextureOptions, init?: RequestInit): Promise<Texture>;
 /** images as one 2D array texture, a layer each */
 export declare function loadImageArray(kit: Kit, urls: string[], o?: ImageTextureOptions, init?: RequestInit): Promise<Texture>;
-/** compile the mip pipelines of the common formats in the background (generateMips does it the first time) */
-export declare function warmMips(kit: Kit): void;
+/** compile the mip pipelines asynchronously for `formats` (defaults to common formats); each format warmed at most once per device */
+export declare function warmMips(kit: Kit, formats?: readonly GPUTextureFormat[]): Promise<void>;
 /** fill every mip from the one above, box-filtered, now (render passes: the format must be renderable).
  *  `layer`: regenerate only one array slice (for 2d-array textures updated one layer at a time); omitted: every layer */
 export declare function generateMips(kit: Kit, t: Texture, layer?: number): void;

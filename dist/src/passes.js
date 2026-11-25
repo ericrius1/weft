@@ -204,6 +204,7 @@ export class PipelineRecord {
                     return;
                 this.error = e.message ?? String(e);
                 this.kit.report('pipeline', this.label, this.error);
+                void this.kit.diagnoseShader?.(this.shader);
             }
             // (failed with no pipeline to go on with: what it's baked into records again, a fallback's calls in its place)
             if (this.error && !this._pipe && b === this.serial)

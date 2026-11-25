@@ -1,9 +1,11 @@
 import { readdirSync, statSync, readFileSync, mkdirSync, writeFileSync, existsSync, rmSync, appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join, dirname, resolve, isAbsolute, relative, sep } from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { compileWgsl, writeDeclaration } from './wgsl.js';
+import { splitDeclarations } from './lean.js';
 export const PACKAGE = '@ericrius1/weft';
 /** this package's own shader library (dist/plugin/vite.js → shaders/) */
 export const weftShaders = resolve(dirname(fileURLToPath(import.meta.url)), '../../shaders');
@@ -51,9 +53,75 @@ export function weft(opts = {}) {
             return;
         writeDeclaration(file, s, typesFrom, { file, root, sharedTypes: opts.sharedTypes });
     };
-    const moduleCode = (s) => `import { defineShader } from ${JSON.stringify(runtime)};\n` +
-        `export default defineShader(${JSON.stringify(s)});\n` +
-        `if (import.meta.hot) import.meta.hot.accept();\n`;
+    // Production build deduplication pools: identical reflection StructLayouts and top-level WGSL declarations
+    // (e.g. shared #include structs & helper functions) become shared virtual modules so Rollup emits them once.
+    const sharedStructs = new Map();
+    const sharedDecls = new Map();
+    const hashOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 12);
+    const STRUCT_MIN = 150;
+    const DECL_MIN = 120;
+    const V_STRUCT = 'virtual:weft-s/';
+    const V_DECL = 'virtual:weft-d/';
+    const moduleCode = (s) => {
+        if (!isBuild || s.error) {
+            return `import { defineShader } from ${JSON.stringify(runtime)};\n` +
+                `export default /*#__PURE__*/ defineShader(${JSON.stringify(s)});\n` +
+                `if (import.meta.hot) import.meta.hot.accept();\n`;
+        }
+        const imports = [`import { defineShader } from ${JSON.stringify(runtime)};`];
+        const seenS = new Map();
+        const seenD = new Map();
+        let si = 0, di = 0;
+        // 1. Deduplicate large StructLayouts in reflect.structs
+        const structEntries = [];
+        for (const [name, layout] of Object.entries(s.reflect.structs)) {
+            const json = JSON.stringify(layout);
+            if (json.length >= STRUCT_MIN) {
+                const h = hashOf(json);
+                sharedStructs.set(h, json);
+                let id = seenS.get(h);
+                if (!id) {
+                    id = `_s${si++}`;
+                    seenS.set(h, id);
+                    imports.push(`import ${id} from ${JSON.stringify(V_STRUCT + h)};`);
+                }
+                structEntries.push(`${JSON.stringify(name)}:${id}`);
+            }
+            else {
+                structEntries.push(`${JSON.stringify(name)}:${json}`);
+            }
+        }
+        // 2. Deduplicate large top-level WGSL declarations verbatim (concatenation === s.code)
+        const codeExprs = [];
+        let lit = '';
+        const flushLit = () => { if (lit) {
+            codeExprs.push(JSON.stringify(lit));
+            lit = '';
+        } };
+        for (const part of splitDeclarations(s.code)) {
+            if (part.length >= DECL_MIN) {
+                flushLit();
+                const h = hashOf(part);
+                sharedDecls.set(h, part);
+                let id = seenD.get(h);
+                if (!id) {
+                    id = `_d${di++}`;
+                    seenD.set(h, id);
+                    imports.push(`import ${id} from ${JSON.stringify(V_DECL + h)};`);
+                }
+                codeExprs.push(id);
+            }
+            else {
+                lit += part;
+            }
+        }
+        flushLit();
+        const codeExpr = codeExprs.length ? codeExprs.join('+') : '""';
+        const { structs: _st, ...restReflect } = s.reflect;
+        const reflectExpr = `{structs:{${structEntries.join(',')}},bindings:${JSON.stringify(restReflect.bindings)},entries:${JSON.stringify(restReflect.entries)},overrides:${JSON.stringify(restReflect.overrides)}}`;
+        return `${imports.join('\n')}\n` +
+            `export default /*#__PURE__*/ defineShader({id:${JSON.stringify(s.id)},label:${JSON.stringify(s.label)},code:${codeExpr},files:${JSON.stringify(s.files)},runs:${JSON.stringify(s.runs)},reflect:${reflectExpr}});\n`;
+    };
     return {
         name: 'weft-wgsl',
         enforce: 'pre',
@@ -68,6 +136,8 @@ export function weft(opts = {}) {
                 libs[k] = shaderDir(v, root);
         },
         buildStart() {
+            sharedStructs.clear();
+            sharedDecls.clear();
             if (opts.types === false)
                 return;
             for (const f of walk(root)) {
@@ -77,7 +147,20 @@ export function weft(opts = {}) {
                 catch { /* reported when imported */ }
             }
         },
+        resolveId(id) {
+            if (id.startsWith(V_STRUCT) || id.startsWith(V_DECL))
+                return `\0${id}`;
+            return null;
+        },
         load(id) {
+            if (id.startsWith(`\0${V_STRUCT}`)) {
+                const json = sharedStructs.get(id.slice(V_STRUCT.length + 1));
+                return json !== undefined ? `export default ${json};\n` : null;
+            }
+            if (id.startsWith(`\0${V_DECL}`)) {
+                const text = sharedDecls.get(id.slice(V_DECL.length + 1));
+                return text !== undefined ? `export default ${JSON.stringify(text)};\n` : null;
+            }
             const [file, query] = id.split('?');
             if (!file.endsWith('.wgsl') || (query && /raw|url/.test(query)))
                 return null;

@@ -10,7 +10,9 @@ export interface TaauOptions {
     /** the app's own motion vectors (rg: screen uv now − uv last frame, at the render size): what moves by itself — a
      *  creature, a car, a jiggling molecule — reprojects instead of ghosting. Without, the camera's motion alone */
     velocity?: Texture;
-    /** a motion target (rgba16float, the render size, the scene's sample count or 1, cleared to 0 each frame) that only
+    /** a motion target (rgba16float, the render size, the depth's sample count — it is a colour target of the same pass,
+     *  and WebGPU wants every attachment of a pass at one count; the constructor throws otherwise — cleared to 0 each
+     *  frame) that only
      *  the draws moving by themselves write (shaders/motion.wgsl `motionOf`): a texel whose distance is the depth
      *  buffer's there is reprojected by that draw's own motion and its history checked against the distance that surface
      *  had last frame; everywhere else (texels left at 0, or hidden behind a draw that wrote nothing) the camera's motion,

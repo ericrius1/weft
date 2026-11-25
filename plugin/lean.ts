@@ -234,3 +234,18 @@ export function leanWgsl(code: string, runs: number[]): { code: string; runs: nu
   }
   return { code: out.join('\n'), runs: outRuns };
 }
+
+/** Split comment-free WGSL into contiguous slices aligned to top-level declarations; `parts.join('') === code`. */
+export function splitDeclarations(code: string): string[] {
+  const decls = declarations(code);
+  if (!decls.length) return [code];
+  const parts: string[] = [];
+  let at = 0;
+  for (const d of decls) {
+    if (d.start > at) parts.push(code.slice(at, d.start));
+    parts.push(code.slice(d.start, d.end));
+    at = d.end;
+  }
+  if (at < code.length) parts.push(code.slice(at));
+  return parts;
+}

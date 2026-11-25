@@ -11,6 +11,10 @@ export interface AssetsOptions {
     /** what the page already asked for before the bundle ran (a build's index.html: plugin/vite.ts earlyFetch), path →
      *  its fetch; each taken once, by init (the manifest) or a plain fetch(rel) — e.g. `globalThis.__early` */
     early?: Record<string, Promise<Response | null>> | null;
+    /** HTTP cache mode for fetching the manifest (default 'no-cache'; pass 'default' for content-hashed manifest names) */
+    manifestCache?: RequestCache;
+    /** initial path → URL entries available immediately before init() resolves (e.g. an inlined boot subset of remote.json) */
+    initial?: Record<string, string> | null;
 }
 /** a content-addressed object's URL: objects/<sha256>/<name> (it never changes, so it can be kept) */
 export declare const isLasting: (url: string) => boolean;
@@ -22,12 +26,14 @@ export declare class Assets {
     /** path under root → its URL (the manifest; empty until init, or with none) */
     remote: Record<string, string>;
     private manifest;
+    private manifestCache;
     private early;
     constructor(opts?: AssetsOptions);
     /** the page's early fetch of `rel`, once (null: none, or already taken) */
     takeEarly(rel: string): Promise<Response | null> | null;
-    /** read the manifest (revalidated every load: a map cached from the last deploy would send moved files to this one's
-     *  404s). None, or not JSON (a dev server's index.html fallback): everything's beside the app */
+    /** read the manifest (revalidated every load by default: a map cached from the last deploy would send moved files to
+     *  this one's 404s; pass `manifestCache: 'default'` for immutable hashed manifest filenames). None, or not JSON
+     *  (a dev server's index.html fallback): keeps any `initial` entries, everything else beside the app */
     init(): Promise<this>;
     /** the URL of a file under root */
     url(rel: string): string;

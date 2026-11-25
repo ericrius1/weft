@@ -153,6 +153,7 @@ export declare class Kit {
      *  bind groups of direct resources are checked again then, and only then */
     resourceGen: number;
     private bgls;
+    private pls;
     private modules;
     private warned;
     private canvasConfig;
@@ -241,8 +242,14 @@ export declare class Kit {
     /** a console warning, once per key */
     warnOnce(key: string, message: string): void;
     bindGroupLayout(entries: GPUBindGroupLayoutEntry[], label: string, key?: string): GPUBindGroupLayout;
-    /** a compiled shader module (once per shader version); compile errors are mapped back to file:line */
+    pipelineLayout(bindGroupLayouts: GPUBindGroupLayout[], label: string, key: string): GPUPipelineLayout;
+    /** a compiled shader module (once per shader version); in debug mode compile info is awaited up front so warnings and
+     *  errors appear immediately; in production the module is returned without blocking pipeline queueing and compile info
+     *  is queried lazily via diagnoseShader() only if a pipeline fails */
     module(shader: Shader): Promise<GPUShaderModule>;
+    /** inspect a shader module's compilation info (mapped to source file:line), called eagerly in debug mode or lazily on pipeline failure */
+    diagnoseShader(shader: Shader): Promise<void>;
+    private checkCompilationInfo;
     /** the shader's module now, made if it isn't yet (null if the shader has an error): a compile scheduler making a
      *  pipeline on the spot doesn't wait for the module's compile info */
     moduleNow(shader: Shader): GPUShaderModule | null;
