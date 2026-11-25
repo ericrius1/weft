@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.19
+
+Needs weft 0.2.9, as before. Backwards-compatible fast-flight streaming improvements in `terrain/clipmap` and `world/forest`.
+
+- **`ClipSet` / `ClipLevel` velocity-aware streaming** (`terrain/clipmap.ts`, `shaders/clipmap.wgsl`):
+  - `ClipSet.follow(x, z, fx?, fz?)` shifts toroidal windows forward along smoothed velocity when looking along travel, snaps strictly trailing rect edges (`snapTrailing`), and scales teleport/cut reset distance with speed.
+  - Persistent forward prefetch capsule (`ClipLevel.capsule`) warms tiles along the flight corridor without re-queueing each frame; `ClipLevel.prefetch(..., fromTarget)` ranks destination warm-ups center-out and runs even when the level is paused.
+  - `ClipLevel.paused` smoothly fades a level's slots down over 0.25 s, clears non-resident loading slots for instant resume on unpause, and falls back to coarser levels in `heightAt()`.
+  - `ClipLevel.fadeAt(x, z)` reports true effective per-tile fade weight at a world point; `clipmap.wgsl` widens `CLIP_GUARD_OUT` to `0.22` and adds neighbor-guarded `tileFade` blending so unloaded corner tiles never collapse a row.
+  - `ClipStream` adds optional `fast`, `latencyS`, and `rank(..., tGone?)` window-exit timing (with pack-boundary clamping and defer-safe coarsest ranking).
+- **`Forest` smooth overflow thinning and buffer reuse** (`world/forest.ts`, `shaders/forest.wgsl`):
+  - Position-stable Wang integer hash (`forestKeepHash`) replaces spatial-tail list truncation with smooth, coordinate-stable stochastic thinning when a list overflows, using a strict `< ov` shrink band.
+  - `Forest.load()` reuses its storage buffer and compute passes whenever capacity fits and releases old buffers/computes on growth; `Forest.dispose()` releases all owned GPU resources.
+  - `ForestFrame.thinFar` lets callers shrink `far` during fast flight without thinning or widening mid-distance impostors.
+
 ## 0.1.18
 
 Needs weft 0.2.9, as before. Two additions; nothing already drawn renders differently.

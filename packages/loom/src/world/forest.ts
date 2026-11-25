@@ -32,6 +32,8 @@ export interface ForestFrame {
   band: number;
   /** the shadows' casters' reach (m) */
   shadow: number;
+  /** optional reference far reach (m) for impostor thinning so shrinking `far` during fast flight keeps mid-distance impostor density steady */
+  thinFar?: number;
   /** the four draws' vertices an instance: near, far, impostor, shadow */
   verts: [number, number, number, number];
   /** the world's own vec4s for its draws (up to 4) */
@@ -171,12 +173,13 @@ export class Forest {
   /** a frame's reaches, the draws' vertices, the world's own vec4s */
   update(f: ForestFrame) {
     const u = [0, 1, 2, 3].map((k) => (f.user?.[k] ? [f.user[k][0] ?? 0, f.user[k][1] ?? 0, f.user[k][2] ?? 0, f.user[k][3] ?? 0] : [0, 0, 0, 0]));
+    const thinFactor = f.thinFar ? this.thin[0] * (f.thinFar / Math.max(1, f.far)) : this.thin[0];
     this.u.set({
       lod: [f.near, f.far, f.imp, f.band],
       caps: this.caps,
       verts: f.verts,
       counts: [this.count, f.shadow, this.slack, 0],
-      thin: [...this.thin, 0],
+      thin: [thinFactor, this.thin[1], this.thin[2], 0],
       user: u as never,
     });
   }

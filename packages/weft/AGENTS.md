@@ -462,6 +462,12 @@ feature without any error.
   engine: `audio.bus('sfx' | 'music' | 'amb')`), `camera/autopilot`, `particles`, `sim/lava` (lava flowing over a
   heightfield, stepped on the GPU: `LavaFlow`; a host's own shader draws it with `#include "loom/lava_common"`).
   Each module's header comment explains how to use it.
+  In `terrain/clipmap` (loom 0.1.19), `ClipSet.follow(x, z, fx?, fz?)` shifts toroidal windows ahead along velocity,
+  `ClipLevel.paused` smoothly fades a level down (and clears non-resident slots for instant resume while still letting
+  `prefetch(..., fromTarget=true)` pre-warm destinations), `ClipLevel.fadeAt(x, z)` reads effective weight at a point,
+  and `ClipStream` accepts optional `fast`, `latencyS` and `rank(cx, cz, half, scale, tGone?)`. In `world/forest`,
+  `Forest.load()` reuses buffers/computes when capacity fits, `forestCull` uses position-stable hash overflow thinning,
+  and `ForestFrame.thinFar` keeps impostor thinning density anchored to a base reach when `far` shrinks at speed.
 
 ## cast: characters
 
