@@ -1126,6 +1126,11 @@ export class HeroRig {
             this.lastCaps = this.lastCaps.map((c) => ({ a: m(c.a), b: m(c.b), r: c.r }));
         if (this.bodyS?.at)
             this.bodyS.at = m(this.bodyS.at);
+        if (this.bodyS?.x) {
+            this.bodyS.x[0] += d[0];
+            this.bodyS.x[1] += d[1];
+            this.bodyS.x[2] += d[2];
+        }
     }
     /** her arms let go of whatever of the rig's own state still holds them (a seat's or a form's weight, a grip, the
      *  arm swing's and the hands' springs, the wrists' turn): back to hanging at rest from the next frame. katara.ts
