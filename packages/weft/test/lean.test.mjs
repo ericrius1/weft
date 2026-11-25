@@ -4,7 +4,7 @@
 // `npm test` after `npm run build`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { leanWgsl, stripComments } from '../dist/plugin/lean.js';
+import { leanWgsl, splitDeclarations, stripComments } from '../dist/plugin/lean.js';
 import { reflectWgsl } from '../dist/plugin/wgsl.js';
 
 const lean = (code) => leanWgsl(code, [1, 0, 1]).code;
@@ -72,4 +72,13 @@ test('each line kept maps back to its source line', () => {
     const at = runs[r + 2] + (i + 1 - runs[r]);
     assert.ok(stripComments(src[at - 1]).startsWith(line), `${i + 1}: ${line} <- ${src[at - 1]}`);
   });
+});
+
+test('splitDeclarations slices verbatim by top-level declaration and joins back identically', () => {
+  const c = lean(BASE);
+  const parts = splitDeclarations(c);
+  assert.equal(parts.join(''), c);
+  assert.ok(parts.some((p) => p.startsWith('struct World') && p.endsWith('}')));
+  assert.ok(parts.some((p) => p.startsWith('fn light') && p.endsWith('}')));
+  assert.ok(parts.some((p) => p.startsWith('@fragment fn fs') && p.endsWith('}')));
 });

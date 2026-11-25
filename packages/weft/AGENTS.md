@@ -215,7 +215,9 @@ the kit's.
   uniform-only struct cut after the last field it reads. Browsers cache compiled pipelines keyed on that code (Chrome
   on the exact text), so a comment, an unused function or a new field in a shared include no longer recompiles every
   shader that includes it. A code line that's kept is kept exactly, so a runtime `code.replace` of a whole line still
-  works. `weft({ lean: false })` sends the whole text.
+  works. `weft({ lean: false })` sends the whole text. In production builds, repeated reflected `StructLayout`s and
+  repeated top-level WGSL declarations are hoisted into shared virtual modules (`virtual:weft-s/*`, `virtual:weft-d/*`)
+  so the bundle ships each shared declaration once while keeping `shader.code` byte-identical.
 - **Grow a uniform struct at its end.** A field added after the last one leaves every earlier field's offset where it
   was (WGSL lays a struct out front to back), and leaves the lean code of every shader that doesn't read the new
   field exactly as it was (the struct is cut after the last field a shader reads), so nothing recompiles but the
@@ -319,8 +321,10 @@ the kit's.
 - `?debug` in the URL (or the backquote key) opens the overlay. It lists the passes that ran with their GPU times,
   with a switch to turn each off. It also has a texture viewer for any texture, sliders from `// @range(min, max,
   step)` annotations (after `kit.overlay.tweak(uniformBuffer)`), the errors so far, and memory.
-- With `debug`, every item is encoded inside its own error scope, so a validation error names the pass it came from.
-  Errors reach the console as `[weft <kind>] <label>: …`, and shader errors as `file:line:col`.
+- With `debug`, every item is encoded inside its own error scope, so a validation error names the pass it came from,
+  and shader `getCompilationInfo()` is awaited up front. Without `debug`, `kit.module()` does not block pipeline
+  queueing on compile info and instead runs `kit.diagnoseShader(shader)` lazily if a pipeline fails. Errors reach the
+  console as `[weft <kind>] <label>: …`, and shader errors as `file:line:col`.
 - The `label` you give a resource, pass or draw is what errors, the overlay and GPU captures show. Name things.
 - `kit.ready()` resolves to `{ pipelines, distinct, failed, errors }`, `errors` being `{ label, message }` for each
   pipeline that failed. Log it once at startup.
@@ -370,7 +374,8 @@ picking or the cursor's depth). `await buf.read()` copies a whole buffer back.
 
 **HDR, a second canvas, images**: `createKit(canvas, { hdr: true })` and `kit.hdr`. `kit.sibling(canvas2)` gives a
 second canvas on the same device (an overlay drawn at full resolution). `loadImageTexture(kit, url, { srgb: true, mips:
-true })` decodes off the main thread.
+true })` decodes off the main thread and warms its mip format in parallel (`warmMips(kit, formats)` pre-warms specific
+mip blit pipelines asynchronously; `Kit` pre-warms `rgba8unorm` and `rgba8unorm-srgb` at startup).
 
 **Holding the frame rate**: `kit.autoRes = new AutoResolution(budgetMs, { min: 0.5 })`, or `FrameBudget` for phones.
 Both move `kit.renderScale`, and `'render'`-sized textures follow. Pair it with TAAU so a lower scale stays sharp.
@@ -403,7 +408,8 @@ o.m = motionOf(i.cur, i.prev);            // or motionAt(i.pos, i.prev): one var
 ```
 Draws that write nothing need no change (weft gives them a write mask of 0 on the second target) and are reprojected
 by the camera; the TAAU takes a texel's motion only where its distance matches the depth buffer's, so a static draw in
-front of a moving one is fine. An MSAA scene's target is multisampled like the depth (the TAAU reads its first sample).
+front of a moving one is fine. An MSAA scene's target is multisampled like the depth (the TAAU reads its first sample,
+and throws if `motion.samples !== depth.samples`).
 The texel: uv now − uv last frame (y down) without either frame's jitter (`Frame.jitterNdc`), the view distance then,
 the view distance now (0: nothing written).
 

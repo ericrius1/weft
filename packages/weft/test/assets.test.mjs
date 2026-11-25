@@ -15,7 +15,7 @@ function serve(files, { ignoreRange = false, failFirst = 0 } = {}) {
   let fails = failFirst;
   globalThis.fetch = async (url, init = {}) => {
     const h = new Headers(init.headers);
-    log.push({ url, range: h.get('range') });
+    log.push({ url, range: h.get('range'), cache: init.cache });
     if (fails > 0) { fails--; throw new TypeError('network'); }
     const f = files[url];
     if (!f) return new Response('nope', { status: 404 });
@@ -109,4 +109,21 @@ test("the page's early fetches are taken once, the manifest's too; a fetch with 
   assert.equal(await (await a.fetch('trees.bin')).text(), 'early');
   assert.equal(await (await a.fetch('trees.bin')).text(), 'late');
   assert.equal(log.length, 1);
+});
+
+test('AssetsOptions.initial is available before init() and manifestCache controls the manifest fetch cache mode', async () => {
+  const log = serve({
+    '/assets/remote.abc123.json': { body: JSON.stringify({ 'b.pack': 'https://r2/b.pack' }), type: 'application/json' },
+  });
+  const a = new Assets({
+    root: '/assets',
+    manifest: 'remote.abc123.json',
+    manifestCache: 'default',
+    initial: { 'a.pack': 'https://r2/a.pack' },
+  });
+  assert.equal(a.url('a.pack'), 'https://r2/a.pack');
+  await a.init();
+  assert.equal(a.url('a.pack'), 'https://r2/a.pack');
+  assert.equal(a.url('b.pack'), 'https://r2/b.pack');
+  assert.equal(log[0].cache, 'default');
 });

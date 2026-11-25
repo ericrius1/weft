@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 
 register('./hooks.mjs', import.meta.url);
+register('./wgsl-stub.mjs', import.meta.url);
 const { Compute, RenderPass, RawItem, stableKey, pipelineKey, pipelinesOf, settle } = await import('../dist/src/passes.js');
 const { defineShader } = await import('../dist/src/shader.js');
 const { StorageBuffer } = await import('../dist/src/resources.js');
@@ -363,4 +364,46 @@ test('a texture sized by the canvas, too small for its mips (1×1 before the can
   // (a fixed size is as given)
   const fixed = new Texture(kit, { label: 'fixed', format: 'rgba8unorm', size: [64, 64], mips: 'full' });
   assert.equal(fixed.mips, 7);
+});
+
+test('pipelineLayout caching shares GPUPipelineLayout by layoutKey and pipeline failure triggers diagnoseShader', async () => {
+  const kit = fakeKit();
+  const pls = new Map();
+  let createdLayouts = 0;
+  kit.pipelineLayout = (bindGroupLayouts, label, key) => {
+    let l = pls.get(key);
+    if (!l) { createdLayouts++; pls.set(key, (l = kit.device.createPipelineLayout({ label, bindGroupLayouts }))); }
+    return l;
+  };
+  const diagnosed = [];
+  kit.diagnoseShader = async (s) => { diagnosed.push(s.id); };
+
+  const sh = shader('test/pl-share.wgsl', FILL);
+  const a = new Compute(kit, sh, { label: 'a', entry: 'fill', bind: { data: buffer(kit) } });
+  const b = new Compute(kit, sh, { label: 'b', entry: 'clear', bind: { data: buffer(kit) } });
+  await kit.ready();
+  assert.equal(createdLayouts, 1, 'same layoutKey reuses one GPUPipelineLayout');
+  assert.equal(a.binder.layout, b.binder.layout);
+
+  const badSh = shader('test/pl-fail.wgsl', FILL);
+  kit.fail.add('boom');
+  new Compute(kit, badSh, { label: 'boom', entry: 'fill', bind: { data: buffer(kit) } });
+  await kit.ready();
+  assert.deepEqual(diagnosed, ['test/pl-fail.wgsl']);
+});
+
+test('Taau rejects a motion target whose sample count differs from depth', async () => {
+  const { Taau } = await import('../dist/src/taau.js');
+  const kit = {
+    ...fakeKit(),
+    mainView: { camera: { jitter: [0, 0] } },
+    texture: () => ({ width: 1, height: 1 }),
+    pingpong: () => ({ a: { width: 1, height: 1 }, read: {}, write: {}, current: {}, flip() {} }),
+    uniforms: () => ({}),
+    compute: () => ({}),
+  };
+  const hdr = { samples: 1 };
+  const depth = { samples: 4 };
+  const motion = { samples: 1 };
+  assert.throws(() => new Taau(kit, hdr, depth, { motion }), /sample count/i);
 });

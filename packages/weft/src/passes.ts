@@ -222,6 +222,7 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
         if (b !== this.serial) return;
         this.error = (e as Error).message ?? String(e);
         this.kit.report('pipeline', this.label, this.error);
+        void (this.kit as { diagnoseShader?: (s: Shader) => Promise<void> }).diagnoseShader?.(this.shader);
       }
       // (failed with no pipeline to go on with: what it's baked into records again, a fallback's calls in its place)
       if (this.error && !this._pipe && b === this.serial) this.changed?.();
