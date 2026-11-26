@@ -1484,7 +1484,7 @@ export class HeroRig {
     const stanceCarry = this.moving && runF > 0.05 && stanceTravel > stanceBudget
       ? clamp(1 - stanceBudget / Math.max(stanceTravel, 1e-3), 0, 0.72) * runF
       : 0;
-    this.gaitW = damp(this.gaitW, this.moving ? 1 : 0, this.moving ? 6.5 : 4.5, dt);
+    this.gaitW = damp(this.gaitW, this.moving ? 1 : 0, this.moving ? 6.5 : 6.0, dt);
     const gw = this.gaitW;
     // (the feet land close to one line walking/running — graceful narrow gait — wider & asymmetric in contrapposto idle)
     const stanceW = (lerp(lerp(0.058, 0.046, runF), 0.095, 1 - gw) + 0.08 * bendK) * s;
@@ -1572,8 +1572,8 @@ export class HeroRig {
         }
       }
     } else if (grounded) {
-      // Coming off a brisk run, brief 0.12s athletic catch beat before smoothly gathering trailing foot into contrapposto
-      if (wasMoving && this.recentSpd > 2.4) this.lastStep = Math.min(this.lastStep, -0.12);
+      // Coming off a brisk run, gather cleanly into tall contrapposto without lingering behind the catch foot
+      if (wasMoving && this.recentSpd > 2.4) this.lastStep = Math.min(this.lastStep, 0.04);
       // Standing pivot & settle: choose the lead/turn-side foot first and step cleanly when turned > 14 deg (0.24 rad)!
       const dYaw = this.first ? 0 : angDiff(this.lastYaw, I.yaw);
       const order = dYaw < -1e-4 ? [1, 0] : [0, 1];
@@ -1706,9 +1706,9 @@ export class HeroRig {
           const brakeReach = curAcc < -2.4 && this.recentSpd > 2.6 ? clamp(-curAcc * 0.02, 0.06, 0.14) * s : 0;
           to = add(at, add(scale(dirH, stepAhead + brakeReach), scale(leftH, side * stanceW)));
         } else if (!f.settle && this.recentSpd > 2.4) {
-          // Clean athletic braking catch-step ahead of pelvis (0.16..0.20*s, NOT a 0.28m invisible-chair lunge!)
-          const reach = clamp((this.recentSpd - 1.8) * 0.045, 0.14, 0.20) * s;
-          to = add(add(I.pos, scale(fwd, reach)), scale(left, side * stanceW * 1.18));
+          // Poised athletic catch-step slightly ahead of hip (0.09..0.12*s) so stopping stays balanced over feet, never leaning back on heels!
+          const reach = clamp((this.recentSpd - 1.8) * 0.025, 0.08, 0.12) * s;
+          to = add(add(I.pos, scale(fwd, reach)), scale(left, side * stanceW * 1.12));
         } else {
           // Settling into natural contrapposto stance (relaxed leg slightly ahead & wider, supporting leg anchored)
           const isFree = side * this.idleSide < 0 && bendK < 0.1;

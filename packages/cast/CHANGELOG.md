@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.6
+
+Against 0.7.5. Major biomechanical locomotion, turn-banking, jump, and braking overhaul in `HeroRig` (`rig.ts`) so high-speed running (5–16 m/s), tight slalom turns, sudden stops, and standing/running jumps read with AAA athletic poise across all characters (`katara`, `aang`, `iroh`) and outfits (robes and pants). Zero public API changes.
+
+- **Anatomical stance-budget & speed-invariant gait (`rig.ts`)**:
+  - Replaced unbounded stance travel with a biomechanical stance-budget duty factor (`0.21..0.38`) + smooth high-speed wind-bound carry above ~7.5 m/s + anatomical pelvis anti-collapse floor + early-recovery reach hurry on sharp cuts, eliminating pelvis collapse/splits at 5.2 m/s (default WASD) and 13–16 m/s (Shift sprint) while keeping zero-slide foot lock across all walk/jog/run speeds.
+  - Replaced world-space S-curve foot swing interpolation with linear world baseline + hip-local biomechanical swing loop (crisp rear heel-fold behind the hip that clears by `t = 0.58`, followed by a low forward shin sweep), eliminating front high-knee marching at sprint speed.
+  - Separated the running spring-mass bounce (`gaitBob`) from the ground/reach baseline `cdSpring` so pelvis bounce has zero phase lag and scales subtly with character `flex` (Iroh grounded, Katara fluid, Aang buoyant).
+  - Faster `runW` / `sprintF` acceleration ramp eliminates first-step scissor lunges on explosive Shift-sprint starts.
+- **Centripetal turn banking & natural arms (`rig.ts`)**:
+  - Removed the `turnDamp` / `turnSoft` / `minLat = 0.26*s` turn-straightening clamp that pushed arms into a stiff zombie T-pose during tight turns; replaced with centripetal body banking (up to ~20°), VOR horizon head counter-roll, asymmetric outside-arm counterbalance, symmetric scapular protraction/retraction, and a body-scaled torso-ellipse clearance (`this.fit.shW`) so slender builds hang naturally at rest while fuller figures stay clip-free.
+  - Relaxed `armIK` behind-the-back `zMin` clamp for full athletic run backswing while preserving crossover protection.
+- **Poised braking stops, dynamic jumps & landings (`rig.ts`)**:
+  - Gated vertical braking sink by actual fore-aft foot split and tightened braking catch-step reach (`0.08..0.12*s`), eliminating parallel-knee chair squats and waterski lean-back stops while keeping elastic upper-body follow-through and clean contrapposto settle.
+  - Running jump touchdowns now plant only the lead foot and swing the trailing foot straight into stride (zero touchdown splits); takeoff dynamically captures the actual leading foot and mirrors contralateral launch arms.
+  - Compacted airborne apex and descent hand coordinates relative to the shoulder joint (`shW`), eliminating both wide scarecrow T-poses and symmetric "hands-up" descent silhouettes while preserving wind-float on deep drops.
+- **Tests (`test/disney.test.mjs`)**: added regression coverage pinning pelvis stability at 5.2 m/s and 13 m/s, elbow flexion through sharp running turns, and running jump touchdown pelvis clearance (58/58 cast tests pass).
+
 ## 0.7.5
 
 Against 0.7.4. Per-frame allocation removal in the character rig hot paths; zero public API changes and exact floating-point parity preserved.
