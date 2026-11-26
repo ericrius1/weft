@@ -341,3 +341,54 @@ test('groove, beatGroove, glance & sipAt: anticipation, overlapping phase lag, h
   assert.ok(sAhh.ahh > 0.5 && sAhh.nod > 0.01, 'contented exhale gently lifts head as cup settles');
   assert.ok(sEnd.k === 0 && sEnd.tip === 0 && sEnd.ahh === 0, 'sip settles cleanly to rest by SIP_DUR');
 });
+
+test('HeroRig: high-speed sprint (5.2 & 13 m/s), sharp turns, and running jump touchdown never collapse pelvis or T-pose arms', async () => {
+  const asset = await synthPerson();
+  const rig = new HeroRig(asset);
+  let t = 0, x = 0, z = 0, yaw = 0;
+  for (let i = 0; i < 20; i++) { t += DT; rig.update(baseInput({ time: t })); }
+  const standPelY = rig.J.pelvis[1];
+
+  // 1) Default WASD run (5.2 m/s) & Shift sprint (13.0 m/s): pelvis must never collapse into splits
+  for (const { label, speed, running } of [
+    { label: 'run 5.2 m/s', speed: 5.2, running: false },
+    { label: 'sprint 13 m/s', speed: 13.0, running: true },
+  ]) {
+    let minPel = 9, maxPel = -9;
+    for (let i = 0; i < 90; i++) {
+      t += DT; z -= speed * DT;
+      rig.update(baseInput({ time: t, pos: [x, 0, z], vel: [0, 0, -speed], speed, running }));
+      if (i > 15) { minPel = Math.min(minPel, rig.J.pelvis[1]); maxPel = Math.max(maxPel, rig.J.pelvis[1]); }
+    }
+    assert.ok(minPel > standPelY - 0.16, `${label}: pelvis collapsed (${minPel.toFixed(3)} vs stand ${standPelY.toFixed(3)})`);
+    assert.ok(maxPel - minPel < 0.18, `${label}: excessive pelvis span (${((maxPel - minPel) * 100).toFixed(1)} cm)`);
+  }
+
+  // 2) Sharp continuous turn at 5.2 m/s: elbows stay naturally bent (no straight-arm zombie T-pose!)
+  let minElb = 9;
+  for (let i = 0; i < 60; i++) {
+    t += DT; yaw += 2.6 * DT;
+    const fwd = [-Math.sin(yaw), 0, -Math.cos(yaw)];
+    x += fwd[0] * 5.2 * DT; z += fwd[2] * 5.2 * DT;
+    rig.update(baseInput({ time: t, yaw, pos: [x, 0, z], vel: [fwd[0] * 5.2, 0, fwd[2] * 5.2], speed: 5.2 }));
+    if (i > 15) minElb = Math.min(minElb, rig.armStat[0].elbow, rig.armStat[1].elbow);
+  }
+  assert.ok(minElb > 0.30, `sharp running turn straightened arm (minElb=${(minElb * 57.3).toFixed(1)} deg)`);
+
+  // 3) Running jump & touchdown at 5.2 m/s: pelvis stays well above splits
+  const fwd = [-Math.sin(yaw), 0, -Math.cos(yaw)];
+  for (let i = 0; i < 36; i++) {
+    t += DT;
+    const jt = i * DT, vy = 5.0 - 15.0 * jt, py = Math.max(0, 5.0 * jt - 7.5 * jt * jt);
+    x += fwd[0] * 5.2 * DT; z += fwd[2] * 5.2 * DT;
+    rig.update(baseInput({ time: t, yaw, pos: [x, py, z], vel: [fwd[0] * 5.2, vy, fwd[2] * 5.2], speed: 5.2, onGround: false, jumpT: jt }));
+  }
+  let landMinPel = 9;
+  for (let i = 0; i < 30; i++) {
+    t += DT;
+    x += fwd[0] * 5.2 * DT; z += fwd[2] * 5.2 * DT;
+    rig.update(baseInput({ time: t, yaw, pos: [x, 0, z], vel: [fwd[0] * 5.2, 0, fwd[2] * 5.2], speed: 5.2, onGround: true, landImpact: i === 0 ? 5.2 : 0 }));
+    landMinPel = Math.min(landMinPel, rig.J.pelvis[1]);
+  }
+  assert.ok(landMinPel > standPelY - 0.24, `running touchdown collapsed pelvis (${landMinPel.toFixed(3)} vs stand ${standPelY.toFixed(3)})`);
+});

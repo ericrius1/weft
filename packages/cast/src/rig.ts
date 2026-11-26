@@ -1074,6 +1074,7 @@ export class HeroRig {
   private brakeSinkV = 0;
   private fdOmega = [0, 0];
   private airArmW = 0;
+  private airLead = 0;
   private lastAirLoc: V3[] = [[0, -0.2, 0.1], [0, -0.2, 0.1]];
   private braidSway = 0;
   get jawOpen() { return this.fx.jaw; }
@@ -1181,7 +1182,7 @@ export class HeroRig {
     this.squash = 0; this.squashV = 0; this.spineLag = 0; this.spineLagV = 0;
     this.chestLag = 0; this.chestLagV = 0; this.clavDrop = 0; this.clavDropV = 0;
     this.landFlex = 0; this.landFlexV = 0; this.recentSpd = 0; this.brakeSink = 0; this.brakeSinkV = 0;
-    this.airArmW = 0; this.braidSway = 0; this.sprintF = 0; this.yawRateS = 0;
+    this.airArmW = 0; this.airLead = 0; this.braidSway = 0; this.sprintF = 0; this.yawRateS = 0;
     this.first = true;
   }
   /** take over from another of the cast mid-motion (cast.ts: K, a swap of bodies): their gait's clock and weights,
@@ -1241,7 +1242,7 @@ export class HeroRig {
     this.clavDrop = from.clavDrop; this.clavDropV = from.clavDropV;
     this.landFlex = from.landFlex; this.landFlexV = from.landFlexV;
     this.recentSpd = from.recentSpd; this.brakeSink = from.brakeSink * r; this.brakeSinkV = from.brakeSinkV * r;
-    this.airArmW = from.airArmW; this.braidSway = from.braidSway;
+    this.airArmW = from.airArmW; this.airLead = from.airLead; this.braidSway = from.braidSway;
     this.lastAirLoc = [v3(from.lastAirLoc[0]), v3(from.lastAirLoc[1])];
     for (let i = 0; i < 2; i++) {
       this.wristFlex[i] = from.wristFlex[i]; this.wristFlexV[i] = from.wristFlexV[i];
@@ -1450,9 +1451,11 @@ export class HeroRig {
     const brakeStopV = this.moving && this.recentSpd > 2.6 && preAcc < -1.5 ? 0.52 : 0.1;
     this.moving = grounded && (this.moving ? v > brakeStopV : v > 0.22);
     const sqrtS = Math.sqrt(s);
-    this.runW = damp(this.runW, smoothstep(2.0 * sqrtS, 3.3 * sqrtS, v) * (1 - 0.7 * wadeK), 4.5, dt);
+    const runGoal = smoothstep(2.0 * sqrtS, 3.3 * sqrtS, v) * (1 - 0.7 * wadeK);
+    this.runW = damp(this.runW, runGoal, runGoal > this.runW ? 11.0 : 5.0, dt);
     const runF = this.runW;
-    this.sprintF = damp(this.sprintF, smoothstep(5.5 * sqrtS, 11.0 * sqrtS, v) * runF, 4.0, dt);
+    const sprintGoal = smoothstep(5.5 * sqrtS, 11.0 * sqrtS, v) * runF;
+    this.sprintF = damp(this.sprintF, sprintGoal, sprintGoal > this.sprintF ? 8.5 : 4.2, dt);
     const sprintF = this.sprintF;
     // Biomechanical cadence (strides/s): walk ~1.0 Hz at 1.4 m/s, athletic run 1.5..1.75 Hz at 3..6 m/s,
     // heroic bounding sprint peaking cleanly around ~2.0 Hz at 13 m/s (never frantic cartoon-blur legs!)
@@ -1469,10 +1472,10 @@ export class HeroRig {
     const beta0 = this.duty;
     // (running, the stride the speed wants now: the cadence catching up as she speeds up would stretch it)
     if (this.moving) this.stride = lerp(vs / this.cadence, vs / cadW, runF);
-    // Stance-budget duty factor: guarantees planted stance travel NEVER exceeds anatomical leg extension (~0.72*s),
+    // Stance-budget duty factor: guarantees planted stance travel NEVER exceeds anatomical leg extension (~0.72..0.78*s),
     // eliminating high-speed splits while keeping 100% zero-slide locked feet through all walk/jog/run speeds (<= ~7.5 m/s)
-    // and transitioning smoothly into an athletic wind-bounding push-off at heroic sprint speeds (8..16 m/s).
-    const stanceBudget = lerp(0.76, 0.70, runF) * s * (1 + 0.06 * sprintF);
+    // and transitioning smoothly into an open, heroic wind-bounding stride at sprint speeds (8..16 m/s).
+    const stanceBudget = lerp(0.76, 0.70, runF) * s * (1 + 0.12 * sprintF);
     const betaW = 0.62 - 0.05 * smoothstep(0.6, 2.2, v);
     const betaR = clamp(stanceBudget / Math.max(this.stride, 0.5 * s), 0.21, 0.38);
     this.duty = lerp(betaW, betaR, runF);
@@ -1492,11 +1495,11 @@ export class HeroRig {
     if (this.idleT > this.idleNext) { this.idleT = 0; this.idleNext = 6 + Math.random() * 6; this.idleSide = -this.idleSide; }
     this.idleW = damp(this.idleW, this.idleSide * idleK, 1.8, dt);
     const stanceFwd = 0.18 * bendK * s;
-    // Athletic midfoot landing reach: walking lands comfortably ahead for heel-toe roll; running lands closer under the
-    // knee (0.20..0.28*s) to prevent overstriding straight-leg stomps and let the leg push powerfully behind!
+    // Athletic midfoot landing reach: walking lands comfortably ahead for heel-toe roll; running lands crisply under
+    // the knee (0.20..0.28*s), opening slightly wider (+0.075*s) for a sweeping heroic sprint stride!
     const stepAhead = lerp(
       Math.min(this.stride * beta * 0.40, 0.33 * s),
-      clamp(Math.min(stanceTravel, stanceBudget) * 0.34, 0.16 * s, 0.26 * s) + 0.04 * sprintF * s,
+      clamp(Math.min(stanceTravel, stanceBudget) * 0.36, 0.17 * s, 0.27 * s) + 0.075 * sprintF * s,
       runF,
     );
 
@@ -1652,21 +1655,30 @@ export class HeroRig {
         continue;
       }
       if (!I.onGround) {
+        // Capture takeoff lead foot dynamically when leaving the ground (running leap leads with whichever foot is ahead!)
+        if (i === 0 && !f.air) {
+          if (v > 1.2 * sqrtS) {
+            const b0 = dot(sub(this.feet[0].p, I.pos), fwd), b1 = dot(sub(this.feet[1].p, I.pos), fwd);
+            this.airLead = b0 >= b1 ? 0 : 1;
+          } else {
+            this.airLead = 0;
+          }
+        }
         // 3-phase continuous athletic airborne legs: trailing boot lingers through push-off, lead leg opens toward
         // ground BEFORE trailing leg (eliminating static mid-air tuck hold!), skirt-clear rear tuck, toe-ball-heel prep!
         const lk = smoothstep(1.2, 5.0, v);
-        const lead = i === 0;
+        const lead = i === this.airLead;
         const reach = lead ? smoothstep(0.38, 0.84, airU) : smoothstep(0.56, 0.94, airU);
         const fwLaunch = lead ? lerp(0.19, 0.38, lk) : lerp(-0.22, -0.40, lk);
-        const fwApex = lead ? lerp(0.18, 0.34, lk) : lerp(-0.11, -0.22, lk);
-        const fwFall = lead ? lerp(0.11, 0.20, lk) : lerp(-0.07, -0.14, lk);
+        const fwApex = lead ? lerp(0.18, 0.34, lk) : lerp(-0.11, -0.24, lk);
+        const fwFall = lead ? lerp(0.11, 0.22, lk) : lerp(-0.07, -0.16, lk);
         const fw = lerp(lerp(fwApex, fwFall, reach), fwLaunch, jumpLaunch);
         // Keep both standing & running-leap apex tucks cleanly clear of rear tunic hem while preserving dynamic stride split
-        const upLaunch = lead ? lerp(0.38, 0.34, lk) : -0.15;
-        const upApex = lead ? lerp(0.35, 0.34, lk) : lerp(0.23, 0.27, lk);
+        const upLaunch = lead ? lerp(0.36, 0.34, lk) : -0.15;
+        const upApex = lead ? lerp(0.34, 0.34, lk) : lerp(0.20, 0.26, lk);
         const upFall = lead ? 0.04 : 0.02;
         const upY = lerp(lerp(upApex, upFall, reach * 0.92), upLaunch, jumpLaunch);
-        const airW = lerp(0.96, 1.30, reach);
+        const airW = lerp(0.96, 1.26, reach);
         const tgt = add(add(I.pos, scale(left, side * stanceW * airW)), add(scale(fwd, fw * s), [0, upY * s, 0]));
         f.p = lerp3(add(f.p, disp), tgt, 1 - Math.exp(-dt * (11 + 5.0 * jumpLaunch)));
         f.planted = false; f.air = true; f.t = 0;
@@ -1721,8 +1733,8 @@ export class HeroRig {
         let base = lerp3(f.from, f.to, eLin);
         if (runF > 0.001 && this.moving && !f.settle) {
           const backLoop = -0.15 * Math.sin(Math.PI * clamp(t / 0.52, 0, 1));
-          const fwdLoop = 0.085 * Math.sin(Math.PI * smoothstep(0.42, 1.0, t));
-          const localFwd = (backLoop + fwdLoop) * (1 + 0.22 * sprintF) * runF * s;
+          const fwdLoop = (0.085 + 0.032 * sprintF) * Math.sin(Math.PI * smoothstep(0.42, 1.0, t));
+          const localFwd = (backLoop + fwdLoop) * (1 + 0.24 * sprintF) * runF * s;
           base = add(base, scale(dirH, localFwd));
         }
         let poke = 0;
@@ -1876,23 +1888,26 @@ export class HeroRig {
     if (this.first || !I.onGround || I.flying || sw > 0.1) {
       this.inertLean = 0; this.inertLeanV = 0; this.brakeSink = 0; this.brakeSinkV = 0;
     } else {
-      // Crisp athletic deceleration follow-through: noticeable forward chest carry + gentle counter-rebound WITHOUT
-      // collapsing into an invisible-chair squat!
+      // Crisp athletic deceleration follow-through: noticeable forward chest carry + gentle counter-rebound.
+      // Gate vertical brake sink by actual fore-aft foot split so stopping with feet close together NEVER collapses
+      // into a parallel-knee "invisible chair squat"!
+      const footSplit = Math.abs(dot(sub(FG[0].ankle, FG[1].ankle), fwd));
+      const splitGate = smoothstep(0.14 * s, 0.30 * s, footSplit);
       const braking = acc < -2.6 && v > 0.4;
       const stopKick = wasMoving && !this.moving && this.recentSpd > 2.2 ? clamp((this.recentSpd - 1.8) * 0.28, 0, 1.15) : 0;
       if (braking) {
         const kick = clamp((-acc - 2.6) * 0.10 * dt * 30, 0, 0.38);
         this.inertLeanV += kick * freeK0;
-        this.brakeSinkV -= kick * 0.11 * s * freeK0;
+        this.brakeSinkV -= kick * 0.08 * s * freeK0 * splitGate;
       }
       if (stopKick > 0) {
         this.inertLeanV += stopKick * 1.12 * freeK0;
-        this.brakeSinkV -= stopKick * 0.19 * s * freeK0;
+        this.brakeSinkV -= stopKick * 0.13 * s * freeK0 * splitGate;
       }
       [this.inertLean, this.inertLeanV] = springExact(this.inertLean, this.inertLeanV, 0, 10.5, 0.36, dt);
       this.inertLean = clamp(this.inertLean, -0.14, 0.17);
-      [this.brakeSink, this.brakeSinkV] = springExact(this.brakeSink, this.brakeSinkV, 0, 13.0, 0.58, dt);
-      this.brakeSink = clamp(this.brakeSink, -0.042 * s, 0.014 * s);
+      [this.brakeSink, this.brakeSinkV] = springExact(this.brakeSink, this.brakeSinkV, 0, 14.5, 0.62, dt);
+      this.brakeSink = clamp(this.brakeSink, -0.024 * s, 0.012 * s) * (0.25 + 0.75 * splitGate);
     }
     // Zero-input-lag takeoff push coil -> explosive upward extension on the first 180ms of launch!
     const jt0 = I.jumpT ?? 9;
@@ -1901,7 +1916,9 @@ export class HeroRig {
       : 0;
     // Buoyant athletic pelvis baseline: smooth ONLY the ground/reach baseline (`py`) through cdSpring, then add the
     // smooth biomechanical gait wave (`gaitBob`) directly so spring-mass bounce has ZERO phase lag and crisp buoyancy!
-    let py = I.pos[1] + standH - restDrop - this.crouch + this.landY + this.brakeSink + jumpPush - gw * (0.018 * runF + 0.016 * sprintF) * s - Math.min(I.wade * 0.08, 0.06) - (GV?.bounce ?? 0);
+    // Never stack restDrop on top of brakeSink/landY (prevents double-knee squat during braking settle).
+    const restDropClean = restDrop * (1 - clamp((-this.brakeSink - Math.min(0, this.landY)) / (0.025 * s), 0, 1));
+    let py = I.pos[1] + standH - restDropClean - this.crouch + this.landY + this.brakeSink + jumpPush - gw * (0.018 * runF + 0.016 * sprintF) * s - Math.min(I.wade * 0.08, 0.06) - (GV?.bounce ?? 0);
     const softMin = (a: number, b: number, k: number) => (a + b - Math.sqrt((a - b) * (a - b) + k * k)) * 0.5;
     const hipDrop = standH - sk.hipL[1];
     const reboundLift = Math.max(0, this.landY);
@@ -2196,9 +2213,9 @@ export class HeroRig {
       const elbIdle = 0.29 * freeIdle + 0.10 * idleAsym;
       const elbWalk = lerp(elbIdle, 0.22 + smoothstep(-0.45, 0.72, elbNorm) * 0.50 * amp, gw);
       const elb = lerp(elbWalk, elbR, runA) + 0.025 * breathe * 35 * idle + 0.30 * landOut + Math.max(0, this.inertLean) * 0.18 * brakeArmGate;
-      // Sleek 3D arm arc: tucked cleanly near ribs, clears hip softly on backswing & banks gracefully into curves
-      const hipClear = (0.038 - 0.042 * Math.max(0, sw0 / Math.max(armAmp, 0.1))) * amp;
-      const abd = lerp(0.115, 0.145, runA) + hipClear + 0.50 * wadeDeep + 0.20 * landOut + bankArm + 0.025 * idleAsym;
+      // Sleek 3D arm arc: hangs naturally close to hips in idle, clears hip softly on backswing & banks into curves
+      const hipClear = (0.036 - 0.040 * Math.max(0, sw0 / Math.max(armAmp, 0.1))) * amp;
+      const abd = lerp(0.086, 0.138, runA) + hipClear + 0.50 * wadeDeep + 0.20 * landOut + bankArm + 0.022 * idleAsym;
       const uDir = rotateAxis([side * Math.sin(abd), -Math.cos(abd), 0], [1, 0, 0], -sw0 - stopSwing - landSwing - 0.08 * wadeDeep);
       let fDir = rotateAxis(uDir, [1, 0, 0], -elb);
       // Runner's tucked elbow pole: drives back & close to ribs (zero chicken-wing flare!)
@@ -2237,35 +2254,44 @@ export class HeroRig {
         }
         relaxedW = lerp3(relaxedW, add(shW, frD(ch, h)), mk);
       } else if (!I.onGround || this.airArmW > 0.01) {
-        // Athletic 3-phase airborne arms (compact, bent-elbow, dynamic — ZERO horizontal scarecrow T-pose!):
-        // 1) Launch: crisp contralateral upward drive (right punches forward-up, left sweeps back-down)
-        // 2) Apex: compact natural gather near chest/ribs
-        // 3) Descent: balanced aerodynamic float slightly higher than apex, elbows softly bent & down-back
+        // Athletic 3-phase airborne arms (compact, bent-elbow, dynamic — ZERO T-pose or "hands-up surrender" flare!):
+        // Note: coordinates are relative to shoulder joint `shW` (already ±shW from spine centerline!).
+        // 1) Launch: crisp contralateral upward drive (lead arm opposite lead leg punches forward-up, trail sweeps back-down)
+        // 2) Apex: compact natural gather by lower ribs/waist
+        // 3) Descent: relaxed asymmetric mid-chest balance float slightly above apex (and higher wind-float on deep cliff drops!)
         const shW = frW(chF, sub(shoulderBind, sk.chestBase));
         if (!I.onGround) {
           const lkA = smoothstep(1.2, 5.0, v);
+          const deepDrop = smoothstep(-6.5, -13.0, I.vel[1]);
+          // Opposite arm leads the takeoff leg (if left leg leads -> right arm punches up; if right leg leads -> left arm punches up)
+          const punchSide = this.airLead === 0 ? -1 : 1;
+          const isPunch = side === punchSide;
           const apexLoc: V3 = [
-            side * (0.20 + 0.02 * airApex) * s,
-            (-0.23 + 0.025 * airApex + (side > 0 ? -0.025 : 0.03)) * s,
-            (side > 0 ? lerp(0.14, 0.08, lkA) : lerp(0.21, 0.24, lkA)) * s,
+            side * (0.125 + 0.015 * airApex) * s,
+            (-0.265 + 0.02 * airApex + (isPunch ? 0.028 : -0.025)) * s,
+            (isPunch ? lerp(0.20, 0.24, lkA) : lerp(0.11, 0.06, lkA)) * s,
           ];
-          // Compact forward-poised asymmetric descent balance (elbows bent softly in front — ZERO jumping-jack flare!)
+          // Compact forward-poised asymmetric descent (below shoulder height on normal hops; wind-floats only on high falls!)
           const fallLoc: V3 = [
-            side * (0.21 + 0.03 * airFall) * s,
-            (-0.14 + 0.085 * airFall + (side > 0 ? -0.025 : 0.03) * airFall) * s,
-            ((side > 0 ? 0.11 : 0.17) - 0.04 * airFall) * s,
+            side * (0.145 + 0.025 * airFall + 0.055 * deepDrop) * s,
+            (-0.185 + 0.068 * airFall + 0.16 * deepDrop + (isPunch ? 0.032 : -0.028) * airFall) * s,
+            ((isPunch ? 0.19 : 0.10) - 0.03 * airFall) * s,
           ];
           let loc = lerp3(apexLoc, fallLoc, airFall);
           if (jumpLaunch > 0.001) {
-            const launchLoc: V3 = [side * (side < 0 ? 0.19 : 0.21) * s, (side < 0 ? 0.20 : -0.11) * s, (side < 0 ? lerp(0.22, 0.26, lkA) : lerp(-0.16, -0.22, lkA)) * s];
+            const launchLoc: V3 = [
+              side * (isPunch ? 0.13 : 0.15) * s,
+              (isPunch ? 0.16 : -0.14) * s,
+              (isPunch ? lerp(0.23, 0.27, lkA) : lerp(-0.15, -0.22, lkA)) * s,
+            ];
             loc = lerp3(loc, launchLoc, jumpLaunch);
           }
           const jt = I.jumpT ?? 9, yk = I.jump === 2 ? smoothstep(0, 0.12, jt) * (1 - smoothstep(0.4, 0.75, jt)) : 0;
-          if (yk > 0) loc = lerp3(loc, [side * 0.28 * s, 0.48 * s, 0.08 * s], yk);
+          if (yk > 0) loc = lerp3(loc, [side * 0.26 * s, 0.44 * s, 0.08 * s], yk);
           this.lastAirLoc[i] = loc;
         }
         const airW = add(shW, add(scale(left, this.lastAirLoc[i][0]), add(scale(fwd, this.lastAirLoc[i][2]), [0, this.lastAirLoc[i][1], 0])));
-        const airPole = norm(frD(ch, [side * 0.52, -0.78, -0.34]));
+        const airPole = norm(frD(ch, [side * 0.40, -0.78, -0.48]));
         this.elbAim[i] = norm(lerp3(this.elbAim[i], airPole, this.airArmW));
         relaxedW = lerp3(relaxedW, airW, 0.92 * this.airArmW);
       }
@@ -2436,12 +2462,12 @@ export class HeroRig {
       // (the follow-through spring carries incoming airborne hand velocity into landing arcs while never dragging steady gait or takeoff punch!)
       const handDirect = Math.max(lerp(0.94, 0.99, runF) * gw * (1 - mk) * (1 - 0.55 * this.landK), 0.55 * jumpLaunch, goalW, 0.8 * Math.min(1, this.surfW + this.subW));
       hand = lerp3(this.hands[i].update(dt, hand), hand, handDirect * (1 - bw) + bw * 0);
-      // Smooth anatomical torso-ellipse clearance for free hands: deflects cleanly around waist/ribs ONLY if a hand
-      // would actually intersect the torso during a fast spin — NEVER shoves both hands out into a 26cm zombie T-pose!
+      // Smooth anatomical torso-ellipse clearance for free hands: scaled to this body's actual waist/shoulder width
+      // so slender builds hang gracefully by their sides while fuller builds never clip during fast spins!
       if (goalW < 0.01 && bw < 0.01 && mk < 0.01 && sw < 0.01) {
         const hl = frL(chF, hand);
         if (hl[1] < 0.18 * s) {
-          const rx = 0.155 * s, rz = 0.125 * s;
+          const rx = Math.max(0.115 * s, this.fit.shW * 0.80), rz = 0.115 * s;
           const nx = hl[0] / rx, nz = hl[2] / rz, nr = Math.hypot(nx, nz);
           if (nr < 1.0) {
             if (nr > 1e-4) { hl[0] = (nx / nr) * rx; hl[2] = (nz / nr) * rz; }
