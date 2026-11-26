@@ -742,19 +742,17 @@ class Chain {
     const dmp = Math.exp(-1.2 * drag * dt);
     const kaBase = 1 - Math.exp(-2 * drag * dt);
     const wx = wind[0] * dt, wy = wind[1] * dt, wz = wind[2] * dt, gdt2 = gravity * dt * dt;
-    const invN1 = 1 / (n - 1);
     for (let i = 1; i < n; i++) {
       const p = P[i], q = PP[i];
-      const ka = kaBase * (0.3 + 0.7 * i * invN1);
-      const px = p[0], py = p[1], pz = p[2];
-      const dx = (px - q[0]) * dmp, dy = (py - q[1]) * dmp, dz = (pz - q[2]) * dmp;
-      q[0] = px; q[1] = py; q[2] = pz;
-      let nx = px + dx + (wx - dx) * ka;
-      let ny = py + dy + (wy - dy) * ka * 0.5 - gdt2;
-      let nz = pz + dz + (wz - dz) * ka;
+      const u = i / (n - 1);
+      const ka = kaBase * (0.3 + 0.7 * u);
+      const dx = (p[0] - q[0]) * dmp, dy = (p[1] - q[1]) * dmp, dz = (p[2] - q[2]) * dmp;
+      q[0] = p[0]; q[1] = p[1]; q[2] = p[2];
+      p[0] += dx + (wx - dx) * ka;
+      p[1] += dy + (wy - dy) * ka * 0.5 - gdt2;
+      p[2] += dz + (wz - dz) * ka;
       const k = pull[i];
-      if (k > 0) { const g = target[i]; nx += (g[0] - nx) * k; ny += (g[1] - ny) * k; nz += (g[2] - nz) * k; }
-      p[0] = nx; p[1] = ny; p[2] = nz;
+      if (k > 0) { const g = target[i]; p[0] += (g[0] - p[0]) * k; p[1] += (g[1] - p[1]) * k; p[2] += (g[2] - p[2]) * k; }
     }
     const t0 = target[0], p0 = P[0];
     p0[0] = t0[0]; p0[1] = t0[1]; p0[2] = t0[2];
@@ -3659,9 +3657,10 @@ export class HeroRig {
     // Inject rhythmic lateral gait inertia into hairWind so the braid traces a living S-wave behind her in steady walk & run!
     const bs = this.braidSway * gAir;
     hairWind[0] += cx[0] * bs; hairWind[1] += cx[1] * bs; hairWind[2] += cx[2] * bs;
+    const czOff = -0.01 * s;
     const caps: Capsule[] = [
       { a: headC, b: [headC[0], headC[1] + 0.05 * s, headC[2]], r: 0.1 * s },
-      { a: [neck[0] - cz[0] * 0.01 * s, neck[1] - cz[1] * 0.01 * s, neck[2] - cz[2] * 0.01 * s], b: [chest[0] - cz[0] * 0.01 * s, chest[1] - cz[1] * 0.01 * s, chest[2] - cz[2] * 0.01 * s], r: 0.1 * s },
+      { a: [neck[0] + cz[0] * czOff, neck[1] + cz[1] * czOff, neck[2] + cz[2] * czOff], b: [chest[0] + cz[0] * czOff, chest[1] + cz[1] * czOff, chest[2] + cz[2] * czOff], r: 0.1 * s },
       { a: chest, b: pel, r: 0.12 * s },
       // (the legs & boots: thick enough that the tunic's panels clear thighs, shins, and heels even during jump knee tucks!)
       { a: j(this.bi.thighL), b: j(this.bi.shinL), r: 0.125 * s }, { a: j(this.bi.thighR), b: j(this.bi.shinR), r: 0.125 * s },
@@ -3699,6 +3698,7 @@ export class HeroRig {
       }
     }
     const stepCaps = this.chainStepCaps;
+    if (stepCaps.length > 0 && stepCaps[0].length !== nCaps) stepCaps.length = 0;
     while (stepCaps.length < n) {
       stepCaps.push(Array.from({ length: nCaps }, () => ({ a: [0, 0, 0] as V3, b: [0, 0, 0] as V3, r: 0 })));
     }
@@ -3841,7 +3841,7 @@ export class HeroRig {
     let Q = c.graceQ;
     if (!Q || Q.length !== n) Q = c.graceQ = Array.from({ length: n }, () => [0, 0, 0] as V3);
     Q[0][0] = tg[0][0]; Q[0][1] = tg[0][1]; Q[0][2] = tg[0][2];
-    const wPhase = tt * (2 * Math.PI / 2.6) + c.b0;
+    const wOmega = tt * (2 * Math.PI / 2.6);
     for (let i = 0; i < n - 1; i++) {
       const rdx = tg[i + 1][0] - tg[i][0], rdy = tg[i + 1][1] - tg[i][1], rdz = tg[i + 1][2] - tg[i][2];
       const segL = Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz), invL = segL || 1;
@@ -3855,7 +3855,7 @@ export class HeroRig {
       // the billow: about the axis across the wind (or her side), slow, a little later down the chain
       const cr = cross(rd, wdir);
       const bax = norm(len(cr) > 0.2 ? cr : parentX);
-      const b = billow * Math.sin(wPhase - i * 0.7);
+      const b = billow * Math.sin(wOmega - i * 0.7 + c.b0);
       const gx = wx + bax[0] * b, gy = wy + bax[1] * b, gz = wz + bax[2] * b;
       const g0 = gx * X[0] + gy * X[1] + gz * X[2];
       const g1 = gx * Y[0] + gy * Y[1] + gz * Y[2];
@@ -3879,7 +3879,8 @@ export class HeroRig {
       const wwy = X[1] * Wi[0] + Y[1] * Wi[1] + Z[1] * Wi[2];
       const wwz = X[2] * Wi[0] + Y[2] * Wi[1] + Z[2] * Wi[2];
       const wwl = Math.sqrt(wwx * wwx + wwy * wwy + wwz * wwz);
-      const d = wwl > 1e-6 ? rotateAxis(rd, [wwx / wwl, wwy / wwl, wwz / wwl], Math.min(wwl, maxA + 0.1)) : rd;
+      const iw = wwl > 1e-6 ? 1 / wwl : 0;
+      const d = wwl > 1e-6 ? rotateAxis(rd, [wwx * iw, wwy * iw, wwz * iw], Math.min(wwl, maxA + 0.1)) : rd;
       const stL = segL * stretch, qi = Q[i], qn = Q[i + 1];
       qn[0] = qi[0] + d[0] * stL; qn[1] = qi[1] + d[1] * stL; qn[2] = qi[2] + d[2] * stL;
     }

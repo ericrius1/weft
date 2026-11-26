@@ -129,7 +129,7 @@ const writeI32: Write = (v, o, val) => {
 function vecWriter(n: number, kind: string): Write {
   if (kind === 'u') {
     return (v, o, val) => {
-      const a = val as ArrayLike<number>, t = v.u32, i = o >> 2, lim = a.length < n ? a.length : n;
+      const a = val as ArrayLike<number>, al = a.length | 0, t = v.u32, i = o >> 2, lim = al < n ? al : n;
       let ch = false;
       for (let k = 0; k < lim; k++) { const idx = i + k, p = t[idx]; t[idx] = a[k]; if (t[idx] !== p) ch = true; }
       return ch;
@@ -137,7 +137,7 @@ function vecWriter(n: number, kind: string): Write {
   }
   if (kind === 'i') {
     return (v, o, val) => {
-      const a = val as ArrayLike<number>, t = v.i32, i = o >> 2, lim = a.length < n ? a.length : n;
+      const a = val as ArrayLike<number>, al = a.length | 0, t = v.i32, i = o >> 2, lim = al < n ? al : n;
       let ch = false;
       for (let k = 0; k < lim; k++) { const idx = i + k, p = t[idx]; t[idx] = a[k]; if (t[idx] !== p) ch = true; }
       return ch;
@@ -145,7 +145,7 @@ function vecWriter(n: number, kind: string): Write {
   }
   if (n === 2) {
     return (v, o, val) => {
-      const a = val as ArrayLike<number>, len = a.length, f = v.f32, u = v.u32, i = o >> 2;
+      const a = val as ArrayLike<number>, len = a.length | 0, f = v.f32, u = v.u32, i = o >> 2;
       if (len >= 2) {
         const p0 = u[i], p1 = u[i + 1];
         f[i] = a[0]; f[i + 1] = a[1];
@@ -157,7 +157,7 @@ function vecWriter(n: number, kind: string): Write {
   }
   if (n === 3) {
     return (v, o, val) => {
-      const a = val as ArrayLike<number>, len = a.length, f = v.f32, u = v.u32, i = o >> 2;
+      const a = val as ArrayLike<number>, len = a.length | 0, f = v.f32, u = v.u32, i = o >> 2;
       if (len >= 3) {
         const p0 = u[i], p1 = u[i + 1], p2 = u[i + 2];
         f[i] = a[0]; f[i + 1] = a[1]; f[i + 2] = a[2];
@@ -170,7 +170,7 @@ function vecWriter(n: number, kind: string): Write {
   }
   if (n === 4) {
     return (v, o, val) => {
-      const a = val as ArrayLike<number>, len = a.length, f = v.f32, u = v.u32, i = o >> 2;
+      const a = val as ArrayLike<number>, len = a.length | 0, f = v.f32, u = v.u32, i = o >> 2;
       if (len >= 4) {
         const p0 = u[i], p1 = u[i + 1], p2 = u[i + 2], p3 = u[i + 3];
         f[i] = a[0]; f[i + 1] = a[1]; f[i + 2] = a[2]; f[i + 3] = a[3];
@@ -182,7 +182,7 @@ function vecWriter(n: number, kind: string): Write {
     };
   }
   return (v, o, val) => {
-    const a = val as ArrayLike<number>, f = v.f32, u = v.u32, i = o >> 2, lim = a.length < n ? a.length : n;
+    const a = val as ArrayLike<number>, al = a.length | 0, f = v.f32, u = v.u32, i = o >> 2, lim = al < n ? al : n;
     let ch = false;
     for (let k = 0; k < lim; k++) { const idx = i + k, p = u[idx]; f[idx] = a[k]; if (u[idx] !== p) ch = true; }
     return ch;
@@ -220,7 +220,7 @@ function matInto(t: Float32Array, u: Uint32Array, at: number, a: ArrayLike<numbe
 function matWriter(cols: number, rows: number): Write {
   if (cols === 4 && rows === 4) {
     return (v, o, val) => {
-      const a = val as ArrayLike<number>, f = v.f32, u = v.u32, i = o >> 2, lim = a.length < 16 ? a.length : 16;
+      const a = val as ArrayLike<number>, al = a.length | 0, f = v.f32, u = v.u32, i = o >> 2, lim = al < 16 ? al : 16;
       let ch = false;
       for (let k = 0; k < lim; k++) {
         const idx = i + k, p = u[idx];
@@ -231,7 +231,7 @@ function matWriter(cols: number, rows: number): Write {
     };
   }
   const per = rows === 2 ? 2 : 4;
-  return (v, o, val) => { const a = val as ArrayLike<number>; return matInto(v.f32, v.u32, o >> 2, a, 0, a.length, cols, rows, per); };
+  return (v, o, val) => { const a = val as ArrayLike<number>; return matInto(v.f32, v.u32, o >> 2, a, 0, a.length | 0, cols, rows, per); };
 }
 
 function arrayWriter(type: NonNullable<FieldLayout['array']>): Write {

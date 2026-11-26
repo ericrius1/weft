@@ -83,7 +83,7 @@ export class Camera {
       this.up[0] = iv[4] / ul; this.up[1] = iv[5] / ul; this.up[2] = iv[6] / ul;
       const fl = Math.sqrt(iv[8] * iv[8] + iv[9] * iv[9] + iv[10] * iv[10]) || 1;
       this.forward[0] = -iv[8] / fl; this.forward[1] = -iv[9] / fl; this.forward[2] = -iv[10] / fl;
-      this.position[0] = iv[12]; this.position[1] = iv[13]; this.position[2] = iv[14];
+      this.position = [iv[12], iv[13], iv[14]];
     } else {
       const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
       const fx = -sy * cp, fy = sp, fz = -cy * cp;
@@ -164,12 +164,12 @@ export class Camera {
   /** sphere-in-frustum test using the last update's planes */
   sees(c: ArrayLike<number>, r: number) {
     const p = this.planes, cx = c[0], cy = c[1], cz = c[2], nr = -r;
-    return p[0] * cx + p[1] * cy + p[2] * cz + p[3] >= nr
-      && p[4] * cx + p[5] * cy + p[6] * cz + p[7] >= nr
-      && p[8] * cx + p[9] * cy + p[10] * cz + p[11] >= nr
-      && p[12] * cx + p[13] * cy + p[14] * cz + p[15] >= nr
-      && p[16] * cx + p[17] * cy + p[18] * cz + p[19] >= nr
-      && p[20] * cx + p[21] * cy + p[22] * cz + p[23] >= nr;
+    return !(p[0] * cx + p[1] * cy + p[2] * cz + p[3] < nr)
+      && !(p[4] * cx + p[5] * cy + p[6] * cz + p[7] < nr)
+      && !(p[8] * cx + p[9] * cy + p[10] * cz + p[11] < nr)
+      && !(p[12] * cx + p[13] * cy + p[14] * cz + p[15] < nr)
+      && !(p[16] * cx + p[17] * cy + p[18] * cz + p[19] < nr)
+      && !(p[20] * cx + p[21] * cy + p[22] * cz + p[23] < nr);
   }
 
   /** world-space ray through a pixel (for picking) */

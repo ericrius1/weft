@@ -31,7 +31,9 @@ const BU: Record<BufferUse, number> = {
 };
 export const bufferUsage = (u: BufferUse[]) => u.reduce((a, x) => a | BU[x], 0);
 
-/** a uniform buffer laid out from a WGSL struct; dirty values upload once at the start of the next kit.run() */
+/** a uniform buffer laid out from a WGSL struct; dirty values upload once at the start of the next kit.run().
+ *  `set()` marks dirty only when at least one 32-bit word changed bit-wise; direct writes to `view.f32`/`u32`/`i32`
+ *  (or direct GPU writes into `gpu`) must set `dirty = true` to schedule an upload. */
 export class UniformBuffer<T = Record<string, unknown>> implements Resource {
   readonly uid = nextUid();
   private v = 1;
@@ -51,12 +53,15 @@ export class UniformBuffer<T = Record<string, unknown>> implements Resource {
   set version(n: number) { this.v = n; this.kit.resourceGen++; }
   get dirty() { return this._dirty; }
   set dirty(v: boolean) {
+    if (v && this.destroyed) return;
     if (v === this._dirty) return;
     this._dirty = v;
     if (v) this.kit.dirtyUniforms?.add(this as UniformBuffer<any>);
     else this.kit.dirtyUniforms?.delete(this as UniformBuffer<any>);
   }
+  /** write fields into the CPU view and mark dirty only if any 32-bit word changed; direct `view` writes need `dirty = true` */
   set(values: DeepPartial<T>) {
+    if (this.destroyed) return this;
     if (this.def.version !== this.layoutVersion) this.relayout();
     if (this.view.setChanged(values)) this.dirty = true;
     return this;
@@ -68,7 +73,7 @@ export class UniformBuffer<T = Record<string, unknown>> implements Resource {
   }
   /** upload now if dirty (kit.run does this for every dirty uniform buffer) */
   upload() {
-    if (this.destroyed) return;
+    if (this.destroyed) { this.kit.dirtyUniforms?.delete(this as UniformBuffer<any>); return; }
     if (this.def.version !== this.layoutVersion) this.relayout();
     if (!this._dirty) return;
     this.kit.queue.writeBuffer(this.gpu, 0, this.view.data);
@@ -144,7 +149,7 @@ export class StorageBuffer implements Resource {
    *  end, or a last 1-3 bytes short of a word, is left out: said once per buffer (grow it first with ensure(), pad
    *  the data to a multiple of 4) */
   write(data: ArrayBufferView | ArrayBuffer, byteOffset = 0) {
-    const isBuf = data instanceof ArrayBuffer;
+    const isView = ArrayBuffer.isView(data);
     const len = data.byteLength;
     const room = this.size - byteOffset, n = Math.min(len, room) & ~3;
     if (n !== len) {
@@ -157,8 +162,8 @@ export class StorageBuffer implements Resource {
       }
     }
     if (n > 0) {
-      if (isBuf) this.kit.queue.writeBuffer(this.gpu, byteOffset, data, 0, n);
-      else this.kit.queue.writeBuffer(this.gpu, byteOffset, data.buffer, data.byteOffset, n);
+      if (isView) this.kit.queue.writeBuffer(this.gpu, byteOffset, data.buffer, data.byteOffset, n);
+      else this.kit.queue.writeBuffer(this.gpu, byteOffset, data, 0, n);
     }
     return this;
   }

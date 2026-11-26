@@ -171,7 +171,7 @@ export class Kit {
   readonly uniformBuffers = new Set<UniformBuffer<any>>();
   /** uniform buffers whose CPU data changed since their last upload (checked by kit.run() instead of scanning all uniformBuffers) */
   readonly dirtyUniforms = new Set<UniformBuffer<any>>();
-  private seenStructGen = structLayoutGen;
+  private seenStructGen = structLayoutGen();
   readonly textures = new Set<Texture>();
   /** the storage buffers made by kit.storage (for the memory tally) */
   readonly buffers = new Set<StorageBuffer>();
@@ -677,8 +677,9 @@ export class Kit {
     this.mainView.update();
     const views = this.views;
     for (let i = 0; i < views.length; i++) views[i].update();
-    if (this.seenStructGen !== structLayoutGen) {
-      this.seenStructGen = structLayoutGen;
+    const sGen = structLayoutGen();
+    if (this.seenStructGen !== sGen) {
+      this.seenStructGen = sGen;
       for (const u of this.uniformBuffers) u.checkLayout();
     }
     if (this.dirtyUniforms.size > 0) {

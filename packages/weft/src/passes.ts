@@ -270,7 +270,9 @@ export class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
           ? Promise.resolve(made.pipeline)
           : module
             ? compileWith(module)
-            : kit.module(this.shader).then(compileWith));
+            : this.shader.version !== made.shaderVersion
+              ? Promise.reject(new Error(`shader ${this.shader.id} changed before compile started`))
+              : kit.module(this.shader).then(compileWith));
         this.ask(made);
       } else if (!e.pipeline && kit.compiler) this.ask(e);
       e.users.add(this.self);
