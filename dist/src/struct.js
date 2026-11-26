@@ -8,6 +8,8 @@ export class StructView {
     f32;
     u32;
     i32;
+    planFields = null;
+    plan = null;
     constructor(def, data, base = 0, structs) {
         this.def = def;
         this.base = base;
@@ -19,16 +21,27 @@ export class StructView {
         if (!this.structs && 'shader' in def)
             this.structs = def.shader.reflect.structs;
     }
+    getPlan() {
+        if (this.planFields !== this.def.fields || !this.plan) {
+            this.planFields = this.def.fields;
+            this.plan = planOf(this.def);
+        }
+        return this.plan;
+    }
     /** byte offset of a top-level field */
     offset(field) {
-        const f = planOf(this.def).get(field);
+        const f = this.getPlan()[field];
         if (!f)
             throw new Error(`struct ${this.def.name} has no field '${field}'`);
         return this.base + f.offset;
     }
     set(values) {
-        writeStruct(this, this.def, this.base, values);
+        writeStructWithPlan(this, this.def, this.getPlan(), this.base, values);
         return this;
+    }
+    /** write fields like set(), returning true if any 32-bit word changed its bit pattern */
+    setChanged(values) {
+        return writeStructWithPlan(this, this.def, this.getPlan(), this.base, values);
     }
     get(field) {
         const f = this.def.fields.find((x) => x.name === field);
@@ -56,60 +69,192 @@ const PLANS = new WeakMap();
 function planOf(layout) {
     let p = PLANS.get(layout.fields);
     if (!p) {
-        p = new Map();
-        for (const f of layout.fields)
-            if (!p.has(f.name))
-                p.set(f.name, { offset: f.offset, write: writerOf(f.type, f) });
+        p = Object.create(null);
+        for (let i = 0; i < layout.fields.length; i++) {
+            const f = layout.fields[i];
+            if (!(f.name in p))
+                p[f.name] = { offset: f.offset, write: writerOf(f.type, f) };
+        }
         PLANS.set(layout.fields, p);
     }
     return p;
 }
-function writeStruct(v, layout, base, values) {
-    const plan = planOf(layout);
+function writeStructWithPlan(v, layout, plan, base, values) {
+    let changed = false;
     for (const key in values) {
         const val = values[key];
         if (val === undefined)
             continue;
-        const f = plan.get(key);
+        const f = plan[key];
         if (!f)
             throw new Error(`struct ${layout.name} has no field '${key}' (fields: ${layout.fields.map((x) => x.name).join(', ')})`);
-        f.write(v, base + f.offset, val);
+        if (f.write(v, base + f.offset, val))
+            changed = true;
     }
+    return changed;
 }
-const writeF32 = (v, o, val) => { v.f32[o >> 2] = val; };
-const writeU32 = (v, o, val) => { v.u32[o >> 2] = val; };
-const writeI32 = (v, o, val) => { v.i32[o >> 2] = val; };
+function writeStruct(v, layout, base, values) {
+    return writeStructWithPlan(v, layout, planOf(layout), base, values);
+}
+const writeF32 = (v, o, val) => {
+    const i = o >> 2, u = v.u32, prev = u[i];
+    v.f32[i] = val;
+    return u[i] !== prev;
+};
+const writeU32 = (v, o, val) => {
+    const i = o >> 2, u = v.u32, prev = u[i];
+    u[i] = val;
+    return u[i] !== prev;
+};
+const writeI32 = (v, o, val) => {
+    const i = o >> 2, t = v.i32, prev = t[i];
+    t[i] = val;
+    return t[i] !== prev;
+};
 /** a vector of n components (never past the n-th: a vec3 doesn't spill into the next field), as far as `val` goes */
 function vecWriter(n, kind) {
-    if (kind === 'u')
-        return (v, o, val) => { const a = val, t = v.u32, i = o >> 2; for (let k = 0; k < n && k < a.length; k++)
-            t[i + k] = a[k]; };
-    if (kind === 'i')
-        return (v, o, val) => { const a = val, t = v.i32, i = o >> 2; for (let k = 0; k < n && k < a.length; k++)
-            t[i + k] = a[k]; };
-    return (v, o, val) => { const a = val, t = v.f32, i = o >> 2; for (let k = 0; k < n && k < a.length; k++)
-        t[i + k] = a[k]; };
+    if (kind === 'u') {
+        return (v, o, val) => {
+            const a = val, al = a.length | 0, t = v.u32, i = o >> 2, lim = al < n ? al : n;
+            let ch = false;
+            for (let k = 0; k < lim; k++) {
+                const idx = i + k, p = t[idx];
+                t[idx] = a[k];
+                if (t[idx] !== p)
+                    ch = true;
+            }
+            return ch;
+        };
+    }
+    if (kind === 'i') {
+        return (v, o, val) => {
+            const a = val, al = a.length | 0, t = v.i32, i = o >> 2, lim = al < n ? al : n;
+            let ch = false;
+            for (let k = 0; k < lim; k++) {
+                const idx = i + k, p = t[idx];
+                t[idx] = a[k];
+                if (t[idx] !== p)
+                    ch = true;
+            }
+            return ch;
+        };
+    }
+    if (n === 2) {
+        return (v, o, val) => {
+            const a = val, len = a.length | 0, f = v.f32, u = v.u32, i = o >> 2;
+            if (len >= 2) {
+                const p0 = u[i], p1 = u[i + 1];
+                f[i] = a[0];
+                f[i + 1] = a[1];
+                return u[i] !== p0 || u[i + 1] !== p1;
+            }
+            if (len === 1) {
+                const p0 = u[i];
+                f[i] = a[0];
+                return u[i] !== p0;
+            }
+            return false;
+        };
+    }
+    if (n === 3) {
+        return (v, o, val) => {
+            const a = val, len = a.length | 0, f = v.f32, u = v.u32, i = o >> 2;
+            if (len >= 3) {
+                const p0 = u[i], p1 = u[i + 1], p2 = u[i + 2];
+                f[i] = a[0];
+                f[i + 1] = a[1];
+                f[i + 2] = a[2];
+                return u[i] !== p0 || u[i + 1] !== p1 || u[i + 2] !== p2;
+            }
+            let ch = false;
+            for (let k = 0; k < len; k++) {
+                const idx = i + k, p = u[idx];
+                f[idx] = a[k];
+                if (u[idx] !== p)
+                    ch = true;
+            }
+            return ch;
+        };
+    }
+    if (n === 4) {
+        return (v, o, val) => {
+            const a = val, len = a.length | 0, f = v.f32, u = v.u32, i = o >> 2;
+            if (len >= 4) {
+                const p0 = u[i], p1 = u[i + 1], p2 = u[i + 2], p3 = u[i + 3];
+                f[i] = a[0];
+                f[i + 1] = a[1];
+                f[i + 2] = a[2];
+                f[i + 3] = a[3];
+                return u[i] !== p0 || u[i + 1] !== p1 || u[i + 2] !== p2 || u[i + 3] !== p3;
+            }
+            let ch = false;
+            for (let k = 0; k < len; k++) {
+                const idx = i + k, p = u[idx];
+                f[idx] = a[k];
+                if (u[idx] !== p)
+                    ch = true;
+            }
+            return ch;
+        };
+    }
+    return (v, o, val) => {
+        const a = val, al = a.length | 0, f = v.f32, u = v.u32, i = o >> 2, lim = al < n ? al : n;
+        let ch = false;
+        for (let k = 0; k < lim; k++) {
+            const idx = i + k, p = u[idx];
+            f[idx] = a[k];
+            if (u[idx] !== p)
+                ch = true;
+        }
+        return ch;
+    };
 }
 /** a matrix's floats into `t` from float index `at`: `len` of `a` from `from`, packed (cols × rows, a mat3's nine)
  *  or padded as the buffer is (each column `per` floats) */
-function matInto(t, at, a, from, len, cols, rows, per) {
+function matInto(t, u, at, a, from, len, cols, rows, per) {
+    let ch = false;
     if (rows === 3 && len === cols * 3) {
-        for (let c = 0; c < cols; c++)
-            for (let r = 0; r < 3; r++)
-                t[at + c * per + r] = a[from + c * 3 + r];
-        return;
+        for (let c = 0; c < cols; c++) {
+            const dst = at + c * per, src = from + c * 3;
+            for (let r = 0; r < 3; r++) {
+                const idx = dst + r, p = u[idx];
+                t[idx] = a[src + r];
+                if (u[idx] !== p)
+                    ch = true;
+            }
+        }
+        return ch;
     }
     for (let c = 0; c < cols; c++) {
+        const col = c * per;
         for (let r = 0; r < rows; r++) {
-            const src = c * per + r;
-            if (src < len)
-                t[at + c * per + r] = a[from + src];
+            const src = col + r;
+            if (src < len) {
+                const idx = at + src, p = u[idx];
+                t[idx] = a[from + src];
+                if (u[idx] !== p)
+                    ch = true;
+            }
         }
     }
+    return ch;
 }
 function matWriter(cols, rows) {
+    if (cols === 4 && rows === 4) {
+        return (v, o, val) => {
+            const a = val, al = a.length | 0, f = v.f32, u = v.u32, i = o >> 2, lim = al < 16 ? al : 16;
+            let ch = false;
+            for (let k = 0; k < lim; k++) {
+                const idx = i + k, p = u[idx];
+                f[idx] = a[k];
+                if (u[idx] !== p)
+                    ch = true;
+            }
+            return ch;
+        };
+    }
     const per = rows === 2 ? 2 : 4;
-    return (v, o, val) => { const a = val; matInto(v.f32, o / 4, a, 0, a.length, cols, rows, per); };
+    return (v, o, val) => { const a = val; return matInto(v.f32, v.u32, o >> 2, a, 0, a.length | 0, cols, rows, per); };
 }
 function arrayWriter(type) {
     const { count, stride, elem, elemStruct } = type;
@@ -121,37 +266,85 @@ function arrayWriter(type) {
     let one = null;
     return (v, o, val) => {
         const arr = val;
+        let ch = false;
         if (!elemStruct && typeof arr[0] === 'number') {
             const nums = val;
             if (mm) {
                 // a flat array of matrices, each one packed (column-major)
                 const elems = count > 0 ? Math.min(count, Math.floor(nums.length / full)) : Math.floor(nums.length / full);
                 for (let e = 0; e < elems; e++)
-                    matInto(v.f32, (o + e * stride) / 4, nums, e * full, full, cols, rows, per);
-                return;
+                    if (matInto(v.f32, v.u32, (o + e * stride) >> 2, nums, e * full, full, cols, rows, per))
+                        ch = true;
+                return ch;
             }
             // a flat numeric array: scalars, or vectors packed back to back
             const elems = count > 0 ? Math.min(count, Math.floor(nums.length / comps)) : Math.floor(nums.length / comps);
             if (kind === 'f' && stride === comps * 4 && nums instanceof Float32Array) {
-                v.f32.set(nums.subarray(0, elems * comps), o >> 2);
-                return;
+                const start = o >> 2, total = elems * comps;
+                if (start + total > v.f32.length) {
+                    v.f32.set(nums.subarray(0, total), start);
+                    return true;
+                }
+                const f = v.f32, u = v.u32;
+                for (let k = 0; k < total; k++) {
+                    const idx = start + k, p = u[idx];
+                    f[idx] = nums[k];
+                    if (u[idx] !== p)
+                        ch = true;
+                }
+                return ch;
             }
-            const t = kind === 'u' ? v.u32 : kind === 'i' ? v.i32 : v.f32;
-            for (let e = 0; e < elems; e++)
-                for (let k = 0; k < comps; k++)
-                    t[(o + e * stride + k * 4) >> 2] = nums[e * comps + k];
-            return;
+            if (kind === 'u') {
+                const t = v.u32;
+                for (let e = 0; e < elems; e++) {
+                    const base = (o + e * stride) >> 2, src = e * comps;
+                    for (let k = 0; k < comps; k++) {
+                        const idx = base + k, p = t[idx];
+                        t[idx] = nums[src + k];
+                        if (t[idx] !== p)
+                            ch = true;
+                    }
+                }
+            }
+            else if (kind === 'i') {
+                const t = v.i32;
+                for (let e = 0; e < elems; e++) {
+                    const base = (o + e * stride) >> 2, src = e * comps;
+                    for (let k = 0; k < comps; k++) {
+                        const idx = base + k, p = t[idx];
+                        t[idx] = nums[src + k];
+                        if (t[idx] !== p)
+                            ch = true;
+                    }
+                }
+            }
+            else {
+                const f = v.f32, u = v.u32;
+                for (let e = 0; e < elems; e++) {
+                    const base = (o + e * stride) >> 2, src = e * comps;
+                    for (let k = 0; k < comps; k++) {
+                        const idx = base + k, p = u[idx];
+                        f[idx] = nums[src + k];
+                        if (u[idx] !== p)
+                            ch = true;
+                    }
+                }
+            }
+            return ch;
         }
         const n = count > 0 ? Math.min(count, arr.length) : arr.length;
         for (let e = 0; e < n; e++) {
             const x = arr[e];
             if (x === undefined)
                 continue;
-            if (elemStruct)
-                writeStruct(v, v.layoutOf(elemStruct), o + e * stride, x);
-            else
-                (one ??= writerOf(elem, null))(v, o + e * stride, x);
+            if (elemStruct) {
+                if (writeStruct(v, v.layoutOf(elemStruct), o + e * stride, x))
+                    ch = true;
+            }
+            else if ((one ??= writerOf(elem, null))(v, o + e * stride, x))
+                ch = true;
         }
+        return ch;
     };
 }
 /** the writers of the types that need nothing but their name (scalars, vectors, matrices), one each */
@@ -247,7 +440,7 @@ export class StructArray {
     }
     /** byte offset of a field inside element i */
     offset(i, field) {
-        const f = planOf(this.def).get(field);
+        const f = planOf(this.def)[field];
         if (!f)
             throw new Error(`struct ${this.def.name} has no field '${field}'`);
         return i * this.stride + f.offset;

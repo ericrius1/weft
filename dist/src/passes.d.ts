@@ -262,7 +262,7 @@ export interface DrawEncoder {
     drawIndirect(buffer: GPUBuffer, offset: number): void;
     drawIndexedIndirect(buffer: GPUBuffer, offset: number): void;
 }
-/** forget the pipeline and groups a pass has set (after a bundle or code outside weft changed them) */
+/** forget the pipeline, vertex/index buffers and groups a pass has set (after a bundle or code outside weft changed them) */
 export declare function forgetPassState(enc: DrawEncoder): void;
 export type BlendMode = 'opaque' | 'alpha' | 'premultiplied' | 'add' | 'add-alpha' | 'multiply' | 'max' | GPUBlendState;
 export interface DrawOptions<S extends Shader = Shader> {
@@ -431,7 +431,21 @@ export declare class RenderPass implements RunItem {
         depthReadOnly: boolean;
         samples: number;
     };
+    /** zero-alloc format equality check for DrawBundle.stale() */
+    formatsMatch(f: {
+        colors: GPUTextureFormat[];
+        depth: GPUTextureFormat | undefined;
+        depthReadOnly: boolean;
+        samples: number;
+    }): boolean;
     private attachView;
+    private _colorAtts;
+    private _depthAtt;
+    private _depthReadOnly;
+    private _depthHasStencil;
+    private _depthFmt;
+    private _passDesc;
+    private static readonly DEFAULT_CLEAR;
     encode(enc: GPUCommandEncoder, ts?: GPURenderPassTimestampWrites): void;
 }
 export { RunAction, isDepthFormat };

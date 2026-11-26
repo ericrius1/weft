@@ -115,6 +115,9 @@ export declare class Kit {
     private warmHits;
     private warmEvictions;
     readonly uniformBuffers: Set<UniformBuffer<any>>;
+    /** uniform buffers whose CPU data changed since their last upload (checked by kit.run() instead of scanning all uniformBuffers) */
+    readonly dirtyUniforms: Set<UniformBuffer<any>>;
+    private seenStructGen;
     readonly textures: Set<Texture>;
     /** the storage buffers made by kit.storage (for the memory tally) */
     readonly buffers: Set<StorageBuffer>;

@@ -36,6 +36,10 @@ export interface Shader<S extends object = Record<string, unknown>, B extends st
 type AnyShader = Shader<object, string>;
 const REG: Map<string, AnyShader> = ((globalThis as unknown as { __weftShaders?: Map<string, AnyShader> }).__weftShaders ??= new Map());
 
+const STRUCT_GEN: { v: number } = ((globalThis as unknown as { __weftStructGen?: { v: number } }).__weftStructGen ??= { v: 0 });
+/** bumped whenever a hot shader update changes any struct's layout (shared on globalThis alongside __weftShaders) */
+export const structLayoutGen = () => STRUCT_GEN.v;
+
 function syncStructs(s: AnyShader, structs: Record<string, StructLayout>) {
   const out = s.structs as Record<string, StructDef>;
   for (const [name, layout] of Object.entries(structs)) {
@@ -43,7 +47,7 @@ function syncStructs(s: AnyShader, structs: Record<string, StructLayout>) {
     if (prev) {
       const changed = JSON.stringify(layout) !== JSON.stringify({ name: prev.name, size: prev.size, align: prev.align, fields: prev.fields });
       Object.assign(prev, layout);
-      if (changed) prev.version++;
+      if (changed) { prev.version++; STRUCT_GEN.v++; }
     } else {
       out[name] = Object.assign({ shader: s, version: 1 }, layout) as StructDef;
     }

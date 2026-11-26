@@ -10,10 +10,15 @@ export declare class StructView<T = Record<string, unknown>> {
     readonly f32: Float32Array;
     readonly u32: Uint32Array;
     readonly i32: Int32Array;
+    private planFields;
+    private plan;
     constructor(def: StructDef<T> | StructLayout, data?: ArrayBuffer, base?: number, structs?: Record<string, StructLayout> | undefined);
+    private getPlan;
     /** byte offset of a top-level field */
     offset(field: keyof T & string): number;
     set(values: DeepPartial<T>): this;
+    /** write fields like set(), returning true if any 32-bit word changed its bit pattern */
+    setChanged(values: DeepPartial<T>): boolean;
     get(field: keyof T & string): unknown;
     /** every field as a plain object (used to carry values across a hot layout change) */
     toObject(): Record<string, unknown>;

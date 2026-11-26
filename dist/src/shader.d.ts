@@ -34,6 +34,8 @@ export interface Shader<S extends object = Record<string, unknown>, B extends st
     readonly __bindings?: B;
 }
 type AnyShader = Shader<object, string>;
+/** bumped whenever a hot shader update changes any struct's layout (shared on globalThis alongside __weftShaders) */
+export declare const structLayoutGen: () => number;
 export declare function defineShader(data: ShaderData): AnyShader;
 /** maps a 1-based line of the preprocessed code back to its source file and line */
 export declare function sourceLine(s: ShaderData, line: number): {

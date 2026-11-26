@@ -23,7 +23,9 @@ const BU = {
     'map-read': BUF.MAP_READ, query: BUF.QUERY_RESOLVE,
 };
 export const bufferUsage = (u) => u.reduce((a, x) => a | BU[x], 0);
-/** a uniform buffer laid out from a WGSL struct; dirty values upload once at the start of the next kit.run() */
+/** a uniform buffer laid out from a WGSL struct; dirty values upload once at the start of the next kit.run().
+ *  `set()` marks dirty only when at least one 32-bit word changed bit-wise; direct writes to `view.f32`/`u32`/`i32`
+ *  (or direct GPU writes into `gpu`) must set `dirty = true` to schedule an upload. */
 export class UniformBuffer {
     kit;
     def;
@@ -32,7 +34,7 @@ export class UniformBuffer {
     v = 1;
     gpu;
     view;
-    dirty = true;
+    _dirty = true;
     destroyed = false;
     layoutVersion;
     constructor(kit, def, label) {
@@ -42,22 +44,52 @@ export class UniformBuffer {
         this.view = new StructView(def);
         this.layoutVersion = def.version;
         this.gpu = kit.device.createBuffer({ label, size: this.view.data.byteLength, usage: BUF.UNIFORM | BUF.COPY_DST });
+        kit.dirtyUniforms?.add(this);
     }
     /** bumped when its GPU buffer is replaced (and kit.resourceGen with it, so bind groups are checked again) */
     get version() { return this.v; }
     set version(n) { this.v = n; this.kit.resourceGen++; }
-    set(values) { this.view.set(values); this.dirty = true; return this; }
-    get(field) { return this.view.get(field); }
-    /** upload now if dirty (kit.run does this for every uniform buffer) */
-    upload() {
-        if (this.destroyed)
+    get dirty() { return this._dirty; }
+    set dirty(v) {
+        if (v && this.destroyed)
             return;
+        if (v === this._dirty)
+            return;
+        this._dirty = v;
+        if (v)
+            this.kit.dirtyUniforms?.add(this);
+        else
+            this.kit.dirtyUniforms?.delete(this);
+    }
+    /** write fields into the CPU view and mark dirty only if any 32-bit word changed; direct `view` writes need `dirty = true` */
+    set(values) {
+        if (this.destroyed)
+            return this;
         if (this.def.version !== this.layoutVersion)
             this.relayout();
-        if (!this.dirty)
+        if (this.view.setChanged(values))
+            this.dirty = true;
+        return this;
+    }
+    get(field) { return this.view.get(field); }
+    /** check if a hot shader edit changed this struct's layout */
+    checkLayout() {
+        if (!this.destroyed && this.def.version !== this.layoutVersion)
+            this.relayout();
+    }
+    /** upload now if dirty (kit.run does this for every dirty uniform buffer) */
+    upload() {
+        if (this.destroyed) {
+            this.kit.dirtyUniforms?.delete(this);
+            return;
+        }
+        if (this.def.version !== this.layoutVersion)
+            this.relayout();
+        if (!this._dirty)
             return;
         this.kit.queue.writeBuffer(this.gpu, 0, this.view.data);
-        this.dirty = false;
+        this._dirty = false;
+        this.kit.dirtyUniforms?.delete(this);
     }
     // a hot edit changed the struct: re-lay out, carrying every field that still exists over by name
     relayout() {
@@ -83,7 +115,9 @@ export class UniformBuffer {
     destroy() {
         this.gpu.destroy();
         this.destroyed = true;
+        this._dirty = false;
         this.kit.uniformBuffers.delete(this);
+        this.kit.dirtyUniforms?.delete(this);
     }
 }
 export class StorageBuffer {
@@ -122,21 +156,26 @@ export class StorageBuffer {
      *  end, or a last 1-3 bytes short of a word, is left out: said once per buffer (grow it first with ensure(), pad
      *  the data to a multiple of 4) */
     write(data, byteOffset = 0) {
-        const view = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-        const room = this.size - byteOffset, n = Math.min(view.byteLength, room) & ~3;
-        if (n !== view.byteLength) {
+        const isView = ArrayBuffer.isView(data);
+        const len = data.byteLength;
+        const room = this.size - byteOffset, n = Math.min(len, room) & ~3;
+        if (n !== len) {
             // (said once a buffer and a kind: a flag here first, so a write that's cut every frame makes no string)
-            const past = view.byteLength > room, bit = past ? 1 : 2;
+            const past = len > room, bit = past ? 1 : 2;
             if (!(this.cutSaid & bit)) {
                 this.cutSaid |= bit;
                 if (past)
-                    this.kit.warnOnce(`write-past:${this.label}`, `${this.label}: a write of ${view.byteLength} bytes at ${byteOffset} runs past its ${this.size} bytes: only ${Math.max(0, n)} written (ensure() it first)`);
+                    this.kit.warnOnce(`write-past:${this.label}`, `${this.label}: a write of ${len} bytes at ${byteOffset} runs past its ${this.size} bytes: only ${Math.max(0, n)} written (ensure() it first)`);
                 else
-                    this.kit.warnOnce(`write-odd:${this.label}`, `${this.label}: a write of ${view.byteLength} bytes isn't a multiple of 4: its last ${view.byteLength - n} left out (pad the data)`);
+                    this.kit.warnOnce(`write-odd:${this.label}`, `${this.label}: a write of ${len} bytes isn't a multiple of 4: its last ${len - n} left out (pad the data)`);
             }
         }
-        if (n > 0)
-            this.kit.queue.writeBuffer(this.gpu, byteOffset, view.buffer, view.byteOffset, n);
+        if (n > 0) {
+            if (isView)
+                this.kit.queue.writeBuffer(this.gpu, byteOffset, data.buffer, data.byteOffset, n);
+            else
+                this.kit.queue.writeBuffer(this.gpu, byteOffset, data, 0, n);
+        }
         return this;
     }
     /** grow (contents are not kept); bind groups follow automatically */
@@ -203,11 +242,13 @@ export class Texture {
     /** freed for good (destroy): a resize no longer reallocates it */
     destroyed = false;
     views = new Map();
+    blk;
     constructor(kit, desc) {
         this.kit = kit;
         this.desc = desc;
         this.label = desc.label ?? 'texture';
         this.format = desc.format;
+        this.blk = compressedBlock(desc.format);
         const depth = isDepthFormat(desc.format);
         const def = depth ? ['sample', 'render'] : notRenderable(desc.format) ? ['sample', 'copy-dst', 'copy-src'] : ['sample', 'render', 'copy-dst', 'copy-src'];
         this.usage = (desc.usage ?? def).reduce((a, x) => a | TU[x], 0);
@@ -297,11 +338,12 @@ export class Texture {
     get unfilterable() { return FLOAT32.test(this.format) && !this.kit.features.has('float32-filterable'); }
     /** upload pixels or compressed blocks (rows tightly packed unless bytesPerRow is given) */
     write(data, o = {}) {
-        const w = o.width ?? Math.max(1, this.width >> (o.mip ?? 0)), h = o.height ?? Math.max(1, this.height >> (o.mip ?? 0));
-        const blk = compressedBlock(this.format);
+        const mip = o.mip ?? 0;
+        const w = o.width ?? Math.max(1, this.width >> mip), h = o.height ?? Math.max(1, this.height >> mip);
+        const blk = this.blk;
         const blocksX = Math.ceil(w / blk.bw), blocksY = Math.ceil(h / blk.bh);
         const copyW = blocksX * blk.bw, copyH = blocksY * blk.bh;
-        this.kit.queue.writeTexture({ texture: this.gpu, mipLevel: o.mip ?? 0, origin: [o.origin?.[0] ?? 0, o.origin?.[1] ?? 0, o.layer ?? 0] }, data, { bytesPerRow: o.bytesPerRow ?? blocksX * blk.bytes, rowsPerImage: blocksY }, [copyW, copyH, 1]);
+        this.kit.queue.writeTexture({ texture: this.gpu, mipLevel: mip, origin: [o.origin?.[0] ?? 0, o.origin?.[1] ?? 0, o.layer ?? 0] }, data, { bytesPerRow: o.bytesPerRow ?? blocksX * blk.bytes, rowsPerImage: blocksY }, [copyW, copyH, 1]);
         return this;
     }
     /** copy an image in (a canvas, an ImageBitmap, a video frame…): all of it at the origin, or a part of it
@@ -385,7 +427,7 @@ export class Texture {
     get bytes() {
         if (this.destroyed)
             return 0;
-        const blk = compressedBlock(this.format), deep = (this.desc.dimension ?? '2d') === '3d';
+        const blk = this.blk, deep = (this.desc.dimension ?? '2d') === '3d';
         let n = 0;
         for (let m = 0; m < this.mips; m++) {
             const mw = Math.max(1, this.width >> m), mh = Math.max(1, this.height >> m);

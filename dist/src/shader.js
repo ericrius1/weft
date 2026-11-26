@@ -1,4 +1,7 @@
 const REG = (globalThis.__weftShaders ??= new Map());
+const STRUCT_GEN = (globalThis.__weftStructGen ??= { v: 0 });
+/** bumped whenever a hot shader update changes any struct's layout (shared on globalThis alongside __weftShaders) */
+export const structLayoutGen = () => STRUCT_GEN.v;
 function syncStructs(s, structs) {
     const out = s.structs;
     for (const [name, layout] of Object.entries(structs)) {
@@ -6,8 +9,10 @@ function syncStructs(s, structs) {
         if (prev) {
             const changed = JSON.stringify(layout) !== JSON.stringify({ name: prev.name, size: prev.size, align: prev.align, fields: prev.fields });
             Object.assign(prev, layout);
-            if (changed)
+            if (changed) {
                 prev.version++;
+                STRUCT_GEN.v++;
+            }
         }
         else {
             out[name] = Object.assign({ shader: s, version: 1 }, layout);

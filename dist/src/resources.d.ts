@@ -18,7 +18,9 @@ export declare class Ref<T = unknown> {
 export declare const deref: (v: unknown) => unknown;
 export type BufferUse = 'storage' | 'uniform' | 'vertex' | 'index' | 'indirect' | 'copy-src' | 'copy-dst' | 'map-read' | 'query';
 export declare const bufferUsage: (u: BufferUse[]) => number;
-/** a uniform buffer laid out from a WGSL struct; dirty values upload once at the start of the next kit.run() */
+/** a uniform buffer laid out from a WGSL struct; dirty values upload once at the start of the next kit.run().
+ *  `set()` marks dirty only when at least one 32-bit word changed bit-wise; direct writes to `view.f32`/`u32`/`i32`
+ *  (or direct GPU writes into `gpu`) must set `dirty = true` to schedule an upload. */
 export declare class UniformBuffer<T = Record<string, unknown>> implements Resource {
     private kit;
     readonly def: StructDef<T>;
@@ -27,16 +29,21 @@ export declare class UniformBuffer<T = Record<string, unknown>> implements Resou
     private v;
     gpu: GPUBuffer;
     view: StructView<T>;
-    dirty: boolean;
+    private _dirty;
     destroyed: boolean;
     private layoutVersion;
     constructor(kit: Kit, def: StructDef<T>, label: string);
     /** bumped when its GPU buffer is replaced (and kit.resourceGen with it, so bind groups are checked again) */
     get version(): number;
     set version(n: number);
+    get dirty(): boolean;
+    set dirty(v: boolean);
+    /** write fields into the CPU view and mark dirty only if any 32-bit word changed; direct `view` writes need `dirty = true` */
     set(values: DeepPartial<T>): this;
     get(field: keyof T & string): unknown;
-    /** upload now if dirty (kit.run does this for every uniform buffer) */
+    /** check if a hot shader edit changed this struct's layout */
+    checkLayout(): void;
+    /** upload now if dirty (kit.run does this for every dirty uniform buffer) */
     upload(): void;
     private relayout;
     /** free it for good (it's no longer uploaded) */
@@ -114,6 +121,7 @@ export declare class Texture implements Resource {
     /** freed for good (destroy): a resize no longer reallocates it */
     destroyed: boolean;
     private views;
+    private readonly blk;
     constructor(kit: Kit, desc: TextureDesc);
     /** bumped whenever its GPU texture is replaced (and kit.resourceGen with it, so bind groups are checked again) */
     get version(): number;

@@ -57,7 +57,8 @@ export declare class SharedGroup {
     bglKey: string;
     /** bumped by set() */
     vgen: number;
-    private memo;
+    /** @internal */
+    readonly memo: Memo;
     private memos;
     constructor(kit: Kit, index: number, shader: Shader, values: Record<string, unknown>, label: string);
     private build;

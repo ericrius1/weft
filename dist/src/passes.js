@@ -180,13 +180,14 @@ export class PipelineRecord {
     }
     build() {
         const t0 = performance.now(), b = ++this.serial;
-        // (one built while the scheduler holds is deferred at once: its module's compile info comes first, and can wait
-        // behind the GPU's compiles, and kit.ready() mustn't wait for it meanwhile)
-        if (this.kit.compiler?.holding)
+        // (one built while the scheduler holds is deferred at once: kit.ready() mustn't wait for it, and its shader
+        // module isn't even created until its compile actually starts — skipping unused Tint parses for parked sites)
+        const holding = !!this.kit.compiler?.holding;
+        if (holding)
             this.deferred = true;
         const p = (async () => {
             try {
-                const module = await this.kit.module(this.shader);
+                const module = holding ? (await Promise.resolve(), null) : await this.kit.module(this.shader);
                 if (b !== this.serial)
                     return;
                 const e = this.join(module);
@@ -233,9 +234,10 @@ export class PipelineRecord {
                 const made = this.started = e = new SharedPipeline(key, this.shader);
                 kit.pipelineCache.set(key, made);
                 let p = null;
-                made.start = () => (made.asked = true) && (p ??= made.pipeline
-                    ? Promise.resolve(made.pipeline)
-                    : makePipeline(kit, desc, module, true).catch((err) => {
+                const compileWith = (m) => {
+                    if (made.pipeline)
+                        return Promise.resolve(made.pipeline);
+                    return makePipeline(kit, desc, m, true).catch((err) => {
                         // Retry once on transient compiler-service failures (e.g. Metal XPC_ERROR_CONNECTION_INTERRUPTED). A
                         // GPUPipelineError says which with its `reason`: 'internal' may pass on a second try, 'validation' never
                         // will. The message is matched only for the compiler service's own words, so an invalid shader whose
@@ -245,10 +247,18 @@ export class PipelineRecord {
                             throw err;
                         return new Promise((ok, fail) => {
                             setTimeout(() => {
-                                makePipeline(kit, desc, module, true).then(ok, fail);
+                                makePipeline(kit, desc, m, true).then(ok, fail);
                             }, 250);
                         });
-                    }));
+                    });
+                };
+                made.start = () => (made.asked = true) && (p ??= made.pipeline
+                    ? Promise.resolve(made.pipeline)
+                    : module
+                        ? compileWith(module)
+                        : this.shader.version !== made.shaderVersion
+                            ? Promise.reject(new Error(`shader ${this.shader.id} changed before compile started`))
+                            : kit.module(this.shader).then(compileWith));
                 this.ask(made);
             }
             else if (!e.pipeline && kit.compiler)
@@ -459,9 +469,15 @@ export class Compute {
     /** stop it for good: no more hot rebuilds, and its pipeline leaves the kit */
     dispose() { this.unsub(); this.pipe.dispose(); }
 }
-/** forget the pipeline and groups a pass has set (after a bundle or code outside weft changed them) */
+/** forget the pipeline, vertex/index buffers and groups a pass has set (after a bundle or code outside weft changed them) */
 export function forgetPassState(enc) {
-    enc.__weftPipeline = null;
+    const t = enc;
+    t.__weftPipeline = null;
+    t.__weftIbBuf = null;
+    const vb = t.__weftVbBuf;
+    if (vb)
+        for (let i = 0; i < vb.length; i++)
+            vb[i] = undefined;
     forgetBindings(enc);
 }
 const BLEND = {
@@ -627,11 +643,30 @@ export class Draw {
         }
         this.binder.apply(enc, view ?? this.pass.opts.view ?? this.kit.mainView, shared ?? this.pass.opts.shared);
         const vb = o.vertexBuffers;
-        if (vb)
-            for (let i = 0; i < vb.length; i++)
-                enc.setVertexBuffer(i, gpuBuf(vb[i].buffer), vb[i].offset ?? 0);
-        if (o.indices)
-            enc.setIndexBuffer(gpuBuf(o.indices.buffer), o.indices.format ?? 'uint32', o.indices.offset ?? 0);
+        if (vb) {
+            let vbBuf = tracked.__weftVbBuf, vbOff = tracked.__weftVbOff;
+            if (!vbBuf) {
+                vbBuf = tracked.__weftVbBuf = [];
+                vbOff = tracked.__weftVbOff = [];
+            }
+            for (let i = 0; i < vb.length; i++) {
+                const buf = gpuBuf(vb[i].buffer), off = vb[i].offset ?? 0;
+                if (vbBuf[i] !== buf || vbOff[i] !== off) {
+                    vbBuf[i] = buf;
+                    vbOff[i] = off;
+                    enc.setVertexBuffer(i, buf, off);
+                }
+            }
+        }
+        if (o.indices) {
+            const ib = gpuBuf(o.indices.buffer), fmt = o.indices.format ?? 'uint32', off = o.indices.offset ?? 0;
+            if (tracked.__weftIbBuf !== ib || tracked.__weftIbFmt !== fmt || tracked.__weftIbOff !== off) {
+                tracked.__weftIbBuf = ib;
+                tracked.__weftIbFmt = fmt;
+                tracked.__weftIbOff = off;
+                enc.setIndexBuffer(ib, fmt, off);
+            }
+        }
         if (o.encode) {
             o.encode(enc, this);
             // (the callback may have set its own pipeline or groups)
@@ -869,6 +904,63 @@ export class RenderPass {
         const d = this.opts.depth ? this.targetFormat(this.opts.depth.target) : null;
         return { colors: colors.map((c) => c.format), depth: d?.format, depthReadOnly: !!this.opts.depth?.readOnly, samples: colors[0]?.samples ?? d?.samples ?? 1 };
     }
+    /** zero-alloc format equality check for DrawBundle.stale() */
+    formatsMatch(f) {
+        const o = this.opts, cols = o.color, n = cols ? cols.length : 0;
+        if (n !== f.colors.length)
+            return false;
+        let samples = -1;
+        for (let i = 0; i < n; i++) {
+            const t = cols[i].target;
+            let fmt, smp;
+            if (t === 'screen') {
+                fmt = this.kit.format;
+                smp = 1;
+            }
+            else {
+                const v = deref(t);
+                if (v instanceof Texture) {
+                    fmt = v.format;
+                    smp = v.samples;
+                }
+                else if (v instanceof TexView) {
+                    fmt = v.texture.format;
+                    smp = v.texture.samples;
+                }
+                else
+                    return false;
+            }
+            if (fmt !== f.colors[i])
+                return false;
+            if (i === 0)
+                samples = smp;
+        }
+        const d = o.depth;
+        if (!!d?.readOnly !== f.depthReadOnly)
+            return false;
+        if (d) {
+            const v = deref(d.target);
+            let fmt, smp;
+            if (v instanceof Texture) {
+                fmt = v.format;
+                smp = v.samples;
+            }
+            else if (v instanceof TexView) {
+                fmt = v.texture.format;
+                smp = v.texture.samples;
+            }
+            else
+                return false;
+            if (fmt !== f.depth)
+                return false;
+            if (samples < 0)
+                samples = smp;
+        }
+        else if (f.depth !== undefined) {
+            return false;
+        }
+        return (samples < 0 ? 1 : samples) === f.samples;
+    }
     attachView(t) {
         if (t === 'screen')
             return this.kit.screenView();
@@ -877,31 +969,90 @@ export class RenderPass {
             return v.attachment;
         throw new BindError(`${this.label}: bad attachment`);
     }
+    _colorAtts = [];
+    _depthAtt = null;
+    _depthReadOnly = false;
+    _depthHasStencil = false;
+    _depthFmt = '';
+    _passDesc = null;
+    static DEFAULT_CLEAR = [0, 0, 0, 0];
     encode(enc, ts) {
-        const o = this.opts;
-        const colorAttachments = (o.color ?? []).map((c) => ({
-            view: this.attachView(c.target),
-            resolveTarget: c.resolve ? this.attachView(c.resolve) : undefined,
-            loadOp: c.clear === false ? 'load' : 'clear',
-            clearValue: c.clear === false ? undefined : (c.clear ?? [0, 0, 0, 0]),
-            storeOp: c.store === false ? 'discard' : 'store',
-        }));
+        const o = this.opts, cols = o.color, n = cols ? cols.length : 0;
+        const colorAttachments = this._colorAtts;
+        if (colorAttachments.length !== n)
+            colorAttachments.length = n;
+        for (let i = 0; i < n; i++) {
+            const c = cols[i];
+            let a = colorAttachments[i];
+            if (!a) {
+                a = colorAttachments[i] = {
+                    view: this.attachView(c.target),
+                    resolveTarget: c.resolve ? this.attachView(c.resolve) : undefined,
+                    loadOp: c.clear === false ? 'load' : 'clear',
+                    clearValue: c.clear === false ? undefined : (c.clear ?? RenderPass.DEFAULT_CLEAR),
+                    storeOp: c.store === false ? 'discard' : 'store',
+                };
+            }
+            else {
+                a.view = this.attachView(c.target);
+                a.resolveTarget = c.resolve ? this.attachView(c.resolve) : undefined;
+                a.loadOp = c.clear === false ? 'load' : 'clear';
+                a.clearValue = c.clear === false ? undefined : (c.clear ?? RenderPass.DEFAULT_CLEAR);
+                a.storeOp = c.store === false ? 'discard' : 'store';
+            }
+        }
         let depthStencilAttachment;
         if (o.depth) {
             const d = o.depth;
             const tex = deref(d.target);
-            const fmt = tex instanceof Texture ? tex.format : tex instanceof TexView ? tex.texture.format : 'depth32float';
-            const hasStencil = fmt.includes('stencil');
-            depthStencilAttachment = d.readOnly
-                ? { view: this.attachView(d.target), depthReadOnly: true, ...(hasStencil ? { stencilReadOnly: true } : {}) }
-                : {
-                    view: this.attachView(d.target),
-                    depthLoadOp: d.clear === false ? 'load' : 'clear', depthClearValue: d.clear === false ? undefined : (d.clear ?? 0),
-                    depthStoreOp: d.store === false ? 'discard' : 'store',
-                    ...(hasStencil ? { stencilLoadOp: 'clear', stencilStoreOp: 'discard' } : {}),
-                };
+            let fmt, view;
+            if (tex instanceof Texture) {
+                fmt = tex.format;
+                view = tex.attachment;
+            }
+            else if (tex instanceof TexView) {
+                fmt = tex.texture.format;
+                view = tex.attachment;
+            }
+            else
+                throw new BindError(`${this.label}: bad attachment`);
+            if (fmt !== this._depthFmt) {
+                this._depthFmt = fmt;
+                this._depthHasStencil = fmt.includes('stencil');
+                this._depthAtt = null;
+            }
+            const ro = !!d.readOnly;
+            if (!this._depthAtt || this._depthReadOnly !== ro) {
+                this._depthReadOnly = ro;
+                this._depthAtt = ro
+                    ? { view, depthReadOnly: true, ...(this._depthHasStencil ? { stencilReadOnly: true } : {}) }
+                    : {
+                        view,
+                        depthLoadOp: d.clear === false ? 'load' : 'clear',
+                        depthClearValue: d.clear === false ? undefined : (d.clear ?? 0),
+                        depthStoreOp: d.store === false ? 'discard' : 'store',
+                        ...(this._depthHasStencil ? { stencilLoadOp: 'clear', stencilStoreOp: 'discard' } : {}),
+                    };
+            }
+            else {
+                this._depthAtt.view = view;
+                if (!ro) {
+                    this._depthAtt.depthLoadOp = d.clear === false ? 'load' : 'clear';
+                    this._depthAtt.depthClearValue = d.clear === false ? undefined : (d.clear ?? 0);
+                    this._depthAtt.depthStoreOp = d.store === false ? 'discard' : 'store';
+                }
+            }
+            depthStencilAttachment = this._depthAtt;
         }
-        const pe = enc.beginRenderPass({ label: this.label, colorAttachments, depthStencilAttachment, timestampWrites: ts });
+        let desc = this._passDesc;
+        if (!desc) {
+            desc = this._passDesc = { label: this.label, colorAttachments, depthStencilAttachment, timestampWrites: ts };
+        }
+        else {
+            desc.depthStencilAttachment = depthStencilAttachment;
+            desc.timestampWrites = ts;
+        }
+        const pe = enc.beginRenderPass(desc);
         if (o.viewport) {
             const v = vals(o.viewport);
             pe.setViewport(v[0], v[1], v[2], v[3], 0, 1);
@@ -909,9 +1060,11 @@ export class RenderPass {
         }
         if (o.replay)
             this.encodeReplay(pe, o.replay);
-        else
-            for (const d of this.draws)
-                d.encode(pe);
+        else {
+            const draws = this.draws;
+            for (let i = 0, dn = draws.length; i < dn; i++)
+                draws[i].encode(pe);
+        }
         pe.end();
     }
 }

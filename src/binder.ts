@@ -30,14 +30,11 @@ export class BindError extends Error {}
 export interface BindTarget { setBindGroup(index: number, bindGroup: GPUBindGroup): void }
 /** set a bind group unless the pass already has that one at that index (WebGPU keeps them across draws) */
 type Tracked = BindTarget & { __weftGroups?: (GPUBindGroup | undefined)[] };
-function setGroup(enc: Tracked, i: number, bg: GPUBindGroup) {
-  const s = (enc.__weftGroups ??= []);
-  if (s[i] === bg) return;
-  s[i] = bg;
-  enc.setBindGroup(i, bg);
-}
 /** forget what a pass has set (after code outside weft may have changed it) */
-export function forgetBindings(enc: BindTarget) { (enc as Tracked).__weftGroups = undefined; }
+export function forgetBindings(enc: BindTarget) {
+  const s = (enc as Tracked).__weftGroups;
+  if (s) for (let i = 0; i < s.length; i++) s[i] = undefined;
+}
 
 interface Resolved { res: GPUBindingResource; unfilterable?: boolean; format?: GPUTextureFormat }
 
@@ -169,8 +166,10 @@ function groupOf(kit: Kit, m: Memo, infos: BindingInfo[], values: Record<string,
   }
   let bg = m.bg && same(m.ids, scratch, n) ? m.bg : null;
   if (!bg) {
-    const hit = m.recent.find((r) => same(r.ids, scratch, n));
-    if (hit) { bg = hit.bg; m.ids = hit.ids; }
+    const rec = m.recent;
+    for (let i = 0; i < rec.length; i++) {
+      if (same(rec[i].ids, scratch, n)) { bg = rec[i].bg; m.ids = rec[i].ids; break; }
+    }
   }
   if (!bg) {
     const ids = scratch.slice(0, n);
@@ -238,7 +237,8 @@ export class SharedGroup {
   bglKey = '';
   /** bumped by set() */
   vgen = 0;
-  private memo = new Memo();
+  /** @internal */
+  readonly memo = new Memo();
   private memos = new WeakMap<object, Memo>();
   constructor(private kit: Kit, readonly index: number, readonly shader: Shader, readonly values: Record<string, unknown>, readonly label: string) {
     this.infos = Object.values(shader.bindings).filter((b) => b.group === index).sort((a, b) => a.binding - b.binding);
@@ -406,7 +406,37 @@ export class Binder {
   get moves() { return this.groups.some((g) => !g.shared && g.memo.moves); }
 
   apply(enc: BindTarget, view: View, shared?: Record<number, Record<string, unknown>>) {
-    setGroup(enc, 0, view.group0());
-    for (const g of this.groups) setGroup(enc, g.index, this.groupFor(g, shared));
+    const t = enc as Tracked;
+    let s = t.__weftGroups;
+    if (!s) s = t.__weftGroups = [undefined, undefined, undefined, undefined];
+    const g0 = view.group0();
+    if (s[0] !== g0) { s[0] = g0; enc.setBindGroup(0, g0); }
+    const gs = this.groups, n = gs.length;
+    if (n === 0) return;
+    const kit = this.kit, rgen = kit.resourceGen, epoch = kit.bindEpoch, vgen = this.vgen;
+    for (let k = 0; k < n; k++) {
+      const g = gs[k], idx = g.index;
+      let bg: GPUBindGroup;
+      if (g.shared) {
+        const sh = g.shared;
+        const ov = shared?.[idx];
+        if (!ov) {
+          const m = sh.memo;
+          bg = (m.bg && m.gen === rgen && m.vgen === sh.vgen && (!m.moves || m.epoch === epoch))
+            ? m.bg
+            : groupOf(kit, m, sh.infos, sh.values, undefined, sh.vgen, sh.bgl, sh.label);
+        } else {
+          bg = sh.bindGroup(ov);
+        }
+      } else if (g.infos.length === 0) {
+        bg = kit.emptyGroup;
+      } else {
+        const m = g.memo;
+        bg = (m.bg && m.gen === rgen && m.vgen === vgen && (!m.moves || m.epoch === epoch))
+          ? m.bg
+          : groupOf(kit, m, g.infos, this.values, undefined, vgen, g.bgl, g.label);
+      }
+      if (s[idx] !== bg) { s[idx] = bg; enc.setBindGroup(idx, bg); }
+    }
   }
 }

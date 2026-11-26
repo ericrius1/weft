@@ -46,7 +46,6 @@ class Recorder {
     drawIndirect(b, offset) { this.put(7); this.put(b); this.put(offset); this.into?.drawIndirect(b, offset); }
     drawIndexedIndirect(b, offset) { this.put(8); this.put(b); this.put(offset); this.into?.drawIndexedIndirect(b, offset); }
 }
-const sameFormats = (a, b) => a.depth === b.depth && a.samples === b.samples && a.depthReadOnly === b.depthReadOnly && a.colors.length === b.colors.length && a.colors.every((c, i) => c === b.colors[i]);
 export class DrawBundle {
     kit;
     pass;
@@ -123,22 +122,26 @@ export class DrawBundle {
         if (this.dirty || !this.bundle)
             return true;
         const k = this.kit, view = this.pass.opts.view ?? k.mainView;
-        if (view !== this.view || view.group0() !== this.group0 || !sameFormats(this.pass.formats(), this.formats))
+        if (view !== this.view || view.group0() !== this.group0 || !this.pass.formatsMatch(this.formats))
             return true;
-        for (const s of this.shared)
-            if (s.group.bindGroup(this.pass.opts.shared?.[s.group.index]) !== s.bg)
+        const shared = this.shared, passShared = this.pass.opts.shared;
+        for (let i = 0; i < shared.length; i++) {
+            const s = shared[i];
+            if (s.group.bindGroup(passShared?.[s.group.index]) !== s.bg)
                 return true;
-        for (const w of this.watched) {
-            const now = w.draw.state(this.now);
-            for (let i = 0; i < now.length; i++)
-                if (now[i] !== w.was[i])
+        }
+        const watched = this.watched;
+        for (let i = 0; i < watched.length; i++) {
+            const w = watched[i], now = w.draw.state(this.now), was = w.was;
+            for (let j = 0; j < now.length; j++)
+                if (now[j] !== was[j])
                     return true;
         }
         if (k.resourceGen !== this.gen || (this.moves && k.bindEpoch !== this.epoch)) {
             // (something was reallocated, or a Ref may have moved: what would the draws encode now?)
             const check = new Recorder(null, this.calls);
-            for (const d of this.draws)
-                d.encodeInto(check);
+            for (let i = 0; i < this.draws.length; i++)
+                this.draws[i].encodeInto(check);
             if (!check.matched)
                 return true;
             this.gen = k.resourceGen;

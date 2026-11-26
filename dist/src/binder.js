@@ -3,15 +3,13 @@ import { Ref, deref, UniformBuffer, StorageBuffer, Texture, TexView, rawUid, isD
 import { STAGE } from './gpuconst';
 export class BindError extends Error {
 }
-function setGroup(enc, i, bg) {
-    const s = (enc.__weftGroups ??= []);
-    if (s[i] === bg)
-        return;
-    s[i] = bg;
-    enc.setBindGroup(i, bg);
-}
 /** forget what a pass has set (after code outside weft may have changed it) */
-export function forgetBindings(enc) { enc.__weftGroups = undefined; }
+export function forgetBindings(enc) {
+    const s = enc.__weftGroups;
+    if (s)
+        for (let i = 0; i < s.length; i++)
+            s[i] = undefined;
+}
 const describe = (v) => {
     if (v === undefined)
         return 'undefined';
@@ -189,10 +187,13 @@ function groupOf(kit, m, infos, values, overrides, vgen, layout, label) {
     }
     let bg = m.bg && same(m.ids, scratch, n) ? m.bg : null;
     if (!bg) {
-        const hit = m.recent.find((r) => same(r.ids, scratch, n));
-        if (hit) {
-            bg = hit.bg;
-            m.ids = hit.ids;
+        const rec = m.recent;
+        for (let i = 0; i < rec.length; i++) {
+            if (same(rec[i].ids, scratch, n)) {
+                bg = rec[i].bg;
+                m.ids = rec[i].ids;
+                break;
+            }
         }
     }
     if (!bg) {
@@ -276,6 +277,7 @@ export class SharedGroup {
     bglKey = '';
     /** bumped by set() */
     vgen = 0;
+    /** @internal */
     memo = new Memo();
     memos = new WeakMap();
     constructor(kit, index, shader, values, label) {
@@ -462,9 +464,49 @@ export class Binder {
     /** whether a value of its own can move without notice (a Ref or a buffer range, as last resolved) */
     get moves() { return this.groups.some((g) => !g.shared && g.memo.moves); }
     apply(enc, view, shared) {
-        setGroup(enc, 0, view.group0());
-        for (const g of this.groups)
-            setGroup(enc, g.index, this.groupFor(g, shared));
+        const t = enc;
+        let s = t.__weftGroups;
+        if (!s)
+            s = t.__weftGroups = [undefined, undefined, undefined, undefined];
+        const g0 = view.group0();
+        if (s[0] !== g0) {
+            s[0] = g0;
+            enc.setBindGroup(0, g0);
+        }
+        const gs = this.groups, n = gs.length;
+        if (n === 0)
+            return;
+        const kit = this.kit, rgen = kit.resourceGen, epoch = kit.bindEpoch, vgen = this.vgen;
+        for (let k = 0; k < n; k++) {
+            const g = gs[k], idx = g.index;
+            let bg;
+            if (g.shared) {
+                const sh = g.shared;
+                const ov = shared?.[idx];
+                if (!ov) {
+                    const m = sh.memo;
+                    bg = (m.bg && m.gen === rgen && m.vgen === sh.vgen && (!m.moves || m.epoch === epoch))
+                        ? m.bg
+                        : groupOf(kit, m, sh.infos, sh.values, undefined, sh.vgen, sh.bgl, sh.label);
+                }
+                else {
+                    bg = sh.bindGroup(ov);
+                }
+            }
+            else if (g.infos.length === 0) {
+                bg = kit.emptyGroup;
+            }
+            else {
+                const m = g.memo;
+                bg = (m.bg && m.gen === rgen && m.vgen === vgen && (!m.moves || m.epoch === epoch))
+                    ? m.bg
+                    : groupOf(kit, m, g.infos, this.values, undefined, vgen, g.bgl, g.label);
+            }
+            if (s[idx] !== bg) {
+                s[idx] = bg;
+                enc.setBindGroup(idx, bg);
+            }
+        }
     }
 }
 //# sourceMappingURL=binder.js.map

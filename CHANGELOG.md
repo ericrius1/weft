@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.17
+
+Per-frame CPU & allocation optimizations and deferred shader module creation; backwards-compatible (direct `UniformBuffer.view` writers must set `u.dirty = true`, documented in `AGENTS.md`).
+
+- **Deferred `GPUShaderModule` creation when `kit.compiler?.holding` is active (`passes.ts`)**: `PipelineRecord.build()` / `join()` key pipelines off `shaderTag(this.shader)` without invoking `kit.module(this.shader)` until `SharedPipeline.start()` actually begins compiling, eliminating unused WGSL Tint parses on boot for parked off-site pipelines.
+- **Dirty-tracked uniform uploads & compiled `StructView` field plans (`struct.ts`, `resources.ts`, `kit.ts`, `shader.ts`)**: `StructView` caches a null-prototype field plan with unrolled `vec2f`/`vec3f`/`vec4f`/`mat4x4f` writers and bit-exact 32-bit `setChanged()`; `UniformBuffer` tracks dirty instances in `kit.dirtyUniforms` so `Kit.run()` uploads only changed buffers in O(dirty) and checks HMR struct layout changes in O(1) via `structLayoutGen()`.
+- **Zero-allocation math, camera, binder & pass hot paths (`math.ts`, `camera.ts`, `binder.ts`, `passes.ts`, `bundle.ts`, `resources.ts`)**: zero-alloc `frustumPlanes()`, `lookAt()`, aliasing-safe `mat4Mul()`, `Math.sqrt` in `len`/`dist`/`norm`, direct orthonormal `Camera.update()`, NaN-safe unrolled `Camera.sees()`, inlined `Binder.apply()` memo fast path, `TrackedEncoder` consecutive vertex/index buffer deduplication, cached `RenderPass` attachment/pass descriptors, zero-alloc `RenderPass.formatsMatch()`, zero-wrapper `StorageBuffer.write()`, and cached `Texture` block size.
+- **Tests**: 104/104 passing (added invariants for `UniformBuffer` dirty/destroy tracking, deferred module creation under holding compiler, and `TrackedEncoder` vertex/index deduplication).
+
 ## 0.2.16
 
 Native GPU-compressed textures (KTX2) and hardware capability detection; 100% backwards-compatible.

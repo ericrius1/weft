@@ -3,7 +3,7 @@
 // Each run (and each RunAction in it) starts a bind epoch, the span in which a bind group once resolved is reused; the
 // canvas is SDR (the preferred 8-bit format) unless an HDR one is asked for and the display has it (kit.hdr).
 import frameShader from '../shaders/frame.wgsl';
-import { sourceLine } from './shader';
+import { sourceLine, structLayoutGen } from './shader';
 import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction } from './resources';
 import { Compute, RenderPass, RawItem, pipelinesOf, settle } from './passes';
@@ -151,6 +151,9 @@ export class Kit {
     warmHits = 0;
     warmEvictions = 0;
     uniformBuffers = new Set();
+    /** uniform buffers whose CPU data changed since their last upload (checked by kit.run() instead of scanning all uniformBuffers) */
+    dirtyUniforms = new Set();
+    seenStructGen = structLayoutGen();
     textures = new Set();
     /** the storage buffers made by kit.storage (for the memory tally) */
     buffers = new Set();
@@ -693,10 +696,19 @@ export class Kit {
     run(items) {
         this.bindEpoch++;
         this.mainView.update();
-        for (const v of this.views)
-            v.update();
-        for (const u of this.uniformBuffers)
-            u.upload();
+        const views = this.views;
+        for (let i = 0; i < views.length; i++)
+            views[i].update();
+        const sGen = structLayoutGen();
+        if (this.seenStructGen !== sGen) {
+            this.seenStructGen = sGen;
+            for (const u of this.uniformBuffers)
+                u.checkLayout();
+        }
+        if (this.dirtyUniforms.size > 0) {
+            for (const u of this.dirtyUniforms)
+                u.upload();
+        }
         const scoped = this.debug;
         const depth = this.runDepth++;
         const cbs = this.cbPool[depth] ?? (this.cbPool[depth] = []);
