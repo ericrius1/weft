@@ -722,27 +722,43 @@ class Chain {
     this.rest = [];
     for (let i = 0; i < pts.length - 1; i++) this.rest.push(len(sub(pts[i + 1], pts[i])));
   }
-  reset(pts: V3[]) { for (let i = 0; i < this.p.length; i++) { this.p[i] = [...pts[i]] as V3; this.pp[i] = [...pts[i]] as V3; } }
-  shift(d: V3) { for (let i = 0; i < this.p.length; i++) { this.p[i] = add(this.p[i], d); this.pp[i] = add(this.pp[i], d); } }
+  reset(pts: V3[]) {
+    for (let i = 0; i < this.p.length; i++) {
+      const s = pts[i], a = this.p[i], b = this.pp[i];
+      a[0] = b[0] = s[0]; a[1] = b[1] = s[1]; a[2] = b[2] = s[2];
+    }
+  }
+  shift(d: V3) {
+    const dx = d[0], dy = d[1], dz = d[2];
+    for (let i = 0; i < this.p.length; i++) {
+      const a = this.p[i], b = this.pp[i];
+      a[0] += dx; a[1] += dy; a[2] += dz;
+      b[0] += dx; b[1] += dy; b[2] += dz;
+    }
+  }
   /** (drag > 1 in water; points under `surf` float up to it) */
-  step(dt: number, target: V3[], pull: number[], wind: V3, caps: Capsule[], ground: (x: number, z: number) => number, gravity = 9.8, drag = 1, surf = -Infinity) {
+  step(dt: number, target: V3[], pull: number[], wind: V3, caps: Capsule[], ground: (x: number, z: number) => number, gravity = 9.8, drag = 1, surf = -Infinity, capStart = 0) {
     const P = this.p, PP = this.pp, n = P.length;
     const dmp = Math.exp(-1.2 * drag * dt);
+    const kaBase = 1 - Math.exp(-2 * drag * dt);
+    const wx = wind[0] * dt, wy = wind[1] * dt, wz = wind[2] * dt, gdt2 = gravity * dt * dt;
     for (let i = 1; i < n; i++) {
       const p = P[i], q = PP[i];
       const u = i / (n - 1);
-      const ka = (1 - Math.exp(-2 * drag * dt)) * (0.3 + 0.7 * u);
+      const ka = kaBase * (0.3 + 0.7 * u);
       const dx = (p[0] - q[0]) * dmp, dy = (p[1] - q[1]) * dmp, dz = (p[2] - q[2]) * dmp;
-      PP[i] = [p[0], p[1], p[2]];
-      p[0] += dx + (wind[0] * dt - dx) * ka;
-      p[1] += dy + (wind[1] * dt - dy) * ka * 0.5 - gravity * dt * dt;
-      p[2] += dz + (wind[2] * dt - dz) * ka;
+      q[0] = p[0]; q[1] = p[1]; q[2] = p[2];
+      p[0] += dx + (wx - dx) * ka;
+      p[1] += dy + (wy - dy) * ka * 0.5 - gdt2;
+      p[2] += dz + (wz - dz) * ka;
       const k = pull[i];
       if (k > 0) { const g = target[i]; p[0] += (g[0] - p[0]) * k; p[1] += (g[1] - p[1]) * k; p[2] += (g[2] - p[2]) * k; }
     }
-    P[0] = [...target[0]] as V3;
+    const t0 = target[0], p0 = P[0];
+    p0[0] = t0[0]; p0[1] = t0[1]; p0[2] = t0[2];
     const Pi = this.pi;
     for (let i = 1; i < n; i++) { const a = Pi[i], b = P[i]; a[0] = b[0]; a[1] = b[1]; a[2] = b[2]; }
+    const cLen = caps.length;
     for (let it = 0; it < 5; it++) {
       for (let i = 0; i < n - 1; i++) {
         const a = P[i], b = P[i + 1];
@@ -753,10 +769,11 @@ class Chain {
         else { const h = k * 0.5; a[0] += d0 * h; a[1] += d1 * h; a[2] += d2 * h; b[0] -= d0 * h; b[1] -= d1 * h; b[2] -= d2 * h; }
       }
       for (let i = 1; i < n; i++) {
-        for (let c = 0; c < caps.length; c++) capPush(P[i], caps[c], PP[i]);
-        const g = ground(P[i][0], P[i][2]) + 0.01;
-        if (P[i][1] < g) P[i][1] = g;
-        if (P[i][1] < surf) P[i][1] += (surf - P[i][1]) * 0.35;
+        const pi = P[i], ppi = PP[i];
+        for (let c = capStart; c < cLen; c++) capPush(pi, caps[c], ppi);
+        const g = ground(pi[0], pi[2]) + 0.01;
+        if (pi[1] < g) pi[1] = g;
+        if (pi[1] < surf) pi[1] += (surf - pi[1]) * 0.35;
       }
     }
     // (what the constraints moved each point by goes into its velocity — verlet's — but no more of it than MAX_KICK:
@@ -765,7 +782,7 @@ class Chain {
     const mk = MAX_KICK * dt;
     for (let i = 1; i < n; i++) {
       const a = Pi[i], b = P[i], q = PP[i];
-      const kx = b[0] - a[0], ky = b[1] - a[1], kz = b[2] - a[2], kl = Math.hypot(kx, ky, kz);
+      const kx = b[0] - a[0], ky = b[1] - a[1], kz = b[2] - a[2], kl = Math.sqrt(kx * kx + ky * ky + kz * kz);
       if (kl > mk) { const f = 1 - mk / kl; q[0] += kx * f; q[1] += ky * f; q[2] += kz * f; }
     }
   }
@@ -776,7 +793,9 @@ interface PhysChain { name: string; parent: number; bind: V3[]; b0: number; ch: 
   /** each segment's last way and roll (carryUp) */
   roll: { up: V3[]; dir: V3[] };
   /** hung from the hips (garment.ts hang: the pelvis down to the seat, the hang bone below), its parent the frame it hangs in */
-  hips?: boolean }
+  hips?: boolean;
+  /** per-chain scratch buffers reused across frames (no per-substep array churn) */
+  tg?: V3[]; from?: V3[]; tk?: V3[]; pullBuf?: number[]; outP?: V3[]; graceQ?: V3[]; }
 
 /** a foot: its point on the ground (the middle of the sole), planted or swinging (from, to, progress, duration), its
  *  facing, pitch (toe up +, heel up -) and the ground's slope under it */
@@ -1273,26 +1292,42 @@ export class HeroRig {
 
   private setBone(i: number | undefined, head: V3, tail: V3, up: V3) {
     if (i === undefined) return;
-    const z = norm(sub(tail, head));
-    let x = cross(up, z);
-    if (len(x) < 1e-5) x = cross([1, 0, 0], z);
-    x = norm(x);
-    const y = cross(z, x);
-    const bf = this.bind[i];
-    const o = this.bones;
-    const k = i * 16;
-    const R = [bf.x, bf.y, bf.z];
-    const t: V3 = [-dot(bf.x, bf.o), -dot(bf.y, bf.o), -dot(bf.z, bf.o)];
-    for (let c = 0; c < 3; c++) {
-      const a = R[0][c], b = R[1][c], cc = R[2][c];
-      o[k + c * 4 + 0] = x[0] * a + y[0] * b + z[0] * cc;
-      o[k + c * 4 + 1] = x[1] * a + y[1] * b + z[1] * cc;
-      o[k + c * 4 + 2] = x[2] * a + y[2] * b + z[2] * cc;
-      o[k + c * 4 + 3] = 0;
+    const hx = head[0], hy = head[1], hz = head[2];
+    let zx = tail[0] - hx, zy = tail[1] - hy, zz = tail[2] - hz;
+    const zl = Math.sqrt(zx * zx + zy * zy + zz * zz) || 1;
+    zx /= zl; zy /= zl; zz /= zl;
+    const ux = up[0], uy = up[1], uz = up[2];
+    let xx = uy * zz - uz * zy, xy = uz * zx - ux * zz, xz = ux * zy - uy * zx;
+    let xl = Math.sqrt(xx * xx + xy * xy + xz * xz);
+    if (xl < 1e-5) {
+      xx = 0; xy = -zz; xz = zy;
+      xl = Math.sqrt(xy * xy + xz * xz) || 1;
     }
-    o[k + 12] = x[0] * t[0] + y[0] * t[1] + z[0] * t[2] + head[0];
-    o[k + 13] = x[1] * t[0] + y[1] * t[1] + z[1] * t[2] + head[1];
-    o[k + 14] = x[2] * t[0] + y[2] * t[1] + z[2] * t[2] + head[2];
+    xx /= xl; xy /= xl; xz /= xl;
+    const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+    const bf = this.bind[i], bx = bf.x, by = bf.y, bz = bf.z, bo = bf.o;
+    const tx = -(bx[0] * bo[0] + bx[1] * bo[1] + bx[2] * bo[2]);
+    const ty = -(by[0] * bo[0] + by[1] * bo[1] + by[2] * bo[2]);
+    const tz = -(bz[0] * bo[0] + bz[1] * bo[1] + bz[2] * bo[2]);
+    const o = this.bones, k = i * 16;
+    const a0 = bx[0], b0 = by[0], c0 = bz[0];
+    o[k] = xx * a0 + yx * b0 + zx * c0;
+    o[k + 1] = xy * a0 + yy * b0 + zy * c0;
+    o[k + 2] = xz * a0 + yz * b0 + zz * c0;
+    o[k + 3] = 0;
+    const a1 = bx[1], b1 = by[1], c1 = bz[1];
+    o[k + 4] = xx * a1 + yx * b1 + zx * c1;
+    o[k + 5] = xy * a1 + yy * b1 + zy * c1;
+    o[k + 6] = xz * a1 + yz * b1 + zz * c1;
+    o[k + 7] = 0;
+    const a2 = bx[2], b2 = by[2], c2 = bz[2];
+    o[k + 8] = xx * a2 + yx * b2 + zx * c2;
+    o[k + 9] = xy * a2 + yy * b2 + zy * c2;
+    o[k + 10] = xz * a2 + yz * b2 + zz * c2;
+    o[k + 11] = 0;
+    o[k + 12] = xx * tx + yx * ty + zx * tz + hx;
+    o[k + 13] = xy * tx + yy * ty + zy * tz + hy;
+    o[k + 14] = xz * tx + yz * ty + zz * tz + hz;
     o[k + 15] = 1;
   }
   skinPoint(i: number, p: V3): V3 {
@@ -3587,6 +3622,9 @@ export class HeroRig {
     }
   }
 
+  private chainLastCaps: Capsule[] | null = null;
+  private chainStepCaps: Capsule[][] = [];
+
   private rigChains(dt: number, I: RigInput, disp: V3, mk: number) {
     if (!this.chains.length) return;
     const s = this.s;
@@ -3594,30 +3632,35 @@ export class HeroRig {
     // (fluttering at speed); under water they're buoyant and slow, at the surface the hair floats on it
     const air = this.flyW, wet = Math.min(1, this.surfW + this.subW);
     const gAir = (1 - air) * (1 - wet);
-    let wind: V3 = add(I.wind, scale(I.vel, -(1.7 * air + 0.9 * wet + 0.18 * gAir)));
-    let hairWind: V3 = add(I.wind, scale(I.vel, -(1.7 * air + 0.9 * wet + 0.62 * gAir)));
-    const wl = len(wind);
-    if (wl > 45) wind = scale(wind, 45 / wl);
-    const hwl = len(hairWind);
-    if (hwl > 45) hairWind = scale(hairWind, 45 / hwl);
+    const wc = -(1.7 * air + 0.9 * wet + 0.18 * gAir), hwc = -(1.7 * air + 0.9 * wet + 0.62 * gAir);
+    let wind: V3 = [I.wind[0] + I.vel[0] * wc, I.wind[1] + I.vel[1] * wc, I.wind[2] + I.vel[2] * wc];
+    let hairWind: V3 = [I.wind[0] + I.vel[0] * hwc, I.wind[1] + I.vel[1] * hwc, I.wind[2] + I.vel[2] * hwc];
+    const wl = Math.sqrt(wind[0] * wind[0] + wind[1] * wind[1] + wind[2] * wind[2]);
+    if (wl > 45) { const k = 45 / wl; wind[0] *= k; wind[1] *= k; wind[2] *= k; }
+    const hwl = Math.sqrt(hairWind[0] * hairWind[0] + hairWind[1] * hairWind[1] + hairWind[2] * hairWind[2]);
+    if (hwl > 45) { const k = 45 / hwl; hairWind[0] *= k; hairWind[1] *= k; hairWind[2] *= k; }
     const t = I.time;
     // (on the ground the breeze comes and goes in slow gusts, its way wandering a little)
     const gust = (1 - air) * (1 - wet) * (0.55 + 0.35 * Math.sin(t * 0.37) + 0.2 * Math.sin(t * 0.83 + 1.3));
     const wa = 0.35 * Math.sin(t * 0.21 + 0.4), cwa = Math.cos(wa), swa = Math.sin(wa), gk = 1 - air;
-    const gwv: V3 = [(wind[0] * cwa - wind[2] * swa) * gust * 1.6, wind[1], (wind[2] * cwa + wind[0] * swa) * gust * 1.6];
-    wind = lerp3(wind, gwv, gk);
-    // (no fast flutter at speed: the cloth's own motion is slowed and its billow given below, in grace)
-    wind = add(wind, [Math.sin(t * 0.7) * 0.3 * wet, Math.sin(t * 0.5) * 0.2 * wet, Math.cos(t * 0.6) * 0.3 * wet]);
-    const shift = scale(disp, mk);
+    const gwx = (wind[0] * cwa - wind[2] * swa) * gust * 1.6, gwz = (wind[2] * cwa + wind[0] * swa) * gust * 1.6;
+    wind[0] = wind[0] + (gwx - wind[0]) * gk + Math.sin(t * 0.7) * 0.3 * wet;
+    wind[1] = wind[1] + Math.sin(t * 0.5) * 0.2 * wet;
+    wind[2] = wind[2] + (gwz - wind[2]) * gk + Math.cos(t * 0.6) * 0.3 * wet;
+    const shx = disp[0] * mk, shy = disp[1] * mk, shz = disp[2] * mk;
+    const shift: V3 = [shx, shy, shz];
     const j = (i: number) => this.skinPoint(i, this.B[i].head);
-    const headC = add(this.skinPoint(this.bi.head, this.B[this.bi.head].head), [0, 0.09 * s, 0]);
+    const headC = this.skinPoint(this.bi.head, this.B[this.bi.head].head);
+    headC[1] += 0.09 * s;
     const neck = j(this.bi.neck), chest = j(this.bi.chest), pel = j(this.bi.pelvis);
     const cz = norm(this.skinDir(this.bi.chest, [0, 0, 1])), cx = norm(this.skinDir(this.bi.chest, [1, 0, 0]));
     // Inject rhythmic lateral gait inertia into hairWind so the braid traces a living S-wave behind her in steady walk & run!
-    hairWind = add(hairWind, scale(cx, this.braidSway * gAir));
+    const bs = this.braidSway * gAir;
+    hairWind[0] += cx[0] * bs; hairWind[1] += cx[1] * bs; hairWind[2] += cx[2] * bs;
+    const czOff = -0.01 * s;
     const caps: Capsule[] = [
-      { a: headC, b: add(headC, [0, 0.05 * s, 0]), r: 0.1 * s },
-      { a: add(neck, scale(cz, -0.01 * s)), b: add(chest, scale(cz, -0.01 * s)), r: 0.1 * s },
+      { a: headC, b: [headC[0], headC[1] + 0.05 * s, headC[2]], r: 0.1 * s },
+      { a: [neck[0] + cz[0] * czOff, neck[1] + cz[1] * czOff, neck[2] + cz[2] * czOff], b: [chest[0] + cz[0] * czOff, chest[1] + cz[1] * czOff, chest[2] + cz[2] * czOff], r: 0.1 * s },
       { a: chest, b: pel, r: 0.12 * s },
       // (the legs & boots: thick enough that the tunic's panels clear thighs, shins, and heels even during jump knee tucks!)
       { a: j(this.bi.thighL), b: j(this.bi.shinL), r: 0.125 * s }, { a: j(this.bi.thighR), b: j(this.bi.shinR), r: 0.125 * s },
@@ -3633,45 +3676,139 @@ export class HeroRig {
     // (the body's pose — where the cloth hangs from, the legs it clears — moved through the steps from the last frame's
     // to this one's, not jumped there at the first: a leg a frame carries 15 cm into the cloth threw it about)
     const fresh = this.first || !this.lastCaps;
-    const last = fresh ? caps : this.lastCaps!.map((c) => ({ a: add(c.a, shift), b: add(c.b, shift), r: c.r }));
-    const capsAt = (u: number) => caps.map((c, i) => ({ a: lerp3(last[i].a, c.a, u), b: lerp3(last[i].b, c.b, u), r: c.r }));
-    const stepCaps = Array.from({ length: n }, (_, k) => capsAt((k + 1) / n));
+    const nCaps = caps.length;
+    let last = this.chainLastCaps;
+    if (!last || last.length !== nCaps) {
+      last = this.chainLastCaps = Array.from({ length: nCaps }, () => ({ a: [0, 0, 0] as V3, b: [0, 0, 0] as V3, r: 0 }));
+    }
+    if (fresh) {
+      for (let i = 0; i < nCaps; i++) {
+        const c = caps[i], l = last[i];
+        l.a[0] = c.a[0]; l.a[1] = c.a[1]; l.a[2] = c.a[2];
+        l.b[0] = c.b[0]; l.b[1] = c.b[1]; l.b[2] = c.b[2];
+        l.r = c.r;
+      }
+    } else {
+      const prevCaps = this.lastCaps!;
+      for (let i = 0; i < nCaps; i++) {
+        const p = prevCaps[i], l = last[i];
+        l.a[0] = p.a[0] + shx; l.a[1] = p.a[1] + shy; l.a[2] = p.a[2] + shz;
+        l.b[0] = p.b[0] + shx; l.b[1] = p.b[1] + shy; l.b[2] = p.b[2] + shz;
+        l.r = p.r;
+      }
+    }
+    const stepCaps = this.chainStepCaps;
+    if (stepCaps.length > 0 && stepCaps[0].length !== nCaps) stepCaps.length = 0;
+    while (stepCaps.length < n) {
+      stepCaps.push(Array.from({ length: nCaps }, () => ({ a: [0, 0, 0] as V3, b: [0, 0, 0] as V3, r: 0 })));
+    }
+    for (let k = 0; k < n; k++) {
+      const u = (k + 1) / n, sc = stepCaps[k];
+      for (let i = 0; i < nCaps; i++) {
+        const la = last[i].a, lb = last[i].b, ca = caps[i].a, cb = caps[i].b, dst = sc[i];
+        dst.a[0] = la[0] + (ca[0] - la[0]) * u; dst.a[1] = la[1] + (ca[1] - la[1]) * u; dst.a[2] = la[2] + (ca[2] - la[2]) * u;
+        dst.b[0] = lb[0] + (cb[0] - lb[0]) * u; dst.b[1] = lb[1] + (cb[1] - lb[1]) * u; dst.b[2] = lb[2] + (cb[2] - lb[2]) * u;
+        dst.r = caps[i].r;
+      }
+    }
     this.lastCaps = caps;
-    for (const c of this.chains) {
-      const tg = c.hips ? c.bind.map((p) => hang(this.asset, this.bones, p)) : c.bind.map((p) => this.skinPoint(c.parent, p));
+    for (let ci = 0; ci < this.chains.length; ci++) {
+      const c = this.chains[ci], m = c.bind.length;
+      let tg = c.tg;
+      if (!tg || tg.length !== m) tg = c.tg = Array.from({ length: m }, () => [0, 0, 0] as V3);
+      if (c.hips) {
+        for (let i = 0; i < m; i++) {
+          const h = hang(this.asset, this.bones, c.bind[i]), dst = tg[i];
+          dst[0] = h[0]; dst[1] = h[1]; dst[2] = h[2];
+        }
+      } else {
+        const bm = this.bones, bk = c.parent * 16;
+        const m0 = bm[bk], m1 = bm[bk + 1], m2 = bm[bk + 2];
+        const m4 = bm[bk + 4], m5 = bm[bk + 5], m6 = bm[bk + 6];
+        const m8 = bm[bk + 8], m9 = bm[bk + 9], m10 = bm[bk + 10];
+        const m12 = bm[bk + 12], m13 = bm[bk + 13], m14 = bm[bk + 14];
+        for (let i = 0; i < m; i++) {
+          const p = c.bind[i], dst = tg[i];
+          dst[0] = m0 * p[0] + m4 * p[1] + m8 * p[2] + m12;
+          dst[1] = m1 * p[0] + m5 * p[1] + m9 * p[2] + m13;
+          dst[2] = m2 * p[0] + m6 * p[1] + m10 * p[2] + m14;
+        }
+      }
       const reseat = this.first || !c.prev;
-      if (this.first || !c.prev) { c.ch.reset(tg); c.prev = c.ch.p.map((q) => [...q] as V3); c.last = tg; }
-      else if (mk > 0.001) { c.ch.shift(shift); for (let i = 0; i < c.prev.length; i++) c.prev[i] = add(c.prev[i], shift); }
-      const from = fresh || !c.last ? tg : c.last.map((q) => add(q, shift));
-      c.last = tg;
+      if (reseat) {
+        c.ch.reset(tg);
+        c.prev = Array.from({ length: m }, (_, i) => [c.ch.p[i][0], c.ch.p[i][1], c.ch.p[i][2]] as V3);
+        c.last = Array.from({ length: m }, (_, i) => [tg[i][0], tg[i][1], tg[i][2]] as V3);
+      } else if (mk > 0.001) {
+        c.ch.shift(shift);
+        for (let i = 0; i < m; i++) { const pr = c.prev![i]; pr[0] += shx; pr[1] += shy; pr[2] += shz; }
+      }
+      let from = c.from;
+      if (!from || from.length !== m) from = c.from = Array.from({ length: m }, () => [0, 0, 0] as V3);
+      if (fresh || !c.last) {
+        for (let i = 0; i < m; i++) { from[i][0] = tg[i][0]; from[i][1] = tg[i][1]; from[i][2] = tg[i][2]; }
+      } else {
+        for (let i = 0; i < m; i++) { const q = c.last[i]; from[i][0] = q[0] + shx; from[i][1] = q[1] + shy; from[i][2] = q[2] + shz; }
+      }
+      if (!c.last || c.last.length !== m) c.last = Array.from({ length: m }, () => [0, 0, 0] as V3);
+      for (let i = 0; i < m; i++) { c.last[i][0] = tg[i][0]; c.last[i][1] = tg[i][1]; c.last[i][2] = tg[i][2]; }
       // (posed upside down — a fold, down dog — the cloth and the hair hang as they fall, not as they hang standing: its
       // pull toward its rest shape let go, its swing let out past its usual cone)
-      const up = this.skinDir(c.parent, [0, 1, 0]), ul = len(up) || 1;
+      const up = this.skinDir(c.parent, [0, 1, 0]), ul = Math.sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]) || 1;
       c.drape = this.posedW * smoothstep(0.55, 1.5, Math.acos(clamp(up[1] / ul, -1, 1)));
       const hold = c.hips ? HOLD * this.hangK : 0;
       const hair = c.parent === this.bi.head, braid = /braid/i.test(c.name);
       // Soften distal braid rest pull slightly (keeping root i=0,1 anchored) so rhythmic walk/run lateral pendulum reads cleanly
-      const pull = c.pull.map((p, i) => 1 - Math.pow(1 - (i === 0 ? p : Math.max(p * (braid && i >= 2 ? 0.68 : 1) * (1 - 0.88 * c.drape!), hold)), H * 60));
+      let pull = c.pullBuf;
+      if (!pull || pull.length !== m) pull = c.pullBuf = new Array(m);
+      const drapeScale = 1 - 0.88 * c.drape, expH = H * 60;
+      for (let i = 0; i < m; i++) {
+        const p = c.pull[i];
+        pull[i] = 1 - Math.pow(1 - (i === 0 ? p : Math.max(p * (braid && i >= 2 ? 0.68 : 1) * drapeScale, hold)), expH);
+      }
       const uw = hair ? this.subW : Math.min(1, this.subW + this.surfW);
       const surf = hair && I.waterLevel != null && this.surfW > 0.5 ? I.waterLevel - 0.02 : -Infinity;
       const cWind = hair ? hairWind : wind;
+      const capStart = hair ? 1 : 3;
+      const grav = lerp(c.grav, -0.8, uw), drag = 1 + 3.5 * uw;
+      let tk = c.tk;
+      if (!tk || tk.length !== m) tk = c.tk = Array.from({ length: m }, () => [0, 0, 0] as V3);
       for (let k = 0; k < n; k++) {
-        for (let i = 0; i < c.prev.length; i++) c.prev[i] = [...c.ch.p[i]] as V3;
-        const u = (k + 1) / n, tk = tg.map((q, i) => lerp3(from[i], q, u));
-        c.ch.step(H, tk, pull, cWind, hair ? stepCaps[k].slice(1) : stepCaps[k].slice(3), I.ground, lerp(c.grav, -0.8, uw), 1 + 3.5 * uw, surf);
+        const prev = c.prev!, cp = c.ch.p;
+        for (let i = 0; i < m; i++) { const pr = prev[i], q = cp[i]; pr[0] = q[0]; pr[1] = q[1]; pr[2] = q[2]; }
+        const u = (k + 1) / n;
+        for (let i = 0; i < m; i++) {
+          const fr = from[i], q = tg[i], dst = tk[i];
+          dst[0] = fr[0] + (q[0] - fr[0]) * u; dst[1] = fr[1] + (q[1] - fr[1]) * u; dst[2] = fr[2] + (q[2] - fr[2]) * u;
+        }
+        c.ch.step(H, tk, pull, cWind, stepCaps[k], I.ground, grav, drag, surf, capStart);
         // (the braid kept behind her back, within her shoulders' width: swung round her side as she turns to sit, it
         // would come to rest in front of her and through her chest, the capsules being slimmer than her)
-        if (braid) for (let i = 1; i < c.ch.p.length; i++) {
-          const q = c.ch.p[i], d = sub(q, chest), fz = dot(d, cz) + 0.04 * s;
-          if (fz > 0 && Math.abs(dot(d, cx)) < 0.2 * s && d[1] < 0.12 * s && d[1] > -0.5 * s) { q[0] -= cz[0] * fz; q[1] -= cz[1] * fz; q[2] -= cz[2] * fz; }
+        if (braid) {
+          const chx = chest[0], chy = chest[1], chz = chest[2];
+          for (let i = 1; i < m; i++) {
+            const q = cp[i], dx = q[0] - chx, dy = q[1] - chy, dz = q[2] - chz;
+            const fz = dx * cz[0] + dy * cz[1] + dz * cz[2] + 0.04 * s;
+            if (fz > 0 && Math.abs(dx * cx[0] + dy * cx[1] + dz * cx[2]) < 0.2 * s && dy < 0.12 * s && dy > -0.5 * s) {
+              q[0] -= cz[0] * fz; q[1] -= cz[1] * fz; q[2] -= cz[2] * fz;
+            }
+          }
         }
       }
-      let P = c.ch.p.map((q, i) => lerp3(c.prev![i], q, f));
-      const r0 = sub(tg[0], P[0]);
-      for (let i = 0; i < P.length; i++) P[i] = add(P[i], r0);
+      let P = c.outP;
+      if (!P || P.length !== m) P = c.outP = Array.from({ length: m }, () => [0, 0, 0] as V3);
+      const prev = c.prev!, cp = c.ch.p;
+      for (let i = 0; i < m; i++) {
+        const pr = prev[i], q = cp[i], dst = P[i];
+        dst[0] = pr[0] + (q[0] - pr[0]) * f;
+        dst[1] = pr[1] + (q[1] - pr[1]) * f;
+        dst[2] = pr[2] + (q[2] - pr[2]) * f;
+      }
+      const r0x = tg[0][0] - P[0][0], r0y = tg[0][1] - P[0][1], r0z = tg[0][2] - P[0][2];
+      for (let i = 0; i < m; i++) { P[i][0] += r0x; P[i][1] += r0y; P[i][2] += r0z; }
       if (!/loop/i.test(c.name)) P = this.grace(c, P, tg, dt, cWind, caps, hair);
       const bz = this.skinDir(c.parent, [0, 0, 1]);
-      for (let i = 0; i < P.length - 1; i++) {
+      for (let i = 0; i < m - 1; i++) {
         const r = norm(sub(tg[i + 1], tg[i])), z = norm(sub(P[i + 1], P[i]));
         let upv = norm(rej(bz, r));
         const ax = cross(r, z), sa = len(ax);
@@ -3700,39 +3837,63 @@ export class HeroRig {
     const tt = this.graceT;
     // (the swing followed in the parent bone's own axes: her turning carries the cloth round with her)
     const X = norm(this.skinDir(c.parent, [1, 0, 0])), Y = norm(this.skinDir(c.parent, [0, 1, 0])), Z = norm(this.skinDir(c.parent, [0, 0, 1]));
-    const toL = (v: V3): V3 => [dot(v, X), dot(v, Y), dot(v, Z)];
-    const toW = (v: V3): V3 => add(add(scale(X, v[0]), scale(Y, v[1])), scale(Z, v[2]));
-    const Q: V3[] = [tg[0]];
+    const parentX = this.skinDir(c.parent, [1, 0, 0]);
+    let Q = c.graceQ;
+    if (!Q || Q.length !== n) Q = c.graceQ = Array.from({ length: n }, () => [0, 0, 0] as V3);
+    Q[0][0] = tg[0][0]; Q[0][1] = tg[0][1]; Q[0][2] = tg[0][2];
+    const wOmega = tt * (2 * Math.PI / 2.6);
     for (let i = 0; i < n - 1; i++) {
-      const rd = norm(sub(tg[i + 1], tg[i])), pd = norm(sub(P[i + 1], P[i]));
+      const rdx = tg[i + 1][0] - tg[i][0], rdy = tg[i + 1][1] - tg[i][1], rdz = tg[i + 1][2] - tg[i][2];
+      const segL = Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz), invL = segL || 1;
+      const rd: V3 = [rdx / invL, rdy / invL, rdz / invL];
+      const pd = norm(sub(P[i + 1], P[i]));
       // the physics' swing as a rotation vector, held in its cone
       const ax = cross(rd, pd), sa = len(ax);
       let a = Math.atan2(sa, dot(rd, pd));
       a = Math.min(a, maxA);
-      const w: V3 = sa > 1e-6 ? scale(ax, a / sa) : [0, 0, 0];
+      const wx = sa > 1e-6 ? ax[0] * (a / sa) : 0, wy = sa > 1e-6 ? ax[1] * (a / sa) : 0, wz = sa > 1e-6 ? ax[2] * (a / sa) : 0;
       // the billow: about the axis across the wind (or her side), slow, a little later down the chain
-      const bax = norm(len(cross(rd, wdir)) > 0.2 ? cross(rd, wdir) : this.skinDir(c.parent, [1, 0, 0]));
-      const b = billow * Math.sin(tt * (2 * Math.PI / 2.6) - i * 0.7 + c.b0);
-      const goal = toL(add(w, scale(bax, b)));
+      const cr = cross(rd, wdir);
+      const bax = norm(len(cr) > 0.2 ? cr : parentX);
+      const b = billow * Math.sin(wOmega - i * 0.7 + c.b0);
+      const gx = wx + bax[0] * b, gy = wy + bax[1] * b, gz = wz + bax[2] * b;
+      const g0 = gx * X[0] + gy * X[1] + gz * X[2];
+      const g1 = gx * Y[0] + gy * Y[1] + gz * Y[2];
+      const g2 = gx * Z[0] + gy * Z[1] + gz * Z[2];
       // Hair/braid gets lively cascading underdamped whip (21 -> 14 rad/s, z = 0.56 root-to-tip) so it genuinely
       // finishes every sprint, brake, jump, and turn! Garment cloth keeps calm critically damped grace (3.8 rad/s).
       const segU = n > 2 ? i / (n - 2) : 0;
       const hairW = lerp(21.0, 14.0, segU);
-      for (let k = 0; k < 3; k++) {
-        if (reset) { W[i][k] = goal[k]; Wv[i][k] = 0; }
-        else if (hair) [W[i][k], Wv[i][k]] = springExact(W[i][k], Wv[i][k], goal[k], hairW, 0.56, dt);
-        else [W[i][k], Wv[i][k]] = cdSpring(W[i][k], Wv[i][k], goal[k], 3.8, dt);
+      const Wi = W[i], Wvi = Wv[i];
+      if (reset) { Wi[0] = g0; Wi[1] = g1; Wi[2] = g2; Wvi[0] = 0; Wvi[1] = 0; Wvi[2] = 0; }
+      else if (hair) {
+        [Wi[0], Wvi[0]] = springExact(Wi[0], Wvi[0], g0, hairW, 0.56, dt);
+        [Wi[1], Wvi[1]] = springExact(Wi[1], Wvi[1], g1, hairW, 0.56, dt);
+        [Wi[2], Wvi[2]] = springExact(Wi[2], Wvi[2], g2, hairW, 0.56, dt);
+      } else {
+        [Wi[0], Wvi[0]] = cdSpring(Wi[0], Wvi[0], g0, 3.8, dt);
+        [Wi[1], Wvi[1]] = cdSpring(Wi[1], Wvi[1], g1, 3.8, dt);
+        [Wi[2], Wvi[2]] = cdSpring(Wi[2], Wvi[2], g2, 3.8, dt);
       }
-      const ww = toW(W[i]), wl = len(ww);
-      const d = wl > 1e-6 ? rotateAxis(rd, scale(ww, 1 / wl), Math.min(wl, maxA + 0.1)) : rd;
-      Q.push(add(Q[i], scale(d, len(sub(tg[i + 1], tg[i])) * stretch)));
+      const wwx = X[0] * Wi[0] + Y[0] * Wi[1] + Z[0] * Wi[2];
+      const wwy = X[1] * Wi[0] + Y[1] * Wi[1] + Z[1] * Wi[2];
+      const wwz = X[2] * Wi[0] + Y[2] * Wi[1] + Z[2] * Wi[2];
+      const wwl = Math.sqrt(wwx * wwx + wwy * wwy + wwz * wwz);
+      const iw = wwl > 1e-6 ? 1 / wwl : 0;
+      const d = wwl > 1e-6 ? rotateAxis(rd, [wwx * iw, wwy * iw, wwz * iw], Math.min(wwl, maxA + 0.1)) : rd;
+      const stL = segL * stretch, qi = Q[i], qn = Q[i + 1];
+      qn[0] = qi[0] + d[0] * stL; qn[1] = qi[1] + d[1] * stL; qn[2] = qi[2] + d[2] * stL;
     }
     // (out of her legs and body, then each segment its length again)
-    const body = hair ? caps.slice(1) : caps.slice(2);
+    const capStart = hair ? 1 : 2, capLen = caps.length;
     for (let i = 1; i < n; i++) {
-      for (const cp of body) capPush(Q[i], cp);
-      const L = len(sub(tg[i], tg[i - 1])) * stretch, dd = sub(Q[i], Q[i - 1]), l = len(dd) || 1;
-      Q[i] = add(Q[i - 1], scale(dd, L / l));
+      const qi = Q[i], qp = Q[i - 1];
+      for (let ci = capStart; ci < capLen; ci++) capPush(qi, caps[ci]);
+      const tdx = tg[i][0] - tg[i - 1][0], tdy = tg[i][1] - tg[i - 1][1], tdz = tg[i][2] - tg[i - 1][2];
+      const L = Math.sqrt(tdx * tdx + tdy * tdy + tdz * tdz) * stretch;
+      const ddx = qi[0] - qp[0], ddy = qi[1] - qp[1], ddz = qi[2] - qp[2];
+      const l = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz) || 1, k = L / l;
+      qi[0] = qp[0] + ddx * k; qi[1] = qp[1] + ddy * k; qi[2] = qp[2] + ddz * k;
     }
     return Q;
   }

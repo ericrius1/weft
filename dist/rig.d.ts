@@ -787,6 +787,8 @@ export declare class HeroRig {
     /** the thumb's swing in and its curl that put its tip on a world point */
     private thumbIK;
     private rigFace;
+    private chainLastCaps;
+    private chainStepCaps;
     private rigChains;
     /** the cloth's look, one for every way she moves (walking, running, riding, flying, gliding, swimming, sitting, the
      *  bending): its chain as the physics left it, taken as each segment's swing from where it hangs at rest, and that
