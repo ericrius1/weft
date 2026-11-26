@@ -32,19 +32,22 @@ export declare function filmSink(opts: {
     route?: string;
 }): Plugin;
 /** The big assets on R2 (San Francisco's and Boulder's): an app's /assets beside it in development, its big files
- *  content-addressed on R2 once published (tools/publish-assets.mjs) and listed in a map, path under /assets → URL.
+ *  content-addressed on R2 once published (tools/publish-assets.mjs) and listed in a map, path under /assets → URL or
+ *  origin-relative object key (`objects/<sha256>/<name>`).
  *  - dev and preview: an asset that isn't on this disk is redirected to its R2 copy, so a worktree or a fresh clone works
  *    without every file (one that is here is always served from here: edit away). The map is re-read when it changes.
  *  - a build: the map shipped as dist/assets/remote.json (Assets.init reads it), and the files that live only on R2
  *    (`omit`) left out of dist.
  *
- *    plugins: [weft(), remoteAssets({ omit: /^tiles\/.*\.pack$/ })]
+ *    plugins: [weft(), remoteAssets({ origin: 'https://assets.example.com', omit: /^tiles\/.*\.pack$/ })]
  */
 export declare function remoteAssets(opts?: {
     /** the assets folder (default public/assets, under the Vite root) */
     assets?: string;
     /** the map (default remote-assets.json beside the Vite config's root) */
     map?: string;
+    /** base origin used to resolve relative entries in the map (e.g. `objects/<sha256>/<name>`); absolute URLs stay as-is */
+    origin?: string;
     /** the URL prefix the assets are served under (default '/assets/'; anywhere in the path: a page under a base) */
     prefix?: string;
     /** what a build leaves out of dist (paths under assets): R2 serves it */
@@ -88,6 +91,8 @@ export declare function earlyFetch(opts: {
     prefix?: string;
     /** the R2 map whose hosts are preconnected to (default remote-assets.json; null: none) */
     map?: string | null;
+    /** base origin used to resolve relative entries in the map when computing preconnect hosts */
+    origin?: string;
     /** the global the fetches are kept in (default '__early') */
     global?: string;
 }): Plugin;
