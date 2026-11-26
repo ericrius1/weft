@@ -256,3 +256,35 @@ test('a fallback that failed too draws nothing; one in a bundle is recorded once
   bundle.encode(encoder());
   assert.equal(bundle.records, n, 'replayed after that');
 });
+
+test('consecutive draws sharing vertex/index buffers deduplicate setVertexBuffer/setIndexBuffer until forgetPassState', async () => {
+  const { forgetPassState } = await import('../dist/src/passes.js');
+  const kit = fakeKit(), sh = shader('test/vbib.wgsl', TRI);
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }] });
+  const vb1 = new StorageBuffer(kit, { size: 64 }), vb2 = new StorageBuffer(kit, { size: 64 });
+  const ib1 = new StorageBuffer(kit, { size: 64 });
+  const layout = { arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] };
+  const d1 = pass.draw(sh, { label: 'd1', count: 3, vertexBuffers: [{ layout, buffer: vb1 }], indices: { buffer: ib1, format: 'uint16' } });
+  const d2 = pass.draw(sh, { label: 'd2', count: 3, vertexBuffers: [{ layout, buffer: vb1 }], indices: { buffer: ib1, format: 'uint16' } });
+  const d3 = pass.draw(sh, { label: 'd3', count: 3, vertexBuffers: [{ layout, buffer: vb2, offset: 16 }], indices: { buffer: ib1, format: 'uint16', offset: 4 } });
+  await pass.ready();
+  const log = [];
+  const pe = {
+    setPipeline: (p) => log.push(['pipe', p.label]),
+    setBindGroup() {},
+    setVertexBuffer: (slot, buf, off) => log.push(['vb', slot, buf === vb1.gpu ? 'vb1' : 'vb2', off]),
+    setIndexBuffer: (buf, fmt, off) => log.push(['ib', fmt, off]),
+    draw() {}, drawIndexed: () => log.push(['drawIndexed']), drawIndirect() {}, drawIndexedIndirect() {},
+  };
+  d1.encodeInto(pe);
+  d2.encodeInto(pe);
+  d3.encodeInto(pe);
+  forgetPassState(pe);
+  d3.encodeInto(pe);
+  assert.deepEqual(log, [
+    ['pipe', 'd1'], ['vb', 0, 'vb1', 0], ['ib', 'uint16', 0], ['drawIndexed'],
+    ['drawIndexed'],
+    ['vb', 0, 'vb2', 16], ['ib', 'uint16', 4], ['drawIndexed'],
+    ['pipe', 'd1'], ['vb', 0, 'vb2', 16], ['ib', 'uint16', 4], ['drawIndexed'],
+  ]);
+});

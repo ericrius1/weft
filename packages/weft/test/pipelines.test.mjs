@@ -407,3 +407,25 @@ test('Taau rejects a motion target whose sample count differs from depth', async
   const motion = { samples: 1 };
   assert.throws(() => new Taau(kit, hdr, depth, { motion }), /sample count/i);
 });
+
+test('holding compiler defers kit.module() until a parked pipeline actually starts compiling', async () => {
+  const kit = fakeKit(), sh = shader('test/defer-mod.wgsl', FILL);
+  let moduleCalls = 0;
+  const baseMod = kit.module;
+  kit.module = async (s) => { moduleCalls++; return baseMod(s); };
+  const starters = new Map();
+  kit.compiler = {
+    holding: true,
+    compile: (rec, start) => new Promise((res, rej) => starters.set(rec, { start, res, rej })),
+    now() {},
+  };
+  const a = new Compute(kit, sh, { label: 'parked', entry: 'fill', bind: { data: buffer(kit) } });
+  await kit.ready();
+  assert.equal(starters.size, 1, 'parked record was registered with compiler');
+  assert.equal(moduleCalls, 0, 'module() not called while parked');
+  const s = starters.get(a.pipe);
+  s.start().then(s.res, s.rej);
+  await a.pipe.pending;
+  assert.equal(moduleCalls, 1, 'module() called once compile started');
+  assert.ok(a.pipe.pipeline && !a.pipe.error);
+});

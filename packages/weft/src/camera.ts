@@ -1,6 +1,6 @@
 // A camera is just numbers: position + orientation + projection. Each kit View owns one and writes it into the
 // group-0 Frame uniform at the start of every run. Reversed-Z, infinite far plane by default.
-import { type V3, type M4, mat4, mat4Mul, mat4Invert, perspectiveReversed, perspectiveReversedFar, orthoReversed, lookAt, norm, sub, cross, frustumPlanes } from './math';
+import { type V3, type M4, mat4, mat4Mul, mat4Invert, perspectiveReversed, perspectiveReversedFar, orthoReversed, norm, sub, frustumPlanes } from './math';
 
 export class Camera {
   position: V3 = [0, 2, 5];
@@ -76,25 +76,42 @@ export class Camera {
     if (this.viewOverride) {
       this.view.set(this.viewOverride);
       mat4Invert(this.view, this.invView);
-      this.right = norm([this.invView[0], this.invView[1], this.invView[2]]);
-      this.up = norm([this.invView[4], this.invView[5], this.invView[6]]);
-      this.forward = norm([-this.invView[8], -this.invView[9], -this.invView[10]]);
-      this.position = [this.invView[12], this.invView[13], this.invView[14]];
+      const iv = this.invView;
+      const rl = Math.sqrt(iv[0] * iv[0] + iv[1] * iv[1] + iv[2] * iv[2]) || 1;
+      this.right[0] = iv[0] / rl; this.right[1] = iv[1] / rl; this.right[2] = iv[2] / rl;
+      const ul = Math.sqrt(iv[4] * iv[4] + iv[5] * iv[5] + iv[6] * iv[6]) || 1;
+      this.up[0] = iv[4] / ul; this.up[1] = iv[5] / ul; this.up[2] = iv[6] / ul;
+      const fl = Math.sqrt(iv[8] * iv[8] + iv[9] * iv[9] + iv[10] * iv[10]) || 1;
+      this.forward[0] = -iv[8] / fl; this.forward[1] = -iv[9] / fl; this.forward[2] = -iv[10] / fl;
+      this.position[0] = iv[12]; this.position[1] = iv[13]; this.position[2] = iv[14];
     } else {
       const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
-      const f: V3 = [-sy * cp, sp, -cy * cp];
-      let r: V3 = [cy, 0, -sy];
-      let u = cross(r, f);
+      const fx = -sy * cp, fy = sp, fz = -cy * cp;
+      let rx = cy, ry = 0, rz = -sy;
+      let ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
       if (this.roll) {
         const c = Math.cos(this.roll), s = Math.sin(this.roll);
-        const r2: V3 = [r[0] * c + u[0] * s, r[1] * c + u[1] * s, r[2] * c + u[2] * s];
-        u = cross(r2, f);
-        r = r2;
+        const r2x = rx * c + ux * s, r2y = ry * c + uy * s, r2z = rz * c + uz * s;
+        ux = r2y * fz - r2z * fy; uy = r2z * fx - r2x * fz; uz = r2x * fy - r2y * fx;
+        rx = r2x; ry = r2y; rz = r2z;
       }
-      this.forward = f; this.right = r; this.up = u;
-      const p = this.position;
-      lookAt(p, [p[0] + f[0], p[1] + f[1], p[2] + f[2]], u, this.view);
-      mat4Invert(this.view, this.invView);
+      this.forward[0] = fx; this.forward[1] = fy; this.forward[2] = fz;
+      this.right[0] = rx; this.right[1] = ry; this.right[2] = rz;
+      this.up[0] = ux; this.up[1] = uy; this.up[2] = uz;
+      const p = this.position, px = p[0], py = p[1], pz = p[2];
+      const v = this.view;
+      v[0] = rx; v[1] = ux; v[2] = -fx; v[3] = 0;
+      v[4] = ry; v[5] = uy; v[6] = -fy; v[7] = 0;
+      v[8] = rz; v[9] = uz; v[10] = -fz; v[11] = 0;
+      v[12] = -(rx * px + ry * py + rz * pz);
+      v[13] = -(ux * px + uy * py + uz * pz);
+      v[14] = fx * px + fy * py + fz * pz;
+      v[15] = 1;
+      const iv = this.invView;
+      iv[0] = rx; iv[1] = ry; iv[2] = rz; iv[3] = 0;
+      iv[4] = ux; iv[5] = uy; iv[6] = uz; iv[7] = 0;
+      iv[8] = -fx; iv[9] = -fy; iv[10] = -fz; iv[11] = 0;
+      iv[12] = px; iv[13] = py; iv[14] = pz; iv[15] = 1;
     }
     if (this.ortho) {
       const { halfWidth: w, halfHeight: h } = this.ortho;
@@ -121,15 +138,22 @@ export class Camera {
     mat4Mul(this.proj, this.viewRel, this.viewProjRel);
     mat4Invert(this.viewProjRel, this.invViewProjRel);
     const p = this.position;
-    for (let i = 0; i < 3; i++) this.camLo[i] = p[i] - Math.fround(p[i]);
-    if (this.first) { this.prevViewProj.set(this.viewProj); this.prevRot.set(this.viewProjRel); this.prevPos = [p[0], p[1], p[2]]; this.first = false; }
+    this.camLo[0] = p[0] - Math.fround(p[0]);
+    this.camLo[1] = p[1] - Math.fround(p[1]);
+    this.camLo[2] = p[2] - Math.fround(p[2]);
+    if (this.first) {
+      this.prevViewProj.set(this.viewProj);
+      this.prevRot.set(this.viewProjRel);
+      this.prevPos[0] = p[0]; this.prevPos[1] = p[1]; this.prevPos[2] = p[2];
+      this.first = false;
+    }
     // last frame's rotation-only matrix times a translation by (this eye − last eye), the difference in doubles: a
     // point at r from this eye is at r + (eye − lastEye) from the last one, so prevViewProjRel · r = prevViewProj · p
     const m = this.prevRot, o = this.prevViewProjRel, d0 = p[0] - this.prevPos[0], d1 = p[1] - this.prevPos[1], d2 = p[2] - this.prevPos[2];
     o.set(m);
     for (let r = 0; r < 4; r++) o[12 + r] = m[12 + r] + (m[r] * d0 + m[4 + r] * d1 + m[8 + r] * d2);
     // (this eye is the next update's last eye)
-    this.prevPos = [p[0], p[1], p[2]];
+    this.prevPos[0] = p[0]; this.prevPos[1] = p[1]; this.prevPos[2] = p[2];
   }
 
   /** forget motion history (after a cut, so motion vectors don't smear; a Taau drops its history too) */
@@ -139,9 +163,13 @@ export class Camera {
 
   /** sphere-in-frustum test using the last update's planes */
   sees(c: ArrayLike<number>, r: number) {
-    const p = this.planes;
-    for (let i = 0; i < 24; i += 4) if (p[i] * c[0] + p[i + 1] * c[1] + p[i + 2] * c[2] + p[i + 3] < -r) return false;
-    return true;
+    const p = this.planes, cx = c[0], cy = c[1], cz = c[2], nr = -r;
+    return p[0] * cx + p[1] * cy + p[2] * cz + p[3] >= nr
+      && p[4] * cx + p[5] * cy + p[6] * cz + p[7] >= nr
+      && p[8] * cx + p[9] * cy + p[10] * cz + p[11] >= nr
+      && p[12] * cx + p[13] * cy + p[14] * cz + p[15] >= nr
+      && p[16] * cx + p[17] * cy + p[18] * cz + p[19] >= nr
+      && p[20] * cx + p[21] * cy + p[22] * cz + p[23] >= nr;
   }
 
   /** world-space ray through a pixel (for picking) */

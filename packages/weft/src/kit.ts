@@ -4,7 +4,7 @@
 // canvas is SDR (the preferred 8-bit format) unless an HDR one is asked for and the display has it (kit.hdr).
 import frameShader from '../shaders/frame.wgsl';
 import type { Shader, StructDef } from './shader';
-import { sourceLine } from './shader';
+import { sourceLine, structLayoutGen } from './shader';
 import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction, type StorageOptions, type TextureDesc } from './resources';
 import { Compute, RenderPass, RawItem, pipelinesOf, settle, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem,
@@ -169,6 +169,9 @@ export class Kit {
   private warmHits = 0;
   private warmEvictions = 0;
   readonly uniformBuffers = new Set<UniformBuffer<any>>();
+  /** uniform buffers whose CPU data changed since their last upload (checked by kit.run() instead of scanning all uniformBuffers) */
+  readonly dirtyUniforms = new Set<UniformBuffer<any>>();
+  private seenStructGen = structLayoutGen;
   readonly textures = new Set<Texture>();
   /** the storage buffers made by kit.storage (for the memory tally) */
   readonly buffers = new Set<StorageBuffer>();
@@ -672,8 +675,15 @@ export class Kit {
   run(items: readonly RunEntry[]) {
     this.bindEpoch++;
     this.mainView.update();
-    for (const v of this.views) v.update();
-    for (const u of this.uniformBuffers) u.upload();
+    const views = this.views;
+    for (let i = 0; i < views.length; i++) views[i].update();
+    if (this.seenStructGen !== structLayoutGen) {
+      this.seenStructGen = structLayoutGen;
+      for (const u of this.uniformBuffers) u.checkLayout();
+    }
+    if (this.dirtyUniforms.size > 0) {
+      for (const u of this.dirtyUniforms) u.upload();
+    }
     const scoped = this.debug;
     const depth = this.runDepth++;
     const cbs = this.cbPool[depth] ?? (this.cbPool[depth] = []);

@@ -124,3 +124,68 @@ test('ensure() grows a buffer; after destroy() it makes it anew, counted by the 
   assert.equal(b.size, 304);
   assert.equal(kit.buffers.size, 1);
 });
+
+test('UniformBuffer tracks dirtyUniforms and skips writeBuffer when set() writes bit-identical values', async () => {
+  const { UniformBuffer } = await import('../dist/src/resources.js');
+  const { defineShader } = await import('../dist/src/shader.js');
+  const { reflectWgsl } = await import('../dist/plugin/wgsl.js');
+  const code = `struct U { a: f32, v: vec3f, m: mat4x4f }
+@group(0) @binding(0) var<uniform> u: U;
+@fragment fn fs() -> @location(0) vec4f { return vec4f(u.v * u.a, u.m[0][0]); }`;
+  const sh = defineShader({ id: 'test/ub-dirty.wgsl', label: 'ub', code, files: ['ub'], runs: [], reflect: reflectWgsl(code) });
+  let writes = 0;
+  const kit = {
+    resourceGen: 0,
+    uniformBuffers: new Set(),
+    dirtyUniforms: new Set(),
+    device: { createBuffer: (d) => ({ ...d, destroy() {} }) },
+    queue: { writeBuffer: () => { writes++; } },
+  };
+  const ub = new UniformBuffer(kit, sh.structs.U, 'u');
+  kit.uniformBuffers.add(ub);
+  assert.equal(ub.dirty, true);
+  assert.equal(kit.dirtyUniforms.has(ub), true);
+  ub.upload();
+  assert.equal(writes, 1);
+  assert.equal(ub.dirty, false);
+  assert.equal(kit.dirtyUniforms.has(ub), false);
+
+  // Bit-identical write leaves buffer clean and skips upload
+  const mat = new Float32Array(16);
+  ub.set({ a: 0, v: [0, 0, 0], m: mat });
+  assert.equal(ub.dirty, false);
+  assert.equal(kit.dirtyUniforms.has(ub), false);
+  ub.upload();
+  assert.equal(writes, 1);
+
+  // -0 vs +0 is detected bit-exact
+  ub.set({ a: -0 });
+  assert.equal(ub.dirty, true);
+  assert.equal(kit.dirtyUniforms.has(ub), true);
+  ub.upload();
+  assert.equal(writes, 2);
+
+  // Changed value marks dirty once; repeating the same value stays clean
+  mat[5] = 2;
+  ub.set({ a: 1.5, v: [1, 2, 3], m: mat });
+  assert.equal(ub.dirty, true);
+  assert.equal(kit.dirtyUniforms.has(ub), true);
+  ub.upload();
+  assert.equal(writes, 3);
+  ub.set({ a: 1.5, v: [1, 2, 3], m: mat });
+  assert.equal(ub.dirty, false);
+  assert.equal(kit.dirtyUniforms.has(ub), false);
+
+  // Direct view mutation + manual dirty = true still enters dirtyUniforms
+  ub.view.f32[0] = 9;
+  ub.dirty = true;
+  assert.equal(kit.dirtyUniforms.has(ub), true);
+  ub.upload();
+  assert.equal(writes, 4);
+  assert.equal(kit.dirtyUniforms.size, 0);
+
+  ub.dirty = true;
+  ub.destroy();
+  assert.equal(kit.dirtyUniforms.size, 0);
+  assert.equal(kit.uniformBuffers.size, 0);
+});
