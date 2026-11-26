@@ -250,6 +250,10 @@ export interface RenderPassOptions {
     /** optional ordered draw phases (e.g. ['opaque', 'alpha', 'water', 'translucent', 'skim']). When set, draws and
      *  bundles insert into their declared phase in registration order instead of appending to the end of `draws`. */
     phases?: readonly string[];
+    /** automatic subtle per-shader hardware depth bias for opaque triangle draws in this pass, preventing inter-draw
+     *  coplanar z-fighting with zero extra pipelines and zero GPU cost. Default true for passes with both colour and
+     *  writable depth attachments; ignored for depth-only (shadow) and read-only depth passes. */
+    autoDepthBias?: boolean;
 }
 /** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
 export interface DrawEncoder {
@@ -265,6 +269,7 @@ export interface DrawEncoder {
 /** forget the pipeline, vertex/index buffers and groups a pass has set (after a bundle or code outside weft changed them) */
 export declare function forgetPassState(enc: DrawEncoder): void;
 export type BlendMode = 'opaque' | 'alpha' | 'premultiplied' | 'add' | 'add-alpha' | 'multiply' | 'max' | GPUBlendState;
+export type DepthLayer = number | 'terrain' | 'base' | 'detail' | 'decal' | 'overlay';
 export interface DrawOptions<S extends Shader = Shader> {
     label?: string;
     vertex?: string;
@@ -283,6 +288,9 @@ export interface DrawOptions<S extends Shader = Shader> {
     depthBias?: number;
     depthBiasSlopeScale?: number;
     depthBiasClamp?: number;
+    /** semantic depth layer for reversed-Z coplanar tie-breaking ('terrain' < 'base' < 'detail' < 'decal' < 'overlay',
+     *  or an integer: < 0 = unbiased reference, 0 = base, > 0 = higher layers). Ignored when `depthBias` is set explicitly. */
+    depthLayer?: DepthLayer;
     unclippedDepth?: boolean;
     /** alpha to coverage (a multisampled pass only: on a one-sample pass it's drawn without). A fragment shader that
      *  declares `override ALPHA_TO_COVERAGE: bool` is told whether it's on, so it can cut out by alpha (discard) where

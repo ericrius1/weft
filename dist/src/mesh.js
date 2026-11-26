@@ -1,4 +1,6 @@
 import { mat4, mat4Mul, mat4Invert, compose, quatAxisAngle, norm, cross, sub } from './math';
+import { separateCoplanar } from './coplanar';
+export { findCoplanar, separateCoplanar } from './coplanar';
 export const VERTEX_BYTES = 40;
 const toSrgb8 = (c) => {
     const x = Math.max(0, Math.min(1, c));
@@ -235,8 +237,9 @@ export class MeshBuilder {
             this.idx.push(i + off);
         return this;
     }
-    /** interleaved vertex data (40 bytes per vertex) */
-    data() {
+    /** interleaved vertex data (40 bytes per vertex). Automatically separates coplanar overlapping faces unless
+     *  `opts.separateCoplanar === false`. */
+    data(opts) {
         const n = this.vertexCount;
         const buf = new ArrayBuffer(n * VERTEX_BYTES);
         const fv = new Float32Array(buf), uv = new Uint32Array(buf);
@@ -247,10 +250,19 @@ export class MeshBuilder {
             uv[i * 10 + 8] = u[i * 2];
             uv[i * 10 + 9] = u[i * 2 + 1];
         }
-        return { vertices: buf, indices: new Uint32Array(this.idx) };
+        const indices = new Uint32Array(this.idx);
+        const sep = opts?.separateCoplanar;
+        if (sep !== false && indices.length >= 6) {
+            separateCoplanar(fv, indices, { stride: 10, offset: 0, vertexCount: n, ...(typeof sep === 'object' ? sep : undefined) });
+        }
+        return { vertices: buf, indices };
     }
-    upload(kit, label = 'mesh') {
-        const { vertices, indices } = this.data();
+    /** separate coplanar overlapping faces in this builder in-place and return resolution stats */
+    separateCoplanar(opts) {
+        return separateCoplanar(this.f, this.idx, { stride: 8, offset: 0, vertexCount: this.vertexCount, ...opts });
+    }
+    upload(kit, label = 'mesh', opts) {
+        const { vertices, indices } = this.data(opts);
         return {
             vertices: kit.storage({ label: `${label}.v`, data: vertices, stride: VERTEX_BYTES }),
             indices: kit.storage({ label: `${label}.i`, data: indices, usage: ['index', 'storage', 'copy-dst'] }),

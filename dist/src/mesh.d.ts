@@ -1,6 +1,13 @@
 import type { Kit } from './kit';
 import type { StorageBuffer } from './resources';
 import { type V3, type M4 } from './math';
+import { type CoplanarOptions, type CoplanarStats } from './coplanar';
+export { findCoplanar, separateCoplanar, type CoplanarOptions, type CoplanarPair, type CoplanarStats } from './coplanar';
+export interface MeshDataOptions {
+    /** automatically detect and separate coplanar overlapping faces by 1 mm so meshes never z-fight (default true).
+     *  Pass `false` to skip, or `CoplanarOptions` to customize `eps`/`tol`/`minArea`. */
+    separateCoplanar?: boolean | CoplanarOptions;
+}
 export declare const VERTEX_BYTES = 40;
 export declare const packColor: (c: ArrayLike<number>) => number;
 export interface GpuMesh {
@@ -64,12 +71,15 @@ export declare class MeshBuilder {
     }): this;
     /** append another builder's geometry (already in world space) */
     merge(o: MeshBuilder): this;
-    /** interleaved vertex data (40 bytes per vertex) */
-    data(): {
+    /** interleaved vertex data (40 bytes per vertex). Automatically separates coplanar overlapping faces unless
+     *  `opts.separateCoplanar === false`. */
+    data(opts?: MeshDataOptions): {
         vertices: ArrayBuffer;
         indices: Uint32Array<ArrayBuffer>;
     };
-    upload(kit: Kit, label?: string): GpuMesh;
+    /** separate coplanar overlapping faces in this builder in-place and return resolution stats */
+    separateCoplanar(opts?: CoplanarOptions): CoplanarStats;
+    upload(kit: Kit, label?: string, opts?: MeshDataOptions): GpuMesh;
 }
 /** ear-clipping triangulation of a simple polygon (counter-clockwise); returns index triples */
 export declare function triangulate(poly: ArrayLike<number>[]): number[];

@@ -41,6 +41,23 @@ fn fromEye(p: vec3f) -> vec3f { return (p - frame.camPos) - frame.camLo; }
 fn clipAt(p: vec3f) -> vec4f { return frame.viewProjRel * vec4f(fromEye(p), 1.0); }
 // clip position of a position already relative to the eye (an origin − camera from the CPU in doubles, plus local)
 fn clipRel(r: vec3f) -> vec4f { return frame.viewProjRel * vec4f(r, 1.0); }
+// slope-aware reversed-Z micro-bias for instanced or batched geometry sharing one pipeline:
+// `id` must be a stable object/piece ID (not a frustum-culled compacted slot); `cosTheta` = abs(dot(normal, viewDir))
+// (pass 1.0 if no normal is available). Adjacent IDs are maximally separated across 16 tiers via Fibonacci hashing.
+fn clipBias(clip: vec4f, id: u32, cosTheta: f32) -> vec4f {
+  let h = (id * 0x9e3779b1u) >> 28u;
+  let slope = min(sqrt(max(0.0, 1.0 - cosTheta * cosTheta)) / max(cosTheta, 0.08), 10.0);
+  let eps = f32(h) * (5e-7 + 0.025 * frame.invRes.y * slope);
+  return vec4f(clip.x, clip.y, clip.z * (1.0 + eps), clip.w);
+}
+// clip position for double-sided (`cull: 'none'`) surfaces with an outward face normal `n`: gently recesses back-facing
+// triangles away from the camera so a front-facing face always beats a coplanar back-facing face (zero extra pipelines).
+fn clipRelFacing(r: vec3f, n: vec3f) -> vec4f {
+  let c = frame.viewProjRel * vec4f(r, 1.0);
+  let back = dot(n, r) > 0.0;
+  return vec4f(c.x, c.y, select(c.z, c.z * (1.0 - 1.5e-5), back), c.w);
+}
+fn clipAtFacing(p: vec3f, n: vec3f) -> vec4f { return clipRelFacing(fromEye(p), n); }
 // last frame's clip position of a world position (motion vectors)
 fn prevClipAt(p: vec3f) -> vec4f { return frame.prevViewProjRel * vec4f(fromEye(p), 1.0); }
 // last frame's clip position of a position relative to this frame's eye

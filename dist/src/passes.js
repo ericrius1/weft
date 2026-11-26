@@ -490,6 +490,26 @@ const BLEND = {
     max: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' } },
 };
 const blendOf = (b) => (b === undefined ? undefined : typeof b === 'string' ? BLEND[b] : b);
+const DEPTH_LAYERS = { terrain: -1, base: 0, detail: 1, decal: 2, overlay: 3 };
+const biasSlots = new WeakMap();
+function shaderBiasSlot(kit, shaderId) {
+    let state = biasSlots.get(kit);
+    if (!state)
+        biasSlots.set(kit, (state = { map: new Map(), next: 0 }));
+    let slot = state.map.get(shaderId);
+    if (slot === undefined) {
+        slot = 1 + (state.next++ & 15);
+        state.map.set(shaderId, slot);
+    }
+    return slot;
+}
+function isOpaqueBlend(b) {
+    if (b === undefined || b === 'opaque')
+        return true;
+    if (Array.isArray(b))
+        return b.every((x) => x === undefined || x === 'opaque');
+    return false;
+}
 const gpuBuf = (b) => { const v = deref(b); return v instanceof StorageBuffer ? v.gpu : v; };
 export class Draw {
     kit;
@@ -590,11 +610,44 @@ export class Draw {
         if (this.fs)
             desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, fsConstants), targets };
         if (f.depth) {
+            const topo = o.topology ?? 'triangle-list';
+            const isTri = topo === 'triangle-list' || topo === 'triangle-strip';
+            const cmp = o.depthCompare ?? 'greater-equal';
+            const depthWrite = f.depthReadOnly ? false : (o.depthWrite ?? true);
+            let depthBias = o.depthBias;
+            let depthBiasSlopeScale = o.depthBiasSlopeScale;
+            let depthBiasClamp = o.depthBiasClamp;
+            const hasExplicitBias = depthBias !== undefined || depthBiasSlopeScale !== undefined || depthBiasClamp !== undefined;
+            if (isTri && !hasExplicitBias) {
+                if (o.depthLayer !== undefined) {
+                    const layer = typeof o.depthLayer === 'number' ? o.depthLayer : (DEPTH_LAYERS[o.depthLayer] ?? 0);
+                    if (layer < 0) {
+                        depthBias = 0;
+                        depthBiasSlopeScale = 0;
+                        depthBiasClamp = 0;
+                    }
+                    else {
+                        const s = shaderBiasSlot(this.kit, this.shader.id);
+                        depthBias = Math.round(layer * 64) + s * 3;
+                        depthBiasSlopeScale = layer * 0.4 + s * 0.02;
+                        depthBiasClamp = Math.min(5e-3, layer >= 2 ? 5e-4 * layer : 5e-4);
+                    }
+                }
+                else if (this.pass.opts.autoDepthBias !== false
+                    && f.colors.length > 0 && !f.depthReadOnly
+                    && this.fs !== null && depthWrite && isOpaqueBlend(o.blend)
+                    && (cmp === 'greater-equal' || cmp === 'greater')) {
+                    const s = shaderBiasSlot(this.kit, this.shader.id);
+                    depthBias = s * 3;
+                    depthBiasSlopeScale = s * 0.02;
+                    depthBiasClamp = 5e-4;
+                }
+            }
             desc.depthStencil = {
                 format: f.depth,
-                depthWriteEnabled: f.depthReadOnly ? false : (o.depthWrite ?? true),
-                depthCompare: o.depthCompare ?? 'greater-equal',
-                depthBias: o.depthBias, depthBiasSlopeScale: o.depthBiasSlopeScale, depthBiasClamp: o.depthBiasClamp,
+                depthWriteEnabled: depthWrite,
+                depthCompare: cmp,
+                depthBias, depthBiasSlopeScale, depthBiasClamp,
             };
         }
         return desc;

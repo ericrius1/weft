@@ -142,8 +142,8 @@ or a `GPUSampler` from `kit.sampler(desc)`.
 | call | what |
 | --- | --- |
 | `kit.compute(shader, { entry, bind, constants, threads \| workgroups \| indirect, view, enabled, tags, owner })` | one dispatch. `threads` is divided by the shader's `@workgroup_size` for you. `tags`/`owner` carry typed metadata on the record (`hasTag(t)`) |
-| `kit.pass({ color: [{ target, clear, resolve }], depth: { target, clear, readOnly }, view, viewport, shared, replay, phases, enabled })` | a render pass. `target: 'screen'` is the canvas. `clear: false` loads what's there. `phases: ['sky', 'opaque', 'water', ...]` orders draws by declared `phase` + `order` (no `place()` splicing needed) |
-| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, topology, enabled, fallback, phase, order, tags, owner })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame. `fallback`: see Debugging. `phase`/`order` sort within a phased pass; `tags`/`owner` replace regex-matching labels. `alphaToCoverage`, `writeMask`, `vertexBuffers`: below the table |
+| `kit.pass({ color: [{ target, clear, resolve }], depth: { target, clear, readOnly }, view, viewport, shared, replay, phases, autoDepthBias, enabled })` | a render pass. `target: 'screen'` is the canvas. `clear: false` loads what's there. `phases: ['sky', 'opaque', 'water', ...]` orders draws by declared `phase` + `order` (no `place()` splicing needed). `autoDepthBias` (default `true` on color+depth passes) assigns subtle non-negative per-shader hardware depth bias to opaque triangle draws to prevent inter-draw coplanar z-fighting with zero extra pipelines |
+| `pass.draw(shader, { vertex, fragment, bind, constants, count, instances, indices, indirect, blend, cull, depthWrite, depthCompare, depthLayer, topology, enabled, fallback, phase, order, tags, owner })` | a draw in the pass. `fragment: null` makes it depth-only. `count` and `instances` can be functions, which are evaluated each frame. `depthLayer` (`'terrain' \| 'base' \| 'detail' \| 'decal' \| 'overlay'` or integer; `'terrain'` = exact 0) controls reversed-Z coplanar layering without manual bias tuning. `fallback`: see Debugging. `phase`/`order` sort within a phased pass; `tags`/`owner` replace regex-matching labels. `alphaToCoverage`, `writeMask`, `vertexBuffers`: below the table |
 | `pass.fullscreen(shader, { bind, … })` | a fullscreen triangle. The shader includes `weft/fullscreen` and has a fragment entry taking `FullscreenOut` |
 | `pass.bundle(label, opts?).draw(...)` | static draws recorded once into a `GPURenderBundle` and re-recorded only when something they use changes (`opts`: `{ phase, order, tags, owner }`) |
 | `pass.place(anchor, 'before' \| 'after', () => { …declare… })` | the draws and bundles declared inside go next to `anchor` (a draw or bundle of the pass, or a label) in the pass's order, not at its end. Returns them. Prefer `phases` on `kit.pass` for new passes |
@@ -208,7 +208,12 @@ the kit's.
 - **Depth is reversed-Z with an infinite far plane.** Clear depth to `0` and keep in mind that a larger depth is
   nearer. A draw's default `depthCompare` is `'greater-equal'`; a fullscreen draw's is `'always'`, without depth
   writes. `linearDepth(d)`, `worldFromDepth(uv, d)` and
-  `viewRay(uv)` are in `weft/frame`. A positive `depthBias` pulls toward the camera.
+  `viewRay(uv)` are in `weft/frame`. A positive `depthBias` pulls toward the camera. For coplanar anti-z-fighting:
+  opaque passes auto-bias distinct shaders via hardware `depthBias`/`depthBiasSlopeScale` (tag base ground with
+  `depthLayer: 'terrain'`, overlays with `'detail'`/`'decal'`), `MeshBuilder.data()`/`upload()` auto-run
+  `separateCoplanar()` (also importable worker-safely from `@ericrius1/weft/coplanar`), and `weft/frame` provides
+  `clipBias(clip, stableId, cosTheta)` for instanced draws and `clipAtFacing(p, n)` / `clipRelFacing(r, n)` for
+  `cull: 'none'` draws.
 - **UVs**: a fullscreen pass's `uv` runs from (0, 0) at the top left, with y pointing down. That's also the uv
   convention of `worldFromDepth` and `viewRay`.
 - **Variants are `override` constants**, set per draw or compute with `constants: { NAME: 1 }` (booleans as 0 or 1).
