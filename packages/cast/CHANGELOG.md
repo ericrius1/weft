@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.5
+
+Against 0.7.4. Per-frame allocation removal in the character rig hot paths; zero public API changes and exact floating-point parity preserved.
+
+- **Zero-allocation rig, chain & grace stepping (`rig.ts`)**: eliminated per-bone/per-frame temporary array allocations in `setBone()`, `Chain.step()` (`capStart` offset instead of `.slice()`, in-place `PP`/`P[0]` copies), `rigChains()`, and `grace()` with reused scratch buffers while preserving exact floating-point operation order. All 57/57 cast tests pass.
+
 ## 0.7.4
 
 Against 0.7.3. One fix for bodies on moving frames (bikes, cars, boards, mounts) and floating-origin rebases.

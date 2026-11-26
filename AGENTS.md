@@ -15,7 +15,9 @@ the package as `node_modules/@ericrius1/weft/AGENTS.md`.
   `node --test test/x.test.mjs` by hand does not, so build before that.
 - A change ships when it's pushed to `main`. `.github/workflows/dist.yml` commits each package to `dist/weft`,
   `dist/loom` and `dist/cast`, and every project's `tools/engine-latest.mjs` picks the change up on its next dev
-  server or build. So test what you push, bump the package's `version`, and add an entry to its `CHANGELOG.md`.
+  server or build. **Finished work ships itself (Eric, 25 Nov 2026)**: once an engine improvement builds, passes the
+  engine tests, and is proven in the consuming project, bump each changed package's `version`, add its `CHANGELOG.md`
+  entry (and update `packages/weft/AGENTS.md` if needed), merge into `main`, and push automatically without asking.
 - Something several projects carry their own copy of belongs in a package, with nothing project-specific in it (the
   READMEs name no projects).
 - When you change the API, update `packages/weft/AGENTS.md` in the same commit.
