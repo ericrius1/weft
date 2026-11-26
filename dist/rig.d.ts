@@ -319,6 +319,7 @@ export declare class HeroRig {
     private phase;
     private cadence;
     private runW;
+    private sprintF;
     private gaitW;
     private moving;
     private duty;
@@ -332,6 +333,7 @@ export declare class HeroRig {
     private slopeLean;
     private turnLean;
     private lastYaw;
+    private yawRateS;
     private idleT;
     private idleNext;
     private idleSide;
@@ -603,6 +605,7 @@ export declare class HeroRig {
     private brakeSinkV;
     private fdOmega;
     private airArmW;
+    private airLead;
     private lastAirLoc;
     private braidSway;
     get jawOpen(): number;
