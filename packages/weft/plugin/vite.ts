@@ -261,20 +261,26 @@ const both = (name: string, use: Middleware, apply?: 'serve'): Plugin => ({
   configurePreviewServer(server) { server.middlewares.use(use); },
 });
 
+const resolveRemoteUrl = (entry: string, origin?: string) =>
+  origin && !/^https?:\/\//i.test(entry) ? `${origin.replace(/\/+$/, '')}/${entry.replace(/^\/+/, '')}` : entry;
+
 /** The big assets on R2 (San Francisco's and Boulder's): an app's /assets beside it in development, its big files
- *  content-addressed on R2 once published (tools/publish-assets.mjs) and listed in a map, path under /assets → URL.
+ *  content-addressed on R2 once published (tools/publish-assets.mjs) and listed in a map, path under /assets → URL or
+ *  origin-relative object key (`objects/<sha256>/<name>`).
  *  - dev and preview: an asset that isn't on this disk is redirected to its R2 copy, so a worktree or a fresh clone works
  *    without every file (one that is here is always served from here: edit away). The map is re-read when it changes.
  *  - a build: the map shipped as dist/assets/remote.json (Assets.init reads it), and the files that live only on R2
  *    (`omit`) left out of dist.
  *
- *    plugins: [weft(), remoteAssets({ omit: /^tiles\/.*\.pack$/ })]
+ *    plugins: [weft(), remoteAssets({ origin: 'https://assets.example.com', omit: /^tiles\/.*\.pack$/ })]
  */
 export function remoteAssets(opts: {
   /** the assets folder (default public/assets, under the Vite root) */
   assets?: string;
   /** the map (default remote-assets.json beside the Vite config's root) */
   map?: string;
+  /** base origin used to resolve relative entries in the map (e.g. `objects/<sha256>/<name>`); absolute URLs stay as-is */
+  origin?: string;
   /** the URL prefix the assets are served under (default '/assets/'; anywhere in the path: a page under a base) */
   prefix?: string;
   /** what a build leaves out of dist (paths under assets): R2 serves it */
@@ -284,12 +290,14 @@ export function remoteAssets(opts: {
 } = {}): Plugin {
   let root = process.cwd(), outDir = 'dist';
   const prefix = opts.prefix ?? '/assets/';
+  const origin = opts.origin?.replace(/\/+$/, '') || undefined;
   const assetsDir = () => resolve(root, opts.assets ?? 'public/assets');
   const mapPath = () => resolve(root, opts.map ?? 'remote-assets.json');
   let map: Record<string, string> = {}, at = -1;
   const lookup = (rel: string) => {
     try { const t = statSync(mapPath()).mtimeMs; if (t !== at) { map = JSON.parse(readFileSync(mapPath(), 'utf8')); at = t; } } catch { return undefined; }
-    return map[rel];
+    const v = map[rel];
+    return v ? resolveRemoteUrl(v, origin) : undefined;
   };
   const use: Middleware = (req, res, next) => {
     const path = (req.url ?? '').split('?')[0];
@@ -317,7 +325,13 @@ export function remoteAssets(opts: {
       const ship = opts.ship === undefined ? 'remote.json' : opts.ship;
       if (ship) {
         mkdirSync(dist, { recursive: true });
-        writeFileSync(join(dist, ship), existsSync(mapPath()) ? readFileSync(mapPath(), 'utf8') : '{}');
+        if (!existsSync(mapPath())) writeFileSync(join(dist, ship), '{}');
+        else if (!origin) writeFileSync(join(dist, ship), readFileSync(mapPath(), 'utf8'));
+        else {
+          const raw = JSON.parse(readFileSync(mapPath(), 'utf8')) as Record<string, string>;
+          const resolved = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, resolveRemoteUrl(v, origin)]));
+          writeFileSync(join(dist, ship), JSON.stringify(resolved, null, 1) + '\n');
+        }
       }
       if (!opts.omit || !existsSync(dist)) return;
       const drop = (dir: string) => {
@@ -401,10 +415,13 @@ export function earlyFetch(opts: {
   prefix?: string;
   /** the R2 map whose hosts are preconnected to (default remote-assets.json; null: none) */
   map?: string | null;
+  /** base origin used to resolve relative entries in the map when computing preconnect hosts */
+  origin?: string;
   /** the global the fetches are kept in (default '__early') */
   global?: string;
 }): Plugin {
   let build = false, root = process.cwd();
+  const origin = opts.origin?.replace(/\/+$/, '') || undefined;
   return {
     name: 'weft-early-fetch',
     configResolved(c) { build = c.command === 'build'; root = c.root; },
@@ -420,7 +437,7 @@ export function earlyFetch(opts: {
       let hosts: string[] = [];
       const map = opts.map === undefined ? 'remote-assets.json' : opts.map;
       if (map) {
-        try { hosts = [...new Set(Object.values(JSON.parse(readFileSync(resolve(root, map), 'utf8')) as Record<string, string>).map((u) => new URL(u).origin))]; } catch { /* none */ }
+        try { hosts = [...new Set(Object.values(JSON.parse(readFileSync(resolve(root, map), 'utf8')) as Record<string, string>).map((u) => new URL(resolveRemoteUrl(u, origin)).origin))]; } catch { /* none */ }
       }
       const g = JSON.stringify(opts.global ?? '__early'), pre = JSON.stringify(opts.prefix ?? 'assets/');
       const code = `(function(){var e=window[${g}]={},f=${JSON.stringify(files)};for(var i=0;i<f.length;i++){e[f[i]]=fetch(${pre}+f[i],f[i]==='remote.json'?{cache:'no-cache'}:{}).catch(function(){return null;});}})();`;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.19
+
+Host-independent remote asset manifests in Vite plugins; 100% backwards-compatible.
+
+- **`remoteAssets({ origin })` & `earlyFetch({ origin })` (`plugin/vite.ts`)**: accept an optional base `origin` to resolve origin-relative object keys (`objects/<sha256>/<name>`) in `remote-assets.json` during dev/preview redirects, `dist/assets/remote.json` emission, and preconnect host discovery, while leaving absolute `http(s)://` URLs untouched.
+
 ## 0.2.18
 
 Engine-level coplanar anti-z-fighting architecture (zero extra pipelines, zero per-frame GPU overhead, 100% Early-Z/Hi-Z preserved); backwards-compatible.
