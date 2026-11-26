@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.18
+
+Engine-level coplanar anti-z-fighting architecture (zero extra pipelines, zero per-frame GPU overhead, 100% Early-Z/Hi-Z preserved); backwards-compatible.
+
+- **Automatic shader-scoped hardware depth bias & semantic `depthLayer` (`passes.ts`)**: `RenderPass` automatically assigns subtle, strictly non-negative reversed-Z `(depthBias, depthBiasSlopeScale, depthBiasClamp)` per distinct opaque triangle shader (`3..48` ULPs, `0.02..0.32` slope scale, clamped at `5e-4`) so coplanar faces across different draws resolve deterministically even at 85° grazing angles without breaking `kit.pipelineCache` sharing or underflowing far horizons to `0.0`. Guards skip depth-only (shadow/resolve) passes, read-only depth passes, blended/translucent draws, `depthCompare: 'equal'`/`'always'`/`'less'`, non-triangle topologies, and draws with explicit `depthBias`. Optional `DrawOptions.depthLayer` (`'terrain' | 'base' | 'detail' | 'decal' | 'overlay'` or integer; `'terrain'`/`< 0` = exact unbiased `0`) sets explicit layer precedence (also honored on blended decals); `RenderPassOptions.autoDepthBias: false` opts a pass out.
+- **Built-in coplanar overlap separation (`coplanar.ts`, `mesh.ts`, `@ericrius1/weft/coplanar`)**: fast O(T) plane-bucket + 2D sweep-and-prune `findCoplanar()` and `separateCoplanar()` supporting indexed/non-indexed and strided vertex buffers (back-to-back recess, twin separation, area-first then build-order same-facing layering, orthogonal shared-corner summing). Auto-enabled in `MeshBuilder.data()` / `MeshBuilder.upload()` (opt-out `{ separateCoplanar: false }`), plus a zero-WGSL `@ericrius1/weft/coplanar` subpath export safe for Web Workers.
+- **Instanced & double-sided WGSL helpers (`shaders/frame.wgsl`)**: `clipBias(clip, id, cosTheta)` (Fibonacci-hashed 16-tier slope-aware reversed-Z micro-bias for instanced/batched geometry with stable IDs) and `clipAtFacing(p, n)` / `clipRelFacing(r, n)` (zero-pipeline backface micro-recess for `cull: 'none'` draws). Dead-code stripped by `leanWgsl` when unused.
+- **Tests**: 109/109 passing (`test/coplanar.test.mjs`).
+
 ## 0.2.17
 
 Per-frame CPU & allocation optimizations and deferred shader module creation; backwards-compatible (direct `UniformBuffer.view` writers must set `u.dirty = true`, documented in `AGENTS.md`).

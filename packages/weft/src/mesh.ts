@@ -4,6 +4,15 @@
 import type { Kit } from './kit';
 import type { StorageBuffer } from './resources';
 import { type V3, type M4, mat4, mat4Mul, mat4Invert, compose, quatAxisAngle, norm, cross, sub } from './math';
+import { separateCoplanar, type CoplanarOptions, type CoplanarStats } from './coplanar';
+
+export { findCoplanar, separateCoplanar, type CoplanarOptions, type CoplanarPair, type CoplanarStats } from './coplanar';
+
+export interface MeshDataOptions {
+  /** automatically detect and separate coplanar overlapping faces by 1 mm so meshes never z-fight (default true).
+   *  Pass `false` to skip, or `CoplanarOptions` to customize `eps`/`tol`/`minArea`. */
+  separateCoplanar?: boolean | CoplanarOptions;
+}
 
 export const VERTEX_BYTES = 40;
 
@@ -229,8 +238,9 @@ export class MeshBuilder {
     for (const i of o.idx) this.idx.push(i + off);
     return this;
   }
-  /** interleaved vertex data (40 bytes per vertex) */
-  data() {
+  /** interleaved vertex data (40 bytes per vertex). Automatically separates coplanar overlapping faces unless
+   *  `opts.separateCoplanar === false`. */
+  data(opts?: MeshDataOptions) {
     const n = this.vertexCount;
     const buf = new ArrayBuffer(n * VERTEX_BYTES);
     const fv = new Float32Array(buf), uv = new Uint32Array(buf);
@@ -240,10 +250,19 @@ export class MeshBuilder {
       uv[i * 10 + 8] = u[i * 2];
       uv[i * 10 + 9] = u[i * 2 + 1];
     }
-    return { vertices: buf, indices: new Uint32Array(this.idx) };
+    const indices = new Uint32Array(this.idx);
+    const sep = opts?.separateCoplanar;
+    if (sep !== false && indices.length >= 6) {
+      separateCoplanar(fv, indices, { stride: 10, offset: 0, vertexCount: n, ...(typeof sep === 'object' ? sep : undefined) });
+    }
+    return { vertices: buf, indices };
   }
-  upload(kit: Kit, label = 'mesh'): GpuMesh {
-    const { vertices, indices } = this.data();
+  /** separate coplanar overlapping faces in this builder in-place and return resolution stats */
+  separateCoplanar(opts?: CoplanarOptions): CoplanarStats {
+    return separateCoplanar(this.f, this.idx, { stride: 8, offset: 0, vertexCount: this.vertexCount, ...opts });
+  }
+  upload(kit: Kit, label = 'mesh', opts?: MeshDataOptions): GpuMesh {
+    const { vertices, indices } = this.data(opts);
     return {
       vertices: kit.storage({ label: `${label}.v`, data: vertices, stride: VERTEX_BYTES }),
       indices: kit.storage({ label: `${label}.i`, data: indices, usage: ['index', 'storage', 'copy-dst'] }),

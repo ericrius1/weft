@@ -500,6 +500,10 @@ export interface RenderPassOptions {
   /** optional ordered draw phases (e.g. ['opaque', 'alpha', 'water', 'translucent', 'skim']). When set, draws and
    *  bundles insert into their declared phase in registration order instead of appending to the end of `draws`. */
   phases?: readonly string[];
+  /** automatic subtle per-shader hardware depth bias for opaque triangle draws in this pass, preventing inter-draw
+   *  coplanar z-fighting with zero extra pipelines and zero GPU cost. Default true for passes with both colour and
+   *  writable depth attachments; ignored for depth-only (shadow) and read-only depth passes. */
+  autoDepthBias?: boolean;
 }
 
 /** what a draw's calls go into: a render pass, a render bundle (bundle.ts), or a recorder of the calls */
@@ -543,6 +547,25 @@ const BLEND: Record<string, GPUBlendState | undefined> = {
 };
 const blendOf = (b: BlendMode | undefined) => (b === undefined ? undefined : typeof b === 'string' ? BLEND[b] : b);
 
+export type DepthLayer = number | 'terrain' | 'base' | 'detail' | 'decal' | 'overlay';
+const DEPTH_LAYERS: Record<string, number> = { terrain: -1, base: 0, detail: 1, decal: 2, overlay: 3 };
+const biasSlots = new WeakMap<object, { map: Map<string, number>; next: number }>();
+function shaderBiasSlot(kit: Kit, shaderId: string): number {
+  let state = biasSlots.get(kit);
+  if (!state) biasSlots.set(kit, (state = { map: new Map(), next: 0 }));
+  let slot = state.map.get(shaderId);
+  if (slot === undefined) {
+    slot = 1 + (state.next++ & 15);
+    state.map.set(shaderId, slot);
+  }
+  return slot;
+}
+function isOpaqueBlend(b: BlendMode | BlendMode[] | undefined): boolean {
+  if (b === undefined || b === 'opaque') return true;
+  if (Array.isArray(b)) return b.every((x) => x === undefined || x === 'opaque');
+  return false;
+}
+
 export interface DrawOptions<S extends Shader = Shader> {
   label?: string;
   vertex?: string;
@@ -561,6 +584,9 @@ export interface DrawOptions<S extends Shader = Shader> {
   depthBias?: number;
   depthBiasSlopeScale?: number;
   depthBiasClamp?: number;
+  /** semantic depth layer for reversed-Z coplanar tie-breaking ('terrain' < 'base' < 'detail' < 'decal' < 'overlay',
+   *  or an integer: < 0 = unbiased reference, 0 = base, > 0 = higher layers). Ignored when `depthBias` is set explicitly. */
+  depthLayer?: DepthLayer;
   unclippedDepth?: boolean;
   /** alpha to coverage (a multisampled pass only: on a one-sample pass it's drawn without). A fragment shader that
    *  declares `override ALPHA_TO_COVERAGE: bool` is told whether it's on, so it can cut out by alpha (discard) where
@@ -678,11 +704,42 @@ export class Draw<S extends Shader = Shader> {
     if (o.topology === 'triangle-strip' || o.topology === 'line-strip') desc.primitive!.stripIndexFormat = o.indices ? (o.indices.format ?? 'uint32') : undefined;
     if (this.fs) desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, fsConstants), targets };
     if (f.depth) {
+      const topo = o.topology ?? 'triangle-list';
+      const isTri = topo === 'triangle-list' || topo === 'triangle-strip';
+      const cmp = o.depthCompare ?? 'greater-equal';
+      const depthWrite = f.depthReadOnly ? false : (o.depthWrite ?? true);
+      let depthBias = o.depthBias;
+      let depthBiasSlopeScale = o.depthBiasSlopeScale;
+      let depthBiasClamp = o.depthBiasClamp;
+      const hasExplicitBias = depthBias !== undefined || depthBiasSlopeScale !== undefined || depthBiasClamp !== undefined;
+      if (isTri && !hasExplicitBias) {
+        if (o.depthLayer !== undefined) {
+          const layer = typeof o.depthLayer === 'number' ? o.depthLayer : (DEPTH_LAYERS[o.depthLayer] ?? 0);
+          if (layer < 0) {
+            depthBias = 0; depthBiasSlopeScale = 0; depthBiasClamp = 0;
+          } else {
+            const s = shaderBiasSlot(this.kit, this.shader.id);
+            depthBias = Math.round(layer * 64) + s * 3;
+            depthBiasSlopeScale = layer * 0.4 + s * 0.02;
+            depthBiasClamp = Math.min(5e-3, layer >= 2 ? 5e-4 * layer : 5e-4);
+          }
+        } else if (
+          this.pass.opts.autoDepthBias !== false
+          && f.colors.length > 0 && !f.depthReadOnly
+          && this.fs !== null && depthWrite && isOpaqueBlend(o.blend)
+          && (cmp === 'greater-equal' || cmp === 'greater')
+        ) {
+          const s = shaderBiasSlot(this.kit, this.shader.id);
+          depthBias = s * 3;
+          depthBiasSlopeScale = s * 0.02;
+          depthBiasClamp = 5e-4;
+        }
+      }
       desc.depthStencil = {
         format: f.depth,
-        depthWriteEnabled: f.depthReadOnly ? false : (o.depthWrite ?? true),
-        depthCompare: o.depthCompare ?? 'greater-equal',
-        depthBias: o.depthBias, depthBiasSlopeScale: o.depthBiasSlopeScale, depthBiasClamp: o.depthBiasClamp,
+        depthWriteEnabled: depthWrite,
+        depthCompare: cmp,
+        depthBias, depthBiasSlopeScale, depthBiasClamp,
       };
     }
     return desc;
