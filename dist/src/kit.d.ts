@@ -3,6 +3,7 @@ import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction, type StorageOptions, type TextureDesc } from './resources';
 import { Compute, RenderPass, RawItem, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem, type SharedPipeline, type Waitable } from './passes';
 import { FrameGraph } from './graph';
+import { HiZ, type HiZOptions } from './hiz';
 import { SharedGroup, type SamplerName } from './binder';
 import { Profiler } from './profiler';
 import { DebugOverlay } from './debug';
@@ -205,6 +206,8 @@ export declare class Kit {
     action(fn: () => void, label?: string): RunAction;
     /** create an explicit phase-ordered FrameGraph whose cached RunEntry[] passes straight to `kit.run(g.entries())` */
     graph(phases: readonly string[]): FrameGraph;
+    /** build a conservative min/max hierarchical linear-depth (Hi-Z) pyramid (`rg16float`) from a linear view-z texture */
+    hiz(src: Texture, opts?: HiZOptions): HiZ;
     view(camera?: Camera, size?: [number, number] | number | null, label?: string): View;
     /** every view made by kit.view (each is brought up to date once a frame, at the first run) */
     readonly views: View[];

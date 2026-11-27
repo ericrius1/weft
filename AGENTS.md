@@ -154,6 +154,7 @@ or a `GPUSampler` from `kit.sampler(desc)`.
 | `kit.graph(phases)` | `FrameGraph`: register run items once into named phases (`graph.add('post', items, { order, owner })`), toggle by owner (`setOwnerEnabled`), and pass `graph.entries()` directly to `kit.run` with zero per-frame allocation |
 | `kit.copy(src, dst)`, `kit.raw(enc => …)`, `kit.action(() => …)`, `pingpong.swap` | a copy, raw encoder access, and a CPU step at that point in the list |
 | `new MipChain(kit, tex)` | fills a texture's mips |
+| `kit.hiz(sceneZ, opts?)` / `new HiZ(kit, sceneZ, opts?)` | builds a conservative min/max `rg16float` hierarchical linear-depth pyramid (`hiz.texture`, half-res to 1×1) via `textureLoad` |
 | `new Taau(kit, hdr, depth, opts)` | temporal AA and upscaling. Run `taau.items`, then read `taau.out`. `opts.motion`: the moving draws' own motion (Recipes) |
 
 Three more draw options, less often needed:
@@ -192,7 +193,7 @@ the kit's.
 ## WGSL side
 
 - **Includes**: `#include "./common"` (relative to the file; `.wgsl` optional), `#include "weft/frame"`, `"weft/fullscreen"`,
-  `"weft/mesh"`, `"weft/output"`, `"weft/skin"`, `"weft/lodfade"`; `"loom/env"`, `"loom/common"`, … with the plugin's
+  `"weft/mesh"`, `"weft/output"`, `"weft/skin"`, `"weft/lodfade"`, `"weft/gbuf"`; `"loom/env"`, `"loom/common"`, … with the plugin's
   `libs`. Each file is included once, and compile errors point at the real `file:line`.
 - **Group 0** (`weft/frame`): `frame: Frame` holds `viewProj, view, proj, invViewProj, invProj, invView, prevViewProj,
   camPos, camFwd, camRight, camUp, time, dt, near, frame (u32), res, invRes, jitter, fovY, aspect, mouse, user`.

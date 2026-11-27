@@ -305,8 +305,16 @@ export function reflectWgsl(code) {
             const e = { name: f.name, stage, resources: [...resources], overrides: [...used] };
             if (stage === 'compute')
                 e.workgroupSize = f.workgroupSize ?? [1, 1, 1];
-            if (stage === 'fragment')
-                e.targets = f.outputs.filter((o) => o.locationType === 'location').length;
+            if (stage === 'fragment') {
+                const locs = f.outputs
+                    .filter((o) => o.locationType === 'location')
+                    .map((o) => Number(o.location))
+                    .filter((n) => Number.isFinite(n) && n >= 0)
+                    .sort((a, b) => a - b);
+                e.targets = locs.length;
+                if (locs.length)
+                    e.targetLocations = locs;
+            }
             entries.push(e);
         }
     }

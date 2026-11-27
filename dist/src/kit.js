@@ -8,6 +8,7 @@ import { Camera } from './camera';
 import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction } from './resources';
 import { Compute, RenderPass, RawItem, pipelinesOf, settle } from './passes';
 import { FrameGraph } from './graph';
+import { HiZ } from './hiz';
 import { SharedGroup } from './binder';
 import { STAGE, TEX } from './gpuconst';
 import { Profiler } from './profiler';
@@ -362,6 +363,8 @@ export class Kit {
     action(fn, label = 'action') { return new RunAction(fn, label); }
     /** create an explicit phase-ordered FrameGraph whose cached RunEntry[] passes straight to `kit.run(g.entries())` */
     graph(phases) { return new FrameGraph(phases); }
+    /** build a conservative min/max hierarchical linear-depth (Hi-Z) pyramid (`rg16float`) from a linear view-z texture */
+    hiz(src, opts) { return new HiZ(this, src, opts); }
     view(camera = new Camera(), size = null, label = 'view') {
         const v = new View(this, camera, size, label);
         this.views.push(v);

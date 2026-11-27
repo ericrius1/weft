@@ -12,6 +12,7 @@ export { Input, PAD, type Device } from './input';
 export * from './math';
 export { Painter, Atlas, atlasOf, hex, withAlpha, scaleColor, type Color, type Sprite, type PainterOptions } from './painter';
 export { MipChain } from './mipgen';
+export { HiZ, type HiZOptions } from './hiz';
 export { MeshBuilder, TriangleSoup, packColor, packTag, triangulate, VERTEX_BYTES, findCoplanar, separateCoplanar, type GpuMesh, type MeshDataOptions, type CoplanarOptions, type CoplanarPair, type CoplanarStats } from './mesh';
 export { blueNoise, blueNoiseTexture } from './bluenoise';
 export { Capture } from './capture';

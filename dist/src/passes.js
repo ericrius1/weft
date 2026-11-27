@@ -653,10 +653,12 @@ export class Draw {
     descriptor(cullOverride) {
         const o = this.opts, module = NO_MODULE;
         const f = this.pass.formats();
-        const outs = this.fs ? (this.shader.reflect.entries.find((e) => e.name === this.fs)?.targets ?? 1) : 0;
+        const fsEntry = this.fs ? this.shader.reflect.entries.find((e) => e.name === this.fs) : undefined;
+        const locs = fsEntry?.targetLocations;
+        const outs = fsEntry?.targets ?? 1;
         const blends = Array.isArray(o.blend) ? o.blend : f.colors.map(() => o.blend);
         const masks = Array.isArray(o.writeMask) ? o.writeMask : f.colors.map(() => o.writeMask ?? 0xf);
-        const targets = f.colors.map((format, i) => ({ format, blend: blendOf(blends[i]), writeMask: i < outs ? masks[i] : 0 }));
+        const targets = f.colors.map((format, i) => ({ format, blend: blendOf(blends[i]), writeMask: (locs ? locs.includes(i) : i < outs) ? masks[i] : 0 }));
         const a2c = !!o.alphaToCoverage && f.samples > 1;
         const tells = !!this.fs && !!this.shader.reflect.entries.find((e) => e.name === this.fs)?.overrides.includes(A2C) && !(o.constants && A2C in o.constants);
         const fsConstants = tells ? { ...o.constants, [A2C]: a2c ? 1 : 0 } : o.constants;

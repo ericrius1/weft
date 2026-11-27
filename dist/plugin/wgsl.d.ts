@@ -46,6 +46,7 @@ export interface EntryInfo {
     overrides: string[];
     workgroupSize?: number[];
     targets?: number;
+    targetLocations?: number[];
 }
 export interface ShaderReflection {
     structs: Record<string, StructLayout>;

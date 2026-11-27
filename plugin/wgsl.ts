@@ -38,7 +38,7 @@ export interface BindingInfo {
   texture?: { dim: GPUTextureViewDimension; sample: GPUTextureSampleType; multisampled: boolean };
   format?: string;
 }
-export interface EntryInfo { name: string; stage: 'vertex' | 'fragment' | 'compute'; resources: string[]; overrides: string[]; workgroupSize?: number[]; targets?: number }
+export interface EntryInfo { name: string; stage: 'vertex' | 'fragment' | 'compute'; resources: string[]; overrides: string[]; workgroupSize?: number[]; targets?: number; targetLocations?: number[] }
 export interface ShaderReflection {
   structs: Record<string, StructLayout>;
   bindings: Record<string, BindingInfo>;
@@ -296,7 +296,15 @@ export function reflectWgsl(code: string): ShaderReflection {
       }
       const e: EntryInfo = { name: f.name, stage, resources: [...resources], overrides: [...used] };
       if (stage === 'compute') e.workgroupSize = f.workgroupSize ?? [1, 1, 1];
-      if (stage === 'fragment') e.targets = (f.outputs as Any[]).filter((o) => o.locationType === 'location').length;
+      if (stage === 'fragment') {
+        const locs = (f.outputs as Any[])
+          .filter((o) => o.locationType === 'location')
+          .map((o) => Number(o.location))
+          .filter((n) => Number.isFinite(n) && n >= 0)
+          .sort((a, b) => a - b);
+        e.targets = locs.length;
+        if (locs.length) e.targetLocations = locs;
+      }
       entries.push(e);
     }
   }
