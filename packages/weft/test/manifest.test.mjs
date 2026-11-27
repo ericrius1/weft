@@ -96,6 +96,61 @@ test('weft vite plugin writes shaders.manifest.json on build closeBundle when ma
     assert.equal(parsed.version, 1);
     assert.deepEqual(Object.keys(parsed.shaders), ['a.wgsl', 'b.wgsl']);
     assert.equal(parsed.shaders['a.wgsl'].reflect.structs.SharedU.size, 32);
+
+    // Failed build (buildEnd or closeBundle error) must NOT overwrite the existing manifest
+    plugin.buildStart();
+    plugin.load.call(ctx, join(dir, 'a.wgsl'));
+    plugin.buildEnd(new Error('synthetic build failure'));
+    plugin.closeBundle();
+    const afterBuildEndErr = JSON.parse(readFileSync(outAbs, 'utf8'));
+    assert.deepEqual(Object.keys(afterBuildEndErr.shaders), ['a.wgsl', 'b.wgsl'], 'buildEnd error preserves prior manifest');
+
+    plugin.buildStart();
+    plugin.load.call(ctx, join(dir, 'a.wgsl'));
+    plugin.closeBundle(new Error('synthetic closeBundle failure'));
+    const afterCloseErr = JSON.parse(readFileSync(outAbs, 'utf8'));
+    assert.deepEqual(Object.keys(afterCloseErr.shaders), ['a.wgsl', 'b.wgsl'], 'closeBundle error preserves prior manifest');
+
+    // Successful build with zero shaders overwrites stale manifest with empty shaders map
+    plugin.buildStart();
+    plugin.buildEnd();
+    plugin.closeBundle();
+    const afterEmpty = JSON.parse(readFileSync(outAbs, 'utf8'));
+    assert.deepEqual(afterEmpty, { version: 1, shaders: {} });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('weft vite plugin writes nothing when manifest option is omitted and matches buildShaderManifest key order', () => {
+  const dir = makeTempProject();
+  try {
+    for (const name of ['B.wgsl', 'a-b.wgsl', 'a_b.wgsl']) {
+      writeFileSync(join(dir, name), '@fragment fn fs() -> @location(0) vec4f { return vec4f(1.0); }\n');
+    }
+    const files = ['B.wgsl', 'a.wgsl', 'a-b.wgsl', 'a_b.wgsl'];
+    const offline = buildShaderManifest(files, { root: dir, libs: { weft: weftShaders } });
+
+    const outRel = 'out/order.json';
+    const withManifest = weft({ types: false, manifest: outRel });
+    withManifest.configResolved({ root: dir, command: 'build' });
+    withManifest.buildStart();
+    const ctx = { addWatchFile() {}, error(m) { throw new Error(m); }, warn() {} };
+    for (const f of files) withManifest.load.call(ctx, join(dir, f));
+    withManifest.buildEnd();
+    withManifest.closeBundle();
+    const fromPlugin = JSON.parse(readFileSync(join(dir, outRel), 'utf8'));
+    assert.deepEqual(Object.keys(fromPlugin.shaders), Object.keys(offline.shaders));
+    assert.deepEqual(Object.keys(offline.shaders), ['B.wgsl', 'a-b.wgsl', 'a.wgsl', 'a_b.wgsl']);
+
+    // Default (no manifest option) writes nothing
+    const noManifest = weft({ types: false });
+    noManifest.configResolved({ root: dir, command: 'build' });
+    noManifest.buildStart();
+    noManifest.load.call(ctx, join(dir, 'a.wgsl'));
+    noManifest.buildEnd();
+    noManifest.closeBundle();
+    assert.ok(!existsSync(join(dir, 'shaders.manifest.json')));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -84,6 +84,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
   const sharedStructs = new Map<string, string>();
   const sharedDecls = new Map<string, string>();
   const manifestMap = new Map<string, ShaderManifestEntry>();
+  let buildFailed = false;
   const hashOf = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 12);
   const STRUCT_MIN = 150;
   const DECL_MIN = 120;
@@ -157,6 +158,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
       sharedStructs.clear();
       sharedDecls.clear();
       manifestMap.clear();
+      buildFailed = false;
       if (opts.types === false) return;
       for (const f of walk(root)) {
         try { declare(f, compile(f)); } catch { /* reported when imported */ }
@@ -200,8 +202,11 @@ export function weft(opts: WeftOptions = {}): Plugin {
           reflect: { structs: {}, bindings: {}, entries: [], overrides: {} } });
       }
     },
-    closeBundle() {
-      if (!isBuild || !opts.manifest || !manifestMap.size) return;
+    buildEnd(err) {
+      if (err) buildFailed = true;
+    },
+    closeBundle(err) {
+      if (err || buildFailed || !isBuild || !opts.manifest) return;
       const outPath = resolve(root, opts.manifest);
       const shaders: Record<string, ShaderManifestEntry> = {};
       for (const id of [...manifestMap.keys()].sort()) shaders[id] = manifestMap.get(id)!;

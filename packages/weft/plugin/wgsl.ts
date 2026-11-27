@@ -438,10 +438,11 @@ export function manifestEntry(s: CompiledShader): ShaderManifestEntry {
   };
 }
 
-/** Compile a list of `.wgsl` files into a deterministic, sorted `ShaderManifest` for native engines or offline audits. */
+/** Compile a list of `.wgsl` files into a deterministic, UTF-16-sorted `ShaderManifest` for native engines or offline
+ *  audits. Throws at the first file that fails to preprocess or reflect. */
 export function buildShaderManifest(files: readonly string[], opts: CompileOptions): ShaderManifest {
   const entries = files.map((f) => manifestEntry(compileWgsl(resolve(opts.root, f), opts)));
-  entries.sort((a, b) => a.id.localeCompare(b.id));
+  entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const shaders: Record<string, ShaderManifestEntry> = {};
   for (const e of entries) shaders[e.id] = e;
   return { version: 1, shaders };
