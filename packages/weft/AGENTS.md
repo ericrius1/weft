@@ -59,7 +59,11 @@ export default defineConfig({
 The plugin writes a `foo.d.wgsl.ts` beside each `foo.wgsl`. These files are generated: don't edit them. Projects commit
 them, and they regenerate when the shader changes under a running dev server or build. Pass `sharedTypes: true` to
 `weft(...)` to import/re-export structs from project-local `#include`s via `import type` instead of duplicating their
-interfaces in every generated `.d.wgsl.ts`.
+interfaces in every generated `.d.wgsl.ts`. Pass `manifest: '../path/to/shaders.manifest.json'` (or call
+`buildShaderManifest(files, opts)` from `@ericrius1/weft/wgsl` / `@ericrius1/weft/vite`) to emit a portable v1 JSON
+manifest of expanded WGSL, SHA-256 hashes, line maps, and full reflection metadata for native `wgpu` or offline tools
+(keys and `files` entries are relative to `root`, so package shaders reflect the install layout; do not point a
+`worker.plugins` instance at the same manifest path as the main build).
 
 `@ericrius1/weft/vite` also exports dev-server sinks and build helpers. Use these instead of writing your own:
 `shotSink({ dir })` (screenshots from `shot()`), `filmSink({ dir })` (film frames and audio POSTed by a page),
