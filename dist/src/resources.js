@@ -1,5 +1,6 @@
 import { StructView } from './struct';
 import { BUF, TEX, MAP } from './gpuconst';
+import { separateCoplanar } from './coplanar';
 let UID = 1;
 export const nextUid = () => UID++;
 const rawIds = new WeakMap();
@@ -130,6 +131,10 @@ export class StorageBuffer {
     stride;
     label;
     usage;
+    /** true when this buffer's vertex data was processed by `separateCoplanar()` on creation */
+    coplanarSeparated = false;
+    /** stats from the automatic `geometry` coplanar separation pass, if run */
+    coplanarStats;
     /** freed for good (destroy) */
     destroyed = false;
     cutSaid = 0;
@@ -137,13 +142,36 @@ export class StorageBuffer {
         this.kit = kit;
         this.label = o.label ?? 'storage';
         this.stride = o.stride ?? (o.struct ? Math.ceil(o.struct.size / o.struct.align) * o.struct.align : 4);
-        const dataBytes = o.data ? o.data.byteLength : 0;
+        let uploadData = o.data;
+        if (uploadData && o.geometry && o.geometry.separateCoplanar !== false) {
+            const g = o.geometry;
+            let floats = null;
+            if (uploadData instanceof Float32Array) {
+                floats = g.copy ? new Float32Array(uploadData) : uploadData;
+                uploadData = floats;
+            }
+            else if (uploadData instanceof Float64Array) {
+                floats = g.copy ? new Float64Array(uploadData) : uploadData;
+                uploadData = floats;
+            }
+            else if (uploadData instanceof ArrayBuffer && (uploadData.byteLength & 3) === 0) {
+                const buf = g.copy ? uploadData.slice(0) : uploadData;
+                floats = new Float32Array(buf);
+                uploadData = floats;
+            }
+            if (floats) {
+                const stride = g.stride ?? (o.stride && (o.stride & 3) === 0 ? o.stride >>> 2 : 3);
+                this.coplanarStats = separateCoplanar(floats, g.indices, { ...g, stride });
+                this.coplanarSeparated = true;
+            }
+        }
+        const dataBytes = uploadData ? uploadData.byteLength : 0;
         this.count = o.count ?? (o.size ? Math.floor(o.size / this.stride) : Math.floor(dataBytes / this.stride));
         const size = o.size ?? Math.max(this.count * this.stride, dataBytes);
         this.usage = bufferUsage(o.usage ?? ['storage', 'copy-dst', 'copy-src']) | BUF.COPY_DST;
         this.alloc(size);
-        if (o.data)
-            this.write(o.data);
+        if (uploadData)
+            this.write(uploadData);
     }
     /** bumped when its GPU buffer is replaced (and kit.resourceGen with it, so bind groups are checked again) */
     get version() { return this.v; }
@@ -241,6 +269,8 @@ export class Texture {
     usage;
     /** freed for good (destroy): a resize no longer reallocates it */
     destroyed = false;
+    /** internal: base viewport maxDepth written by the last RenderPass clearing this depth texture (passes.ts) */
+    _baseMaxDepth = 1;
     views = new Map();
     blk;
     constructor(kit, desc) {

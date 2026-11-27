@@ -17,7 +17,7 @@ import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, resolve, relative, sep } from 'node:path';
 import { WgslReflect, WgslParser, TokenTypes } from 'wgsl_reflect/wgsl_reflect.module.js';
-import { leanWgsl } from './lean.js';
+import { leanWgsl, stripComments } from './lean.js';
 export class WgslError extends Error {
 }
 const INCLUDE = /^\s*#include\s+"([^"]+)"\s*;?\s*(\/\/.*)?$/;
@@ -315,11 +315,245 @@ export function reflectWgsl(code) {
         overrides[o.name] = { type: normType(o.type?.name ?? 'f32') };
     return { structs, bindings, entries, overrides };
 }
+function stripIoAttrs(s) {
+    return s.replace(/@(?:builtin|location|interpolate)\s*\([^)]*\)|@invariant\b/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function splitTopLevelCommas(s) {
+    const out = [];
+    let depth = 0, start = 0;
+    for (let i = 0; i <= s.length; i++) {
+        const c = s[i];
+        if (c === '(' || c === '<' || c === '[' || c === '{')
+            depth++;
+        else if (c === ')' || c === '>' || c === ']' || c === '}')
+            depth--;
+        if (i === s.length || (c === ',' && depth === 0)) {
+            const part = s.slice(start, i).trim();
+            if (part)
+                out.push(part);
+            start = i + 1;
+        }
+    }
+    return out;
+}
+/**
+ * Wrap `@vertex` entry points that read `@builtin(instance_index)` with an override-gated Fibonacci reversed-Z
+ * micro-bias (`override WEFT_INST_BIAS: f32 = 0.0;`). Preserves exact line numbers for every original source line so
+ * `runs` error mapping stays exact, and leaves shaders without `@builtin(instance_index)` byte-identical.
+ */
+export function injectInstanceBias(code) {
+    if (!code.includes('@vertex') || !code.includes('instance_index') || /\bWEFT_INST_BIAS\b/.test(code))
+        return code;
+    const bare = stripComments(code);
+    // Map struct names -> their @builtin(position) and @builtin(instance_index) field names
+    const posField = new Map();
+    const instField = new Map();
+    for (const m of bare.matchAll(/\bstruct\s+([A-Za-z_]\w*)\s*\{([^}]*)\}/g)) {
+        const sName = m[1], body = m[2];
+        for (const part of splitTopLevelCommas(body)) {
+            const fm = /([A-Za-z_]\w*)\s*:/.exec(stripIoAttrs(part));
+            if (!fm)
+                continue;
+            if (/@builtin\s*\(\s*position\s*\)/.test(part))
+                posField.set(sName, fm[1]);
+            if (/@builtin\s*\(\s*instance_index\s*\)/.test(part))
+                instField.set(sName, fm[1]);
+        }
+    }
+    // Scan code while skipping comments so edits apply at exact source offsets
+    const n = code.length;
+    const skipWsAndComments = (i) => {
+        while (i < n) {
+            if (/\s/.test(code[i])) {
+                i++;
+                continue;
+            }
+            if (code[i] === '/' && code[i + 1] === '/') {
+                while (i < n && code[i] !== '\n')
+                    i++;
+                continue;
+            }
+            if (code[i] === '/' && code[i + 1] === '*') {
+                let d = 1;
+                i += 2;
+                while (i < n && d > 0) {
+                    if (code[i] === '/' && code[i + 1] === '*') {
+                        d++;
+                        i += 2;
+                    }
+                    else if (code[i] === '*' && code[i + 1] === '/') {
+                        d--;
+                        i += 2;
+                    }
+                    else
+                        i++;
+                }
+                continue;
+            }
+            break;
+        }
+        return i;
+    };
+    const edits = [];
+    const wrappers = [];
+    let i = 0;
+    while (i < n) {
+        i = skipWsAndComments(i);
+        if (i >= n)
+            break;
+        if (code.startsWith('@vertex', i) && !/[A-Za-z0-9_]/.test(code[i + 7] ?? '')) {
+            const start = i;
+            let j = skipWsAndComments(i + 7);
+            if (!code.startsWith('fn', j) || /[A-Za-z0-9_]/.test(code[j + 2] ?? '')) {
+                i = j;
+                continue;
+            }
+            j = skipWsAndComments(j + 2);
+            const nm = /^[A-Za-z_]\w*/.exec(code.slice(j));
+            if (!nm) {
+                i = j;
+                continue;
+            }
+            const fnName = nm[0];
+            j = skipWsAndComments(j + fnName.length);
+            if (code[j] !== '(') {
+                i = j;
+                continue;
+            }
+            const pOpen = j;
+            let depth = 0;
+            for (; j < n; j++) {
+                if (code[j] === '/' && code[j + 1] === '/') {
+                    while (j < n && code[j] !== '\n')
+                        j++;
+                    continue;
+                }
+                if (code[j] === '/' && code[j + 1] === '*') {
+                    let cd = 1;
+                    j += 2;
+                    while (j < n && cd > 0) {
+                        if (code[j] === '/' && code[j + 1] === '*') {
+                            cd++;
+                            j += 2;
+                        }
+                        else if (code[j] === '*' && code[j + 1] === '/') {
+                            cd--;
+                            j += 2;
+                        }
+                        else
+                            j++;
+                    }
+                    j--;
+                    continue;
+                }
+                if (code[j] === '(')
+                    depth++;
+                else if (code[j] === ')' && --depth === 0)
+                    break;
+            }
+            const pClose = j;
+            j = skipWsAndComments(pClose + 1);
+            if (!code.startsWith('->', j)) {
+                i = j;
+                continue;
+            }
+            const retStart = j + 2;
+            let brace = retStart;
+            while (brace < n && code[brace] !== '{') {
+                if (code[brace] === '/' && code[brace + 1] === '/') {
+                    while (brace < n && code[brace] !== '\n')
+                        brace++;
+                    continue;
+                }
+                if (code[brace] === '/' && code[brace + 1] === '*') {
+                    let cd = 1;
+                    brace += 2;
+                    while (brace < n && cd > 0) {
+                        if (code[brace] === '/' && code[brace + 1] === '*') {
+                            cd++;
+                            brace += 2;
+                        }
+                        else if (code[brace] === '*' && code[brace + 1] === '/') {
+                            cd--;
+                            brace += 2;
+                        }
+                        else
+                            brace++;
+                    }
+                    continue;
+                }
+                brace++;
+            }
+            if (brace >= n)
+                break;
+            i = brace + 1;
+            const rawParams = stripComments(code.slice(pOpen + 1, pClose)).replace(/\s+/g, ' ').trim();
+            const rawRet = stripComments(code.slice(retStart, brace)).replace(/\s+/g, ' ').trim();
+            const parts = splitTopLevelCommas(rawParams);
+            const strippedParams = [];
+            const argNames = [];
+            let iiExpr = null;
+            let ok = true;
+            for (const p of parts) {
+                const clean = stripIoAttrs(p);
+                const pm = /^([A-Za-z_]\w*)\s*:\s*(.+)$/.exec(clean);
+                if (!pm) {
+                    ok = false;
+                    break;
+                }
+                const [, pName, pType] = pm;
+                strippedParams.push(`${pName}: ${pType.trim()}`);
+                argNames.push(pName);
+                if (/@builtin\s*\(\s*instance_index\s*\)/.test(p))
+                    iiExpr = pName;
+                else if (instField.has(pType.trim()))
+                    iiExpr = `${pName}.${instField.get(pType.trim())}`;
+            }
+            if (!ok || !iiExpr)
+                continue;
+            const isDirect = /@builtin\s*\(\s*position\s*\)/.test(rawRet);
+            const strippedRet = stripIoAttrs(rawRet);
+            const posProp = !isDirect && /^[A-Za-z_]\w*$/.test(strippedRet) ? posField.get(strippedRet) : undefined;
+            if (!isDirect && !posProp)
+                continue;
+            const origSpan = code.slice(start, brace);
+            const nlCount = (origSpan.match(/\n/g) ?? []).length;
+            const origName = `_weft_orig_${fnName}`;
+            edits.push({
+                start,
+                end: brace,
+                text: `fn ${origName}(${strippedParams.join(', ')}) -> ${strippedRet} ` + '\n'.repeat(nlCount),
+            });
+            if (isDirect) {
+                wrappers.push(`@vertex fn ${fnName}(${rawParams}) -> ${rawRet} { return _weft_ibias(${origName}(${argNames.join(', ')}), ${iiExpr}); }`);
+            }
+            else {
+                wrappers.push(`@vertex fn ${fnName}(${rawParams}) -> ${rawRet} { var _wo = ${origName}(${argNames.join(', ')}); _wo.${posProp} = _weft_ibias(_wo.${posProp}, ${iiExpr}); return _wo; }`);
+            }
+            continue;
+        }
+        i++;
+    }
+    if (!edits.length)
+        return code;
+    let out = '';
+    let at = 0;
+    for (const e of edits) {
+        out += code.slice(at, e.start) + e.text;
+        at = e.end;
+    }
+    out += code.slice(at);
+    out += `\noverride WEFT_INST_BIAS: f32 = 0.0;\n`
+        + `fn _weft_ibias(p: vec4f, ii: u32) -> vec4f { if (WEFT_INST_BIAS <= 0.0) { return p; } let h = (ii * 0x9e3779b1u) >> 27u; let z = p.z * (1.0 + f32(h) * WEFT_INST_BIAS); return vec4f(p.x, p.y, select(z, min(z, p.w), p.w > 0.0 && p.z <= p.w), p.w); }\n`
+        + wrappers.join('\n') + '\n';
+    return out;
+}
 export function compileWgsl(file, opts) {
     const pre = preprocess(file, opts);
+    const srcCode = opts.autoInstanceBias === false ? pre.code : injectInstanceBias(pre.code);
     let reflect;
     try {
-        reflect = reflectWgsl(pre.code);
+        reflect = reflectWgsl(srcCode);
     }
     catch (e) {
         const msg = e.message ?? String(e);
@@ -331,7 +565,7 @@ export function compileWgsl(file, opts) {
     const id = relative(opts.root, file).split(sep).join('/');
     const label = id.split('/').pop().replace(/\.wgsl$/, '');
     // (reflected whole, for the struct layouts and their tweak comments; the browser gets the lean code: lean.ts)
-    const lean = opts.lean === false ? { code: pre.code, runs: pre.runs } : leanWgsl(pre.code, pre.runs);
+    const lean = opts.lean === false ? { code: srcCode, runs: pre.runs } : leanWgsl(srcCode, pre.runs);
     return { id, label, code: lean.code, files: pre.files, runs: lean.runs, includes: pre.includes, structFiles: pre.structFiles, reflect };
 }
 function tsType(t, structs, f) {

@@ -320,8 +320,11 @@ export function pipelinesOf(items, out = new Set()) {
             pipelinesOf(it, out);
         else if (it instanceof PipelineRecord)
             out.add(it);
-        else if ('pipe' in it && it.pipe instanceof PipelineRecord)
+        else if ('pipe' in it && it.pipe instanceof PipelineRecord) {
             out.add(it.pipe);
+            if ('backPipe' in it && it.backPipe instanceof PipelineRecord)
+                out.add(it.backPipe);
+        }
         else if ('draws' in it && Array.isArray(it.draws))
             pipelinesOf(it.draws, out);
         // (a run item made of passes of its own: a MipChain's)
@@ -365,6 +368,8 @@ function pickEntry(shader, stage, name, label) {
 }
 /** the override a fragment shader may declare to learn whether its draw's alpha to coverage is on (1) or not (0) */
 const A2C = 'ALPHA_TO_COVERAGE';
+/** the override plugin/wgsl.ts injects into instanced vertex shaders for automatic static-instance coplanar tie-breaking */
+const INST_BIAS = 'WEFT_INST_BIAS';
 function constantsFor(shader, entry, constants) {
     if (!constants)
         return undefined;
@@ -492,14 +497,14 @@ const BLEND = {
 const blendOf = (b) => (b === undefined ? undefined : typeof b === 'string' ? BLEND[b] : b);
 const DEPTH_LAYERS = { terrain: -1, base: 0, detail: 1, decal: 2, overlay: 3 };
 const biasSlots = new WeakMap();
-function shaderBiasSlot(kit, shaderId) {
+function shaderBiasSlot(kit, key) {
     let state = biasSlots.get(kit);
     if (!state)
         biasSlots.set(kit, (state = { map: new Map(), next: 0 }));
-    let slot = state.map.get(shaderId);
+    let slot = state.map.get(key);
     if (slot === undefined) {
-        slot = 1 + (state.next++ & 15);
-        state.map.set(shaderId, slot);
+        slot = 1 + (state.next++ & 31);
+        state.map.set(key, slot);
     }
     return slot;
 }
@@ -510,6 +515,14 @@ function isOpaqueBlend(b) {
         return b.every((x) => x === undefined || x === 'opaque');
     return false;
 }
+function isMirroredView(v) {
+    const m = v?.camera?.view;
+    if (!m)
+        return false;
+    return m[0] * (m[5] * m[10] - m[6] * m[9]) - m[4] * (m[1] * m[10] - m[2] * m[9]) + m[8] * (m[1] * m[6] - m[2] * m[5]) < 0;
+}
+const VIEWPORT_BASE_MAX_D = 1 - 1e-5;
+const VIEWPORT_SLOT_STEP = 1.2e-6;
 const gpuBuf = (b) => { const v = deref(b); return v instanceof StorageBuffer ? v.gpu : v; };
 export class Draw {
     kit;
@@ -526,6 +539,8 @@ export class Draw {
     order;
     binder;
     pipe;
+    /** secondary back-face pipeline (`cull: 'front'`, lower non-negative depth bias) created for opaque `cull: 'none'` draws */
+    backPipe = null;
     vs;
     fs;
     unsub;
@@ -547,13 +562,20 @@ export class Draw {
         this.on_ = opts.enabled ?? true;
         this.pickEntries();
         this.binder = new Binder(kit, shader, this.fs ? [this.vs, this.fs] : [this.vs], { ...(opts.bind ?? {}) }, this.label);
-        this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(), () => this.binder.layoutKey, { tags: opts.tags, owner: opts.owner, phase: opts.phase });
+        const meta = { tags: opts.tags, owner: opts.owner, phase: opts.phase };
+        const split = this.wantsBackBias();
+        this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(split ? 'back' : undefined), () => this.binder.layoutKey, meta);
         this.pipe.changed = () => this.bundle?.invalidate();
         this.pipe.build();
+        if (split) {
+            this.backPipe = new PipelineRecord(kit, `${this.label}.back`, shader, () => this.descriptor('front'), () => this.binder.layoutKey, meta);
+            this.backPipe.changed = () => this.bundle?.invalidate();
+            this.backPipe.build();
+        }
         this.unsub = shader.onChange(() => this.rebuild());
     }
-    /** wait for its pipeline alone (see kit.ready) */
-    ready() { return this.pipe.ready(); }
+    /** wait for its pipeline(s) alone (see kit.ready) */
+    ready() { return this.kit.ready(this); }
     /** drawn or not (a function is asked each frame) */
     get enabled() { return this.on_; }
     set enabled(v) {
@@ -561,6 +583,50 @@ export class Draw {
             return;
         this.on_ = v;
         this.bundle?.invalidate();
+    }
+    /** internal: whether this draw participates in same-pipeline per-draw viewport maxDepth tiering */
+    get viewportTierEligible() {
+        const o = this.opts;
+        if (o.encode || o.depthBias !== undefined || o.depthBiasSlopeScale !== undefined || o.depthBiasClamp !== undefined)
+            return false;
+        if (o.depthLayer !== undefined) {
+            const layer = typeof o.depthLayer === 'number' ? o.depthLayer : (DEPTH_LAYERS[o.depthLayer] ?? 0);
+            if (layer < 0)
+                return false;
+        }
+        const topo = o.topology ?? 'triangle-list';
+        if (topo !== 'triangle-list' && topo !== 'triangle-strip')
+            return false;
+        const cmp = o.depthCompare ?? 'greater-equal';
+        if (cmp !== 'greater-equal' && cmp !== 'greater')
+            return false;
+        if (this.fs === null || (o.depthWrite ?? true) === false || !isOpaqueBlend(o.blend))
+            return false;
+        return true;
+    }
+    wantsBackBias() {
+        const o = this.opts;
+        if (o.cull !== 'none' || o.backFaceBias === false || o.encode || this.pass.opts.autoDepthBias === false)
+            return false;
+        if (o.depthBias !== undefined || o.depthBiasSlopeScale !== undefined || o.depthBiasClamp !== undefined)
+            return false;
+        if (o.depthLayer !== undefined) {
+            const layer = typeof o.depthLayer === 'number' ? o.depthLayer : (DEPTH_LAYERS[o.depthLayer] ?? 0);
+            if (layer < 0)
+                return false;
+        }
+        const f = this.pass.formats();
+        if (!f.depth || f.depthReadOnly || !f.colors.length || this.fs === null)
+            return false;
+        const topo = o.topology ?? 'triangle-list';
+        if (topo !== 'triangle-list' && topo !== 'triangle-strip')
+            return false;
+        const cmp = o.depthCompare ?? 'greater-equal';
+        if (cmp !== 'greater-equal' && cmp !== 'greater')
+            return false;
+        if ((o.depthWrite ?? true) === false || !isOpaqueBlend(o.blend))
+            return false;
+        return true;
     }
     pickEntries() {
         this.vs = pickEntry(this.shader, 'vertex', this.opts.vertex, this.label);
@@ -573,6 +639,7 @@ export class Draw {
             this.binder.build();
             this.bundle?.invalidate();
             this.pipe.build();
+            this.backPipe?.build();
         }
         catch (e) {
             this.kit.report('bind', this.label, e.message);
@@ -583,7 +650,7 @@ export class Draw {
         this.bundle?.invalidate();
         return this;
     }
-    descriptor() {
+    descriptor(cullOverride) {
         const o = this.opts, module = NO_MODULE;
         const f = this.pass.formats();
         const outs = this.fs ? (this.shader.reflect.entries.find((e) => e.name === this.fs)?.targets ?? 1) : 0;
@@ -593,11 +660,26 @@ export class Draw {
         const a2c = !!o.alphaToCoverage && f.samples > 1;
         const tells = !!this.fs && !!this.shader.reflect.entries.find((e) => e.name === this.fs)?.overrides.includes(A2C) && !(o.constants && A2C in o.constants);
         const fsConstants = tells ? { ...o.constants, [A2C]: a2c ? 1 : 0 } : o.constants;
+        const topo = o.topology ?? 'triangle-list';
+        const isTri = topo === 'triangle-list' || topo === 'triangle-strip';
+        const cmp = o.depthCompare ?? 'greater-equal';
+        const depthWrite = f.depthReadOnly ? false : (o.depthWrite ?? true);
+        const hasExplicitBias = o.depthBias !== undefined || o.depthBiasSlopeScale !== undefined || o.depthBiasClamp !== undefined;
+        const canAutoBias = this.pass.opts.autoDepthBias !== false
+            && !!f.depth && f.colors.length > 0 && !f.depthReadOnly
+            && this.fs !== null && depthWrite && isOpaqueBlend(o.blend)
+            && isTri && (cmp === 'greater-equal' || cmp === 'greater') && !hasExplicitBias;
+        const hasInstBiasOverride = !!this.shader.reflect.entries.find((e) => e.name === this.vs)?.overrides.includes(INST_BIAS);
+        const useInstBias = canAutoBias && hasInstBiasOverride
+            && !(o.constants && INST_BIAS in o.constants)
+            && o.instanceBias !== false && !o.indirect
+            && o.instances !== undefined && o.instances !== 1;
+        const vsConstants = useInstBias ? { ...o.constants, [INST_BIAS]: 5e-7 } : o.constants;
         const desc = {
-            label: this.label,
+            label: cullOverride === 'front' ? `${this.label}.back` : this.label,
             layout: this.binder.layout,
-            vertex: { module, entryPoint: this.vs, constants: constantsFor(this.shader, this.vs, o.constants), buffers: o.vertexBuffers?.map((v) => v.layout) },
-            primitive: { topology: o.topology ?? 'triangle-list', cullMode: o.cull ?? 'back', frontFace: o.frontFace ?? 'ccw', unclippedDepth: o.unclippedDepth && this.kit.features.has('depth-clip-control') ? true : undefined },
+            vertex: { module, entryPoint: this.vs, constants: constantsFor(this.shader, this.vs, vsConstants), buffers: o.vertexBuffers?.map((v) => v.layout) },
+            primitive: { topology: topo, cullMode: cullOverride ?? o.cull ?? 'back', frontFace: o.frontFace ?? 'ccw', unclippedDepth: o.unclippedDepth && this.kit.features.has('depth-clip-control') ? true : undefined },
             // (WebGPU refuses alpha to coverage without multisampling: such a pipeline would fail and never draw)
             multisample: { count: f.samples, alphaToCoverageEnabled: a2c },
         };
@@ -605,20 +687,16 @@ export class Draw {
         // when its pass has one sample, a phone's — unless the draw sets it; one that doesn't is warned once)
         if (o.alphaToCoverage && f.samples <= 1 && !tells)
             this.kit.warnOnce(`a2c:${this.label}`, `${this.label}: alphaToCoverage needs a multisampled pass (${this.pass.label} has 1 sample): drawn without it`);
-        if (o.topology === 'triangle-strip' || o.topology === 'line-strip')
+        if (topo === 'triangle-strip' || topo === 'line-strip')
             desc.primitive.stripIndexFormat = o.indices ? (o.indices.format ?? 'uint32') : undefined;
         if (this.fs)
             desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, fsConstants), targets };
         if (f.depth) {
-            const topo = o.topology ?? 'triangle-list';
-            const isTri = topo === 'triangle-list' || topo === 'triangle-strip';
-            const cmp = o.depthCompare ?? 'greater-equal';
-            const depthWrite = f.depthReadOnly ? false : (o.depthWrite ?? true);
             let depthBias = o.depthBias;
             let depthBiasSlopeScale = o.depthBiasSlopeScale;
             let depthBiasClamp = o.depthBiasClamp;
-            const hasExplicitBias = depthBias !== undefined || depthBiasSlopeScale !== undefined || depthBiasClamp !== undefined;
             if (isTri && !hasExplicitBias) {
+                const slotKey = `${this.shader.id}|${this.vs}|${this.fs ?? ''}|${stableKey(o.constants)}`;
                 if (o.depthLayer !== undefined) {
                     const layer = typeof o.depthLayer === 'number' ? o.depthLayer : (DEPTH_LAYERS[o.depthLayer] ?? 0);
                     if (layer < 0) {
@@ -627,20 +705,32 @@ export class Draw {
                         depthBiasClamp = 0;
                     }
                     else {
-                        const s = shaderBiasSlot(this.kit, this.shader.id);
-                        depthBias = Math.round(layer * 64) + s * 3;
-                        depthBiasSlopeScale = layer * 0.4 + s * 0.02;
-                        depthBiasClamp = Math.min(5e-3, layer >= 2 ? 5e-4 * layer : 5e-4);
+                        const s = shaderBiasSlot(this.kit, slotKey);
+                        const layerBase = layer === 0 ? 500 : layer === 1 ? 1800 : layer === 2 ? 4400 : 9600 + (layer - 3) * 4000;
+                        if (cullOverride === 'front') {
+                            depthBias = layer === 0 ? s : Math.max(1, layerBase - 400 + s);
+                            depthBiasSlopeScale = layer === 0 ? s * 0.006 : Math.max(0.01, layer * 1.2 + s * 0.006);
+                            depthBiasClamp = Math.min(5e-3, layer >= 1 ? 6e-4 + layer * 1e-3 : 3e-4);
+                        }
+                        else {
+                            depthBias = layerBase + s * 4;
+                            depthBiasSlopeScale = 0.60 + layer * 1.2 + s * 0.025;
+                            depthBiasClamp = Math.min(5e-3, 1.2e-3 + layer * 1.2e-3);
+                        }
                     }
                 }
-                else if (this.pass.opts.autoDepthBias !== false
-                    && f.colors.length > 0 && !f.depthReadOnly
-                    && this.fs !== null && depthWrite && isOpaqueBlend(o.blend)
-                    && (cmp === 'greater-equal' || cmp === 'greater')) {
-                    const s = shaderBiasSlot(this.kit, this.shader.id);
-                    depthBias = s * 3;
-                    depthBiasSlopeScale = s * 0.02;
-                    depthBiasClamp = 5e-4;
+                else if (canAutoBias) {
+                    const s = shaderBiasSlot(this.kit, slotKey);
+                    if (cullOverride === 'front') {
+                        depthBias = s;
+                        depthBiasSlopeScale = s * 0.006;
+                        depthBiasClamp = 3e-4;
+                    }
+                    else {
+                        depthBias = 500 + s * 4;
+                        depthBiasSlopeScale = 0.60 + s * 0.025;
+                        depthBiasClamp = 1.2e-3;
+                    }
                 }
             }
             desc.depthStencil = {
@@ -664,15 +754,32 @@ export class Draw {
     falling = false;
     // (its calls whatever its `enabled` says: a fallback is drawn when the draw it stands in for would be)
     emit(enc, view, shared) {
-        const p = this.pipe.pipeline;
+        if (!this.backPipe) {
+            this.emitPipe(enc, this.pipe, view, shared, true);
+            return;
+        }
+        if (this.pipe.gate && !this.pipe.gate())
+            return;
+        const v = view ?? this.pass.opts.view ?? this.kit.mainView;
+        if (isMirroredView(v)) {
+            this.emitPipe(enc, this.backPipe, view, shared, false);
+            this.emitPipe(enc, this.pipe, view, shared, true);
+        }
+        else {
+            this.emitPipe(enc, this.pipe, view, shared, true);
+            this.emitPipe(enc, this.backPipe, view, shared, false);
+        }
+    }
+    emitPipe(enc, rec, view, shared, allowFallback = true) {
+        const p = rec.pipeline;
         if (!p) {
-            const fb = this.pipe.error ? this.opts.fallback : undefined;
+            const fb = allowFallback && rec.error ? this.opts.fallback : undefined;
             // (none, or one that came back round to this draw: nothing to draw)
             if (!fb || this.falling) {
-                this.pipe.skip();
+                rec.skip();
                 return;
             }
-            if (this.pipe.gate && !this.pipe.gate())
+            if (rec.gate && !rec.gate())
                 return;
             if (this.kit.debug)
                 this.kit.warnOnce(`fallback:${this.label}`, `${this.label}: its pipeline failed, drawing its fallback '${fb.label}'`);
@@ -685,7 +792,7 @@ export class Draw {
             }
             return;
         }
-        if (this.pipe.gate && !this.pipe.gate())
+        if (rec.gate && !rec.gate())
             return;
         const o = this.opts;
         // (consecutive draws with one pipeline set it once)
@@ -750,7 +857,7 @@ export class Draw {
     get watched() {
         const o = this.opts, fn = (x) => typeof x === 'function';
         return fn(this.on_) || fn(o.count) || fn(o.instances) || fn(o.first) || fn(o.firstInstance) || fn(o.baseVertex) || fn(o.indirect?.offset)
-            || fn(o.indirect?.count) || !!this.pipe.gate;
+            || fn(o.indirect?.count) || !!this.pipe.gate || !!this.backPipe?.gate;
     }
     /** (bundles) those options' values now, into out */
     state(out) {
@@ -780,6 +887,7 @@ export class Draw {
             list.splice(i, 1);
         this.bundle?.invalidate();
         this.pipe.dispose();
+        this.backPipe?.dispose();
     }
 }
 export class RenderPass {
@@ -1028,7 +1136,54 @@ export class RenderPass {
     _depthHasStencil = false;
     _depthFmt = '';
     _passDesc = null;
+    _pipeCount = new Map();
+    _pipeSeen = new Map();
+    _vpRect = [0, 0, 0, 0];
     static DEFAULT_CLEAR = [0, 0, 0, 0];
+    resolveViewportRect() {
+        const o = this.opts, r = this._vpRect;
+        if (o.viewport) {
+            const v = vals(o.viewport);
+            r[0] = v[0];
+            r[1] = v[1];
+            r[2] = v[2];
+            r[3] = v[3];
+            return r[2] > 0 && r[3] > 0;
+        }
+        const t = o.color?.[0]?.target ?? o.depth?.target;
+        if (!t)
+            return false;
+        if (t === 'screen') {
+            const sz = this.kit.size?.canvas;
+            if (!sz || sz[0] <= 0 || sz[1] <= 0)
+                return false;
+            r[0] = 0;
+            r[1] = 0;
+            r[2] = sz[0];
+            r[3] = sz[1];
+            return true;
+        }
+        const v = deref(t);
+        if (v instanceof Texture) {
+            if (v.width <= 0 || v.height <= 0)
+                return false;
+            r[0] = 0;
+            r[1] = 0;
+            r[2] = v.width;
+            r[3] = v.height;
+            return true;
+        }
+        if (v instanceof TexView) {
+            const m = v.desc.baseMipLevel ?? 0;
+            const w = Math.max(1, v.texture.width >> m), h = Math.max(1, v.texture.height >> m);
+            r[0] = 0;
+            r[1] = 0;
+            r[2] = w;
+            r[3] = h;
+            return true;
+        }
+        return false;
+    }
     encode(enc, ts) {
         const o = this.opts, cols = o.color, n = cols ? cols.length : 0;
         const colorAttachments = this._colorAtts;
@@ -1055,6 +1210,7 @@ export class RenderPass {
             }
         }
         let depthStencilAttachment;
+        let depthTex = null;
         if (o.depth) {
             const d = o.depth;
             const tex = deref(d.target);
@@ -1062,10 +1218,12 @@ export class RenderPass {
             if (tex instanceof Texture) {
                 fmt = tex.format;
                 view = tex.attachment;
+                depthTex = tex;
             }
             else if (tex instanceof TexView) {
                 fmt = tex.texture.format;
                 view = tex.attachment;
+                depthTex = tex.texture;
             }
             else
                 throw new BindError(`${this.label}: bad attachment`);
@@ -1106,17 +1264,88 @@ export class RenderPass {
             desc.timestampWrites = ts;
         }
         const pe = enc.beginRenderPass(desc);
+        const hasVpApi = typeof pe.setViewport === 'function';
+        const hasVpRect = hasVpApi && this.resolveViewportRect();
+        const vp = this._vpRect;
+        // Detect same-pipeline opaque multi-draw collisions in color+writable-depth passes (zero extra pipelines):
+        // colliding draws step viewport maxDepth upward from VIEWPORT_BASE_MAX_D (0.9998) toward 1.0 in painter's order,
+        // staying strictly ahead of terrain/base (0.9998) while keeping z=0 sky exact. Downstream readOnly/load passes on
+        // the same depth texture automatically inherit depthTex._baseMaxDepth so their depth tests match cleanly.
+        let tiering = false;
+        let baseMaxD = 1;
+        const draws = this.draws;
+        if (o.depth && !o.replay && o.autoDepthBias !== false && hasVpRect) {
+            if (!o.depth.readOnly && n > 0) {
+                const pc = this._pipeCount;
+                pc.clear();
+                for (let i = 0, dn = draws.length; i < dn; i++) {
+                    const item = draws[i];
+                    if (!(item instanceof Draw) || !item.viewportTierEligible || !on(item.enabled))
+                        continue;
+                    const p = item.pipe._pipe;
+                    if (!p)
+                        continue;
+                    const c = (pc.get(p) ?? 0) + 1;
+                    pc.set(p, c);
+                    if (c > 1)
+                        tiering = true;
+                }
+                if (tiering) {
+                    baseMaxD = o.depth.clear === false ? (depthTex?._baseMaxDepth ?? VIEWPORT_BASE_MAX_D) : VIEWPORT_BASE_MAX_D;
+                    if (depthTex && o.depth.clear !== false)
+                        depthTex._baseMaxDepth = baseMaxD;
+                }
+                else if (depthTex) {
+                    if (o.depth.clear !== false)
+                        depthTex._baseMaxDepth = 1;
+                    else
+                        baseMaxD = depthTex._baseMaxDepth;
+                }
+            }
+            else if (depthTex && depthTex._baseMaxDepth < 1) {
+                baseMaxD = depthTex._baseMaxDepth;
+            }
+        }
+        else if (depthTex && o.depth && !o.depth.readOnly && o.depth.clear !== false) {
+            depthTex._baseMaxDepth = 1;
+        }
         if (o.viewport) {
-            const v = vals(o.viewport);
-            pe.setViewport(v[0], v[1], v[2], v[3], 0, 1);
-            pe.setScissorRect(Math.max(0, Math.floor(v[0])), Math.max(0, Math.floor(v[1])), Math.max(1, Math.floor(v[2])), Math.max(1, Math.floor(v[3])));
+            pe.setViewport(vp[0], vp[1], vp[2], vp[3], 0, baseMaxD);
+            pe.setScissorRect(Math.max(0, Math.floor(vp[0])), Math.max(0, Math.floor(vp[1])), Math.max(1, Math.floor(vp[2])), Math.max(1, Math.floor(vp[3])));
+        }
+        else if (hasVpRect && baseMaxD < 1) {
+            pe.setViewport(vp[0], vp[1], vp[2], vp[3], 0, baseMaxD);
         }
         if (o.replay)
             this.encodeReplay(pe, o.replay);
-        else {
-            const draws = this.draws;
+        else if (!tiering) {
             for (let i = 0, dn = draws.length; i < dn; i++)
                 draws[i].encode(pe);
+        }
+        else {
+            const pc = this._pipeCount, ps = this._pipeSeen;
+            ps.clear();
+            let curMaxD = baseMaxD;
+            for (let i = 0, dn = draws.length; i < dn; i++) {
+                const item = draws[i];
+                let wantMaxD = baseMaxD;
+                if (item instanceof Draw && item.viewportTierEligible) {
+                    const p = item.pipe._pipe;
+                    if (p && (pc.get(p) ?? 0) > 1 && on(item.enabled)) {
+                        const idx = ps.get(p) ?? 0;
+                        ps.set(p, idx + 1);
+                        if (idx > 0) {
+                            const slot = 1 + ((idx - 1) & 7);
+                            wantMaxD = Math.min(1, baseMaxD + slot * VIEWPORT_SLOT_STEP);
+                        }
+                    }
+                }
+                if (wantMaxD !== curMaxD) {
+                    pe.setViewport(vp[0], vp[1], vp[2], vp[3], 0, wantMaxD);
+                    curMaxD = wantMaxD;
+                }
+                item.encode(pe);
+            }
         }
         pe.end();
     }

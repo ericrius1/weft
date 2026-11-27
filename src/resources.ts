@@ -7,6 +7,7 @@ import type { Kit } from './kit';
 import type { StructDef } from './shader';
 import { StructView, type DeepPartial } from './struct';
 import { BUF, TEX, MAP } from './gpuconst';
+import { separateCoplanar, type CoplanarOptions, type CoplanarStats } from './coplanar';
 
 let UID = 1;
 export const nextUid = () => UID++;
@@ -105,6 +106,15 @@ export class UniformBuffer<T = Record<string, unknown>> implements Resource {
   }
 }
 
+export interface StorageGeometryOptions extends CoplanarOptions {
+  /** optional triangle index buffer when separating indexed vertex data stored in this buffer */
+  indices?: Uint32Array | Uint16Array | readonly number[];
+  /** set false to skip automatic coplanar separation on upload (default true) */
+  separateCoplanar?: boolean;
+  /** copy `data` before separating so the caller's TypedArray is not modified in place (default false) */
+  copy?: boolean;
+}
+
 export interface StorageOptions {
   label?: string;
   /** size in bytes; or count × (struct size | stride | 4) */
@@ -114,6 +124,9 @@ export interface StorageOptions {
   stride?: number;
   usage?: BufferUse[];
   data?: ArrayBufferView | ArrayBuffer;
+  /** when uploading triangle vertex data (Float32Array/Float64Array/ArrayBuffer), automatically runs
+   *  `separateCoplanar()` before uploading so custom mesh builders never z-fight internally */
+  geometry?: StorageGeometryOptions;
 }
 
 export class StorageBuffer implements Resource {
@@ -125,18 +138,43 @@ export class StorageBuffer implements Resource {
   stride: number;
   label: string;
   readonly usage: number;
+  /** true when this buffer's vertex data was processed by `separateCoplanar()` on creation */
+  coplanarSeparated = false;
+  /** stats from the automatic `geometry` coplanar separation pass, if run */
+  coplanarStats?: CoplanarStats;
   /** freed for good (destroy) */
   destroyed = false;
   private cutSaid = 0;
   constructor(private kit: Kit, o: StorageOptions) {
     this.label = o.label ?? 'storage';
     this.stride = o.stride ?? (o.struct ? Math.ceil(o.struct.size / o.struct.align) * o.struct.align : 4);
-    const dataBytes = o.data ? o.data.byteLength : 0;
+    let uploadData = o.data;
+    if (uploadData && o.geometry && o.geometry.separateCoplanar !== false) {
+      const g = o.geometry;
+      let floats: Float32Array | Float64Array | null = null;
+      if (uploadData instanceof Float32Array) {
+        floats = g.copy ? new Float32Array(uploadData) : uploadData;
+        uploadData = floats;
+      } else if (uploadData instanceof Float64Array) {
+        floats = g.copy ? new Float64Array(uploadData) : uploadData;
+        uploadData = floats;
+      } else if (uploadData instanceof ArrayBuffer && (uploadData.byteLength & 3) === 0) {
+        const buf = g.copy ? uploadData.slice(0) : uploadData;
+        floats = new Float32Array(buf);
+        uploadData = floats;
+      }
+      if (floats) {
+        const stride = g.stride ?? (o.stride && (o.stride & 3) === 0 ? o.stride >>> 2 : 3);
+        this.coplanarStats = separateCoplanar(floats, g.indices, { ...g, stride });
+        this.coplanarSeparated = true;
+      }
+    }
+    const dataBytes = uploadData ? uploadData.byteLength : 0;
     this.count = o.count ?? (o.size ? Math.floor(o.size / this.stride) : Math.floor(dataBytes / this.stride));
     const size = o.size ?? Math.max(this.count * this.stride, dataBytes);
     this.usage = bufferUsage(o.usage ?? ['storage', 'copy-dst', 'copy-src']) | BUF.COPY_DST;
     this.alloc(size);
-    if (o.data) this.write(o.data);
+    if (uploadData) this.write(uploadData);
   }
   /** bumped when its GPU buffer is replaced (and kit.resourceGen with it, so bind groups are checked again) */
   get version() { return this.v; }
@@ -242,6 +280,8 @@ export class Texture implements Resource {
   readonly usage: number;
   /** freed for good (destroy): a resize no longer reallocates it */
   destroyed = false;
+  /** internal: base viewport maxDepth written by the last RenderPass clearing this depth texture (passes.ts) */
+  _baseMaxDepth = 1;
   private views = new Map<string, GPUTextureView>();
   private readonly blk: { bw: number; bh: number; bytes: number };
   constructor(private kit: Kit, readonly desc: TextureDesc) {

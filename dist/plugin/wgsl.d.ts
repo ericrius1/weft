@@ -74,6 +74,10 @@ export interface CompileOptions {
     /** the browser given only the comment-free code its entry points reach (lean.ts: a change elsewhere in an included
      *  file then leaves its compiled pipelines in the browser's cache). Default true */
     lean?: boolean;
+    /** wrap `@vertex` entry points that take `@builtin(instance_index)` with an override-gated Fibonacci reversed-Z
+     *  micro-bias (`override WEFT_INST_BIAS: f32 = 0.0;`), enabled by `passes.ts` only for static non-indirect instanced
+     *  opaque draws (constant-folded away when 0.0). Default true */
+    autoInstanceBias?: boolean;
 }
 export declare class WgslError extends Error {
 }
@@ -91,6 +95,12 @@ export declare function mapLine(runs: number[], files: string[], line: number): 
 };
 export declare function normType(t: string): string;
 export declare function reflectWgsl(code: string): ShaderReflection;
+/**
+ * Wrap `@vertex` entry points that read `@builtin(instance_index)` with an override-gated Fibonacci reversed-Z
+ * micro-bias (`override WEFT_INST_BIAS: f32 = 0.0;`). Preserves exact line numbers for every original source line so
+ * `runs` error mapping stays exact, and leaves shaders without `@builtin(instance_index)` byte-identical.
+ */
+export declare function injectInstanceBias(code: string): string;
 export declare function compileWgsl(file: string, opts: CompileOptions): CompiledShader;
 export interface DeclarationOptions {
     /** absolute path of the shader file being declared */

@@ -2,7 +2,7 @@
 export { createKit, Kit, View, AutoResolution, WebGPUUnavailable, type KitOptions, type GpuCaps, type HdrState, type FrameTime, type RunEntry } from './kit';
 export { defineShader, sourceLine, type Shader, type StructDef, type Vec2, type Vec3, type Vec4, type Mat3, type Mat4 } from './shader';
 export { StructView, StructArray, type DeepPartial } from './struct';
-export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction, compressedBlock, bytesPerPixel, type TextureDesc, type StorageOptions } from './resources';
+export { UniformBuffer, StorageBuffer, Texture, TexView, PingPong, Ref, RunAction, compressedBlock, bytesPerPixel, type TextureDesc, type StorageOptions, type StorageGeometryOptions } from './resources';
 export { Compute, RenderPass, Draw, RawItem, type ComputeOptions, type RenderPassOptions, type DrawOptions, type DrawTags, type DepthLayer, type BlendMode, type RunItem,
   type PassItem, type DrawEncoder, type Compiler, type PipelineRecord, type AnyPipelineRecord, type SharedPipeline, type Waitable } from './passes';
 export { FrameGraph, type GraphEntryOptions } from './graph';
@@ -14,7 +14,7 @@ export { Input, PAD, type Device } from './input';
 export * from './math';
 export { Painter, Atlas, atlasOf, hex, withAlpha, scaleColor, type Color, type Sprite, type PainterOptions } from './painter';
 export { MipChain } from './mipgen';
-export { MeshBuilder, packColor, triangulate, VERTEX_BYTES, findCoplanar, separateCoplanar, type GpuMesh, type MeshDataOptions, type CoplanarOptions, type CoplanarPair, type CoplanarStats } from './mesh';
+export { MeshBuilder, TriangleSoup, packColor, packTag, triangulate, VERTEX_BYTES, findCoplanar, separateCoplanar, type GpuMesh, type MeshDataOptions, type CoplanarOptions, type CoplanarPair, type CoplanarStats } from './mesh';
 export { blueNoise, blueNoiseTexture } from './bluenoise';
 export { Capture } from './capture';
 export { Fulldome, type FulldomeOptions } from './dome';

@@ -48,7 +48,7 @@ export function weft(opts = {}) {
     } };
     const typesFrom = opts.typesFrom ?? PACKAGE;
     const runtime = opts.runtime ?? `${PACKAGE}/runtime`;
-    const compile = (file) => compileWgsl(file, { root, libs, lean: opts.lean });
+    const compile = (file) => compileWgsl(file, { root, libs, lean: opts.lean, autoInstanceBias: opts.autoInstanceBias });
     const declare = (file, s) => {
         if (opts.types === false || file.includes('/node_modules/') || file.includes('\\node_modules\\'))
             return;

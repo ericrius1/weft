@@ -1,7 +1,7 @@
 export interface CoplanarOptions {
     /** normal-direction separation in world units (default 0.001 m = 1 mm) */
     eps?: number;
-    /** plane-offset tolerance in world units for treating two faces as coplanar (default 0.002 m) */
+    /** plane-offset tolerance in world units for treating two faces as coplanar (default min(0.0005, eps * 0.5) m) */
     tol?: number;
     /** minimum shared overlap area to count as a coplanar pair (default 1e-5 m²) */
     minArea?: number;

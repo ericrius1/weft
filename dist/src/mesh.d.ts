@@ -81,6 +81,27 @@ export declare class MeshBuilder {
     separateCoplanar(opts?: CoplanarOptions): CoplanarStats;
     upload(kit: Kit, label?: string, opts?: MeshDataOptions): GpuMesh;
 }
+/** Pack up to four byte/6-bit material/sub-material/part/extra fields into a single f32 bit-pattern (read via `bitcast<u32>` in WGSL). */
+export declare function packTag(mat: number, sub?: number, part?: number, extra?: number): number;
+/**
+ * Lightweight 9-float/vertex non-indexed triangle soup builder (`px, py, pz, nx, ny, nz, u, v, f32(tag)`) for
+ * architectural and procedural features with custom WGSL shaders. Automatically runs `separateCoplanar()` in `data()`
+ * so overlapping quads/boxes never z-fight internally.
+ */
+export declare class TriangleSoup {
+    private buf;
+    get count(): number;
+    vert(p: V3, n: V3, u: number, v: number, tag?: number): this;
+    tri(a: V3, b: V3, c: V3, ua: [number, number], ub: [number, number], uc: [number, number], tag?: number, n?: V3): this;
+    /** Quad with corners (p00 -> p10 -> p11 -> p01) in CCW order from outside. */
+    quad(p00: V3, p10: V3, p11: V3, p01: V3, tag?: number, uvScale?: number, uvRect?: [number, number, number, number]): this;
+    /** Axis-aligned box from (x0,y0,z0) to (x1,y1,z1), outward CCW normals. Mask bits: 1:+Y, 2:-Y, 4:+Z, 8:-Z, 16:+X, 32:-X. */
+    box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, tag?: number, uvScale?: number, mask?: number): this;
+    /** Upright tapered cylinder around (cx, cz) from y0..y1. */
+    cyl(cx: number, cz: number, y0: number, y1: number, r0: number, r1: number, segs: number, tag?: number, capTop?: boolean, capBot?: boolean): this;
+    /** Flat Float32Array (9 floats/vertex). Automatically runs `separateCoplanar()` unless `opts.separateCoplanar === false`. */
+    data(opts?: MeshDataOptions): Float32Array;
+}
 /** ear-clipping triangulation of a simple polygon (counter-clockwise); returns index triples */
 export declare function triangulate(poly: ArrayLike<number>[]): number[];
 //# sourceMappingURL=mesh.d.ts.map

@@ -291,6 +291,13 @@ export interface DrawOptions<S extends Shader = Shader> {
     /** semantic depth layer for reversed-Z coplanar tie-breaking ('terrain' < 'base' < 'detail' < 'decal' < 'overlay',
      *  or an integer: < 0 = unbiased reference, 0 = base, > 0 = higher layers). Ignored when `depthBias` is set explicitly. */
     depthLayer?: DepthLayer;
+    /** when `cull: 'none'` is used on an opaque triangle draw in a color+depth pass with `autoDepthBias`, weft
+     *  automatically draws front faces (`cull: 'back'`) ahead of back faces (`cull: 'front'`, lower non-negative bias)
+     *  so touching solids never z-fight and hidden interior back faces are Early-Z rejected. Set false to opt out (e.g. thin foliage). */
+    backFaceBias?: boolean;
+    /** automatic Fibonacci per-instance reversed-Z micro-bias for static non-indirect instanced opaque triangle draws
+     *  whose vertex shader uses `@builtin(instance_index)`. Set false to opt out (e.g. CPU-compacted dynamic instances). */
+    instanceBias?: boolean;
     unclippedDepth?: boolean;
     /** alpha to coverage (a multisampled pass only: on a one-sample pass it's drawn without). A fragment shader that
      *  declares `override ALPHA_TO_COVERAGE: bool` is told whether it's on, so it can cut out by alpha (discard) where
@@ -351,13 +358,15 @@ export declare class Draw<S extends Shader = Shader> {
     readonly order: number;
     binder: Binder;
     pipe: PipelineRecord<GPURenderPipeline>;
+    /** secondary back-face pipeline (`cull: 'front'`, lower non-negative depth bias) created for opaque `cull: 'none'` draws */
+    backPipe: PipelineRecord<GPURenderPipeline> | null;
     private vs;
     private fs;
     private unsub;
     private on_;
     /** `bundle`: the DrawBundle it's baked into (pass.bundle().draw makes these) */
     constructor(kit: Kit, pass: RenderPass, shader: S, opts: DrawOptions<S>, bundle?: DrawBundle | null);
-    /** wait for its pipeline alone (see kit.ready) */
+    /** wait for its pipeline(s) alone (see kit.ready) */
     ready(): Promise<{
         pipelines: number;
         distinct: number;
@@ -370,6 +379,9 @@ export declare class Draw<S extends Shader = Shader> {
     /** drawn or not (a function is asked each frame) */
     get enabled(): boolean | (() => boolean);
     set enabled(v: boolean | (() => boolean));
+    /** internal: whether this draw participates in same-pipeline per-draw viewport maxDepth tiering */
+    get viewportTierEligible(): boolean;
+    private wantsBackBias;
     private pickEntries;
     rebuild(): void;
     set(name: keyof NonNullable<DrawOptions<S>['bind']> & string, value: Bindable): this;
@@ -380,6 +392,7 @@ export declare class Draw<S extends Shader = Shader> {
     encodeInto(enc: DrawEncoder, view?: View, shared?: Record<number, Record<string, unknown>>): void;
     private falling;
     private emit;
+    private emitPipe;
     /** (bundles) whether an option is asked each frame: enabled, the counts, the indirect offset and count, a
      *  scheduler's gate */
     get watched(): boolean;
@@ -453,7 +466,11 @@ export declare class RenderPass implements RunItem {
     private _depthHasStencil;
     private _depthFmt;
     private _passDesc;
+    private _pipeCount;
+    private _pipeSeen;
+    private _vpRect;
     private static readonly DEFAULT_CLEAR;
+    private resolveViewportRect;
     encode(enc: GPUCommandEncoder, ts?: GPURenderPassTimestampWrites): void;
 }
 export { RunAction, isDepthFormat };

@@ -272,6 +272,102 @@ export class MeshBuilder {
   }
 }
 
+const _tagBuf = new ArrayBuffer(4);
+const _tagU32 = new Uint32Array(_tagBuf);
+const _tagF32 = new Float32Array(_tagBuf);
+/** Pack up to four byte/6-bit material/sub-material/part/extra fields into a single f32 bit-pattern (read via `bitcast<u32>` in WGSL). */
+export function packTag(mat: number, sub = 0, part = 0, extra = 0): number {
+  _tagU32[0] = (mat & 255) | ((sub & 255) << 8) | ((part & 255) << 16) | ((extra & 63) << 24);
+  return _tagF32[0];
+}
+
+/**
+ * Lightweight 9-float/vertex non-indexed triangle soup builder (`px, py, pz, nx, ny, nz, u, v, f32(tag)`) for
+ * architectural and procedural features with custom WGSL shaders. Automatically runs `separateCoplanar()` in `data()`
+ * so overlapping quads/boxes never z-fight internally.
+ */
+export class TriangleSoup {
+  private buf: number[] = [];
+
+  get count() { return this.buf.length / 9; }
+
+  vert(p: V3, n: V3, u: number, v: number, tag = 0) {
+    this.buf.push(p[0], p[1], p[2], n[0], n[1], n[2], u, v, tag);
+    return this;
+  }
+
+  tri(a: V3, b: V3, c: V3, ua: [number, number], ub: [number, number], uc: [number, number], tag = 0, n?: V3) {
+    let nx: number, ny: number, nz: number;
+    if (n) { [nx, ny, nz] = n; }
+    else {
+      const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+      const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+      nx = uy * vz - uz * vy; ny = uz * vx - ux * vz; nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nx /= l; ny /= l; nz /= l;
+    }
+    this.buf.push(
+      a[0], a[1], a[2], nx, ny, nz, ua[0], ua[1], tag,
+      b[0], b[1], b[2], nx, ny, nz, ub[0], ub[1], tag,
+      c[0], c[1], c[2], nx, ny, nz, uc[0], uc[1], tag,
+    );
+    return this;
+  }
+
+  /** Quad with corners (p00 -> p10 -> p11 -> p01) in CCW order from outside. */
+  quad(p00: V3, p10: V3, p11: V3, p01: V3, tag = 0, uvScale = 1, uvRect?: [number, number, number, number]) {
+    const ux = p10[0] - p00[0], uy = p10[1] - p00[1], uz = p10[2] - p00[2];
+    const vx = p01[0] - p00[0], vy = p01[1] - p00[1], vz = p01[2] - p00[2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    nx /= l; ny /= l; nz /= l;
+    const n: V3 = [nx, ny, nz];
+    let u0 = 0, v0 = 0, u1 = Math.hypot(ux, uy, uz) * uvScale, v1 = Math.hypot(vx, vy, vz) * uvScale;
+    if (uvRect) [u0, v0, u1, v1] = uvRect;
+    this.tri(p00, p10, p11, [u0, v1], [u1, v1], [u1, v0], tag, n);
+    this.tri(p00, p11, p01, [u0, v1], [u1, v0], [u0, v0], tag, n);
+    return this;
+  }
+
+  /** Axis-aligned box from (x0,y0,z0) to (x1,y1,z1), outward CCW normals. Mask bits: 1:+Y, 2:-Y, 4:+Z, 8:-Z, 16:+X, 32:-X. */
+  box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, tag = 0, uvScale = 0.25, mask = 63) {
+    if (mask & 1) this.quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], tag, uvScale);
+    if (mask & 2) this.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], tag, uvScale);
+    if (mask & 4) this.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], tag, uvScale);
+    if (mask & 8) this.quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], tag, uvScale);
+    if (mask & 16) this.quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], tag, uvScale);
+    if (mask & 32) this.quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], tag, uvScale);
+    return this;
+  }
+
+  /** Upright tapered cylinder around (cx, cz) from y0..y1. */
+  cyl(cx: number, cz: number, y0: number, y1: number, r0: number, r1: number, segs: number, tag = 0, capTop = true, capBot = false) {
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI * 2;
+      const a1 = ((i + 1) / segs) * Math.PI * 2;
+      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      const p00: V3 = [cx + c0 * r0, y0, cz + s0 * r0];
+      const p10: V3 = [cx + c1 * r0, y0, cz + s1 * r0];
+      const p11: V3 = [cx + c1 * r1, y1, cz + s1 * r1];
+      const p01: V3 = [cx + c0 * r1, y1, cz + s0 * r1];
+      this.quad(p00, p10, p11, p01, tag, 0.5);
+      if (capTop) this.tri([cx, y1, cz], p11, p01, [0.5, 0.5], [1, 0], [0, 0], tag, [0, 1, 0]);
+      if (capBot) this.tri([cx, y0, cz], p00, p10, [0.5, 0.5], [0, 0], [1, 0], tag, [0, -1, 0]);
+    }
+    return this;
+  }
+
+  /** Flat Float32Array (9 floats/vertex). Automatically runs `separateCoplanar()` unless `opts.separateCoplanar === false`. */
+  data(opts?: MeshDataOptions): Float32Array {
+    const arr = new Float32Array(this.buf);
+    const sep = opts?.separateCoplanar;
+    if (sep !== false && arr.length >= 54) {
+      separateCoplanar(arr, undefined, { stride: 9, offset: 0, ...(typeof sep === 'object' ? sep : undefined) });
+    }
+    return arr;
+  }
+}
+
 /** ear-clipping triangulation of a simple polygon (counter-clockwise); returns index triples */
 export function triangulate(poly: ArrayLike<number>[]): number[] {
   const idx = poly.map((_, i) => i);

@@ -34,6 +34,9 @@ export interface WeftOptions {
   /** the browser given each shader's comment-free code, only what its entry points reach (plugin/lean.ts), so a
    *  change elsewhere in an included file leaves its pipelines in the browser's cache. Default true */
   lean?: boolean;
+  /** wrap `@vertex` entry points taking `@builtin(instance_index)` with an override-gated Fibonacci reversed-Z
+   *  micro-bias (`override WEFT_INST_BIAS: f32 = 0.0;`) for static non-indirect instanced draws. Default true */
+  autoInstanceBias?: boolean;
   /** write a portable ShaderManifest JSON (`version: 1`, expanded WGSL + reflection + line map) on build:
    *  a path resolved from Vite `root` (e.g. `'../crates/world-native/shaders.manifest.json'`), or `false` (default) */
   manifest?: string | false;
@@ -74,7 +77,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
   const mtime = (f: string) => { try { return statSync(f).mtimeMs; } catch { return -1; } };
   const typesFrom = opts.typesFrom ?? PACKAGE;
   const runtime = opts.runtime ?? `${PACKAGE}/runtime`;
-  const compile = (file: string) => compileWgsl(file, { root, libs, lean: opts.lean });
+  const compile = (file: string) => compileWgsl(file, { root, libs, lean: opts.lean, autoInstanceBias: opts.autoInstanceBias });
   const declare = (file: string, s: CompiledShader) => {
     if (opts.types === false || file.includes('/node_modules/') || file.includes('\\node_modules\\')) return;
     writeDeclaration(file, s, typesFrom, { file, root, sharedTypes: opts.sharedTypes });

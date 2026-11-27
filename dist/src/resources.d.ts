@@ -1,6 +1,7 @@
 import type { Kit } from './kit';
 import type { StructDef } from './shader';
 import { StructView, type DeepPartial } from './struct';
+import { type CoplanarOptions, type CoplanarStats } from './coplanar';
 export declare const nextUid: () => number;
 /** a stable id for raw GPU objects handed to the kit */
 export declare const rawUid: (o: object) => number;
@@ -49,6 +50,14 @@ export declare class UniformBuffer<T = Record<string, unknown>> implements Resou
     /** free it for good (it's no longer uploaded) */
     destroy(): void;
 }
+export interface StorageGeometryOptions extends CoplanarOptions {
+    /** optional triangle index buffer when separating indexed vertex data stored in this buffer */
+    indices?: Uint32Array | Uint16Array | readonly number[];
+    /** set false to skip automatic coplanar separation on upload (default true) */
+    separateCoplanar?: boolean;
+    /** copy `data` before separating so the caller's TypedArray is not modified in place (default false) */
+    copy?: boolean;
+}
 export interface StorageOptions {
     label?: string;
     /** size in bytes; or count × (struct size | stride | 4) */
@@ -58,6 +67,9 @@ export interface StorageOptions {
     stride?: number;
     usage?: BufferUse[];
     data?: ArrayBufferView | ArrayBuffer;
+    /** when uploading triangle vertex data (Float32Array/Float64Array/ArrayBuffer), automatically runs
+     *  `separateCoplanar()` before uploading so custom mesh builders never z-fight internally */
+    geometry?: StorageGeometryOptions;
 }
 export declare class StorageBuffer implements Resource {
     private kit;
@@ -69,6 +81,10 @@ export declare class StorageBuffer implements Resource {
     stride: number;
     label: string;
     readonly usage: number;
+    /** true when this buffer's vertex data was processed by `separateCoplanar()` on creation */
+    coplanarSeparated: boolean;
+    /** stats from the automatic `geometry` coplanar separation pass, if run */
+    coplanarStats?: CoplanarStats;
     /** freed for good (destroy) */
     destroyed: boolean;
     private cutSaid;
@@ -120,6 +136,8 @@ export declare class Texture implements Resource {
     readonly usage: number;
     /** freed for good (destroy): a resize no longer reallocates it */
     destroyed: boolean;
+    /** internal: base viewport maxDepth written by the last RenderPass clearing this depth texture (passes.ts) */
+    _baseMaxDepth: number;
     private views;
     private readonly blk;
     constructor(kit: Kit, desc: TextureDesc);
