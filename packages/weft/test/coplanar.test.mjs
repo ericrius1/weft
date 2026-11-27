@@ -12,9 +12,9 @@ import { fileURLToPath } from 'node:url';
 import { fakeKit, shader, TRI } from './fakekit.mjs';
 
 const { RenderPass } = await import('../dist/src/passes.js');
-const { Texture } = await import('../dist/src/resources.js');
-const { MeshBuilder, findCoplanar, separateCoplanar } = await import('../dist/src/mesh.js');
-const { reflectWgsl } = await import('../dist/plugin/wgsl.js');
+const { StorageBuffer, Texture } = await import('../dist/src/resources.js');
+const { MeshBuilder, TriangleSoup, packTag, findCoplanar, separateCoplanar } = await import('../dist/src/mesh.js');
+const { reflectWgsl, injectInstanceBias } = await import('../dist/plugin/wgsl.js');
 const { leanWgsl } = await import('../dist/plugin/lean.js');
 
 function depthTex(kit, label = 'depth') {
@@ -173,4 +173,156 @@ test('frame.wgsl: new clipBias/clipAtFacing helpers are dead-code stripped when 
   assert.ok(ref.entries.some((e) => e.name === 'vs' && e.resources.includes('frame')));
   const leanUsed = leanWgsl(used, ['vs', 'fs']).code;
   assert.ok(leanUsed.includes('clipBias') && leanUsed.includes('clipAtFacing'));
+});
+
+test('cull:none opaque draws automatically split front-first ahead of recessed back faces, respecting mirrored views and opt-out', async () => {
+  const kit = fakeKit();
+  const dTex = depthTex(kit);
+  const sh = shader('test/double.wgsl', TRI);
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }], depth: { target: dTex, clear: 0 } });
+  const split = pass.draw(sh, { label: 'box', cull: 'none' });
+  const optOut = pass.draw(sh, { label: 'leaf', cull: 'none', backFaceBias: false });
+  await pass.ready();
+
+  assert.ok(split.backPipe, 'opaque cull:none draw gets a backPipe');
+  assert.equal(optOut.backPipe, null, 'backFaceBias:false opts out');
+  const frontDesc = kit.compiled.find((d) => d.label === 'box');
+  const backDesc = kit.compiled.find((d) => d.label === 'box.back');
+  assert.equal(frontDesc.primitive.cullMode, 'back');
+  assert.equal(backDesc.primitive.cullMode, 'front');
+  assert.ok(backDesc.depthStencil.depthBias > 0, 'back face bias stays strictly non-negative');
+  assert.ok(frontDesc.depthStencil.depthBias > backDesc.depthStencil.depthBias, 'front band strictly beats back band');
+  assert.ok(frontDesc.depthStencil.depthBiasSlopeScale > backDesc.depthStencil.depthBiasSlopeScale);
+
+  // Normal view draws front first, then back; mirrored view reverses order (each on a fresh pass encoder)
+  const calls = [];
+  const makePe = () => ({
+    setPipeline: (p) => calls.push(['pipe', p.label]),
+    setBindGroup() {}, setVertexBuffer() {}, setIndexBuffer() {},
+    draw: () => calls.push(['draw']), drawIndexed() {}, drawIndirect() {}, drawIndexedIndirect() {},
+  });
+  split.encodeInto(makePe(), { group0: () => 'g0', camera: { view: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) } });
+  assert.deepEqual(calls, [['pipe', 'box'], ['draw'], ['pipe', 'box.back'], ['draw']]);
+  calls.length = 0;
+  split.encodeInto(makePe(), { group0: () => 'g0', camera: { view: new Float32Array([1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) } });
+  assert.deepEqual(calls, [['pipe', 'box.back'], ['draw'], ['pipe', 'box'], ['draw']]);
+});
+
+test('same-pipeline multi-draws step viewport maxDepth dynamically with 0 extra pipelines and sync downstream readOnly pass', async () => {
+  const kit = fakeKit();
+  kit.size = { render: [640, 360], canvas: [640, 360] };
+  kit.screenView = () => ({});
+  const dTex = depthTex(kit);
+  const sh = shader('test/multi.wgsl', TRI);
+  const scene = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }], depth: { target: dTex, clear: 0 } });
+  scene.draw(sh, { label: 'd0' });
+  scene.draw(sh, { label: 'd1' });
+  scene.draw(sh, { label: 'd2' });
+  const fx = new RenderPass(kit, { label: 'fx', color: [{ target: 'screen', clear: false }], depth: { target: dTex, readOnly: true } });
+  fx.draw(sh, { label: 'fx.glow', blend: 'alpha' });
+  const r = await scene.ready();
+  await fx.ready();
+  assert.equal(r.distinct, 1, 'all 3 scene draws share 1 GPU pipeline');
+
+  const log = [];
+  const makeEnc = () => ({
+    beginRenderPass: () => ({
+      setViewport: (_x, _y, _w, _h, minD, maxD) => log.push(['vp', +minD.toFixed(7), +maxD.toFixed(7)]),
+      setScissorRect() {}, setPipeline() {}, setBindGroup() {}, setVertexBuffer() {}, setIndexBuffer() {},
+      draw: () => log.push(['draw']), drawIndexed() {}, drawIndirect() {}, drawIndexedIndirect() {}, end() {},
+    }),
+  });
+  scene.encode(makeEnc());
+  assert.deepEqual(log, [
+    ['vp', 0, 0.99999], ['draw'],
+    ['vp', 0, 0.9999912], ['draw'],
+    ['vp', 0, 0.9999924], ['draw'],
+  ]);
+  log.length = 0;
+  fx.encode(makeEnc());
+  assert.deepEqual(log, [['vp', 0, 0.99999], ['draw']], 'readOnly pass inherits scene baseMaxDepth');
+});
+
+test('injectInstanceBias wraps @vertex entries with instance_index, preserves lines, and passes.ts enables only for static instanced draws', async () => {
+  const plain = `@vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f { return vec4f(0.0); }\n@fragment fn fs() -> @location(0) vec4f { return vec4f(1.0); }`;
+  assert.equal(injectInstanceBias(plain), plain, 'non-instanced shader stays byte-identical');
+
+  const instWgsl = `struct VOut {
+  @builtin(position) clip: vec4f,
+  @location(0) n: vec3f,
+}
+@vertex fn vs(
+  @builtin(vertex_index) vi: u32,
+  @builtin(instance_index) ii: u32,
+) -> VOut {
+  var o: VOut;
+  o.clip = vec4f(f32(vi), f32(ii), 0.5, 1.0);
+  o.n = vec3f(0.0, 1.0, 0.0);
+  return o;
+}
+@fragment fn fs(i: VOut) -> @location(0) vec4f { return vec4f(i.n, 1.0); }`;
+  const wrapped = injectInstanceBias(instWgsl);
+  assert.ok(wrapped.includes('override WEFT_INST_BIAS: f32 = 0.0;'));
+  assert.ok(wrapped.includes('_wo.clip = _weft_ibias(_wo.clip, ii);'));
+  // Original line count up to @fragment must be identical so source line mapping is exact
+  const origFragLine = instWgsl.split('\n').findIndex((l) => l.includes('@fragment'));
+  const wrapFragLine = wrapped.split('\n').findIndex((l) => l.includes('@fragment'));
+  assert.equal(wrapFragLine, origFragLine, 'source line numbers preserved exactly');
+
+  const kit = fakeKit();
+  const dTex = depthTex(kit);
+  const sh = shader('test/inst.wgsl', wrapped);
+  assert.ok(sh.reflect.entries.find((e) => e.name === 'vs').overrides.includes('WEFT_INST_BIAS'));
+  const pass = new RenderPass(kit, { label: 'scene', color: [{ target: 'screen' }], depth: { target: dTex, clear: 0 } });
+  const args = new StorageBuffer(kit, { size: 64 });
+  const dStatic = pass.draw(sh, { label: 'staticInst', instances: 50 });
+  const dSingle = pass.draw(sh, { label: 'single', instances: 1 });
+  const dIndirect = pass.draw(sh, { label: 'indirectInst', indirect: { buffer: args } });
+  const dOptOut = pass.draw(sh, { label: 'optOutInst', instances: 50, instanceBias: false });
+  const r = await pass.ready();
+  assert.equal(r.distinct, 2, 'staticInst gets its own pipeline; single/indirect/optOut share 1 unbiased pipeline');
+  const vc = (lbl) => kit.compiled.find((d) => d.label === lbl).vertex.constants;
+  assert.ok(vc('staticInst')?.WEFT_INST_BIAS > 0, 'static instanced draw activates WEFT_INST_BIAS');
+  assert.equal(vc('single'), undefined, 'single instance leaves default 0');
+  assert.equal(dIndirect.pipe.pipeline, dSingle.pipe.pipeline, 'indirect GPU-culled draw shares unbiased pipeline');
+  assert.equal(dOptOut.pipe.pipeline, dSingle.pipe.pipeline, 'instanceBias:false shares unbiased pipeline');
+  assert.notEqual(dStatic.pipe.pipeline, dSingle.pipe.pipeline);
+});
+
+test('separateCoplanar fixes: stacked shared-corner steps, gap preservation, far-from-origin, TriangleSoup & StorageBuffer.geometry', () => {
+  // 1. Five stacked boxes sharing corner (0, 0, 0) (like Giza oasis pool steps & Queen's corbels)
+  const soup = new TriangleSoup();
+  for (let k = 0; k < 5; k++) {
+    soup.box(0, 0, 0, 2, 1.0 - k * 0.18, 0.5 + k * 0.5, packTag(1, k));
+  }
+  const rawSteps = soup.data({ separateCoplanar: false });
+  assert.ok(findCoplanar(rawSteps, undefined, { stride: 9 }).length > 0, 'stacked steps have overlapping side faces');
+  const cleanSteps = soup.data(); // auto separateCoplanar
+  assert.equal(findCoplanar(cleanSteps, undefined, { stride: 9 }).length, 0, 'all shared-corner stacked faces cleanly separated');
+
+  // 2. Existing 0.8 mm gap with tol=2 mm must widen to >= 1 mm, never collapse to 0 mm
+  const nearPair = new Float32Array([
+    0, 0, 0,      2, 0, 0,      2, 2, 0,      // larger quad at z = 0
+    0, 0, 0.0008, 2, 0, 0.0008, 2, 2, 0.0008, // second quad already 0.8 mm in front
+  ]);
+  separateCoplanar(nearPair, undefined, { eps: 0.001, tol: 0.002 });
+  assert.ok(nearPair[11] - nearPair[2] >= 0.00099, `gap widened (${nearPair[11] - nearPair[2]}) without collapsing to 0`);
+
+  // 3. Far-from-origin mesh (5000 m away) with tiny normal tilt still detects & separates
+  const ox = 5000, oz = 5000;
+  const farMesh = new Float32Array([
+    ox, 0, oz,  ox + 4, 0, oz,  ox + 4, 4, oz,
+    ox + 1, 0, oz + 1e-5,  ox + 3, 0, oz - 1e-5,  ox + 3, 3, oz,
+  ]);
+  assert.equal(findCoplanar(farMesh).length, 1, 'centroid-relative bucketing catches far-from-origin coplanar pair');
+  separateCoplanar(farMesh);
+  assert.equal(findCoplanar(farMesh).length, 0);
+
+  // 4. StorageBuffer geometry auto-separation
+  const kit = fakeKit();
+  const bufData = soup.data({ separateCoplanar: false });
+  const sb = new StorageBuffer(kit, { label: 'steps', data: bufData, geometry: { stride: 9 } });
+  assert.equal(sb.coplanarSeparated, true);
+  assert.ok(sb.coplanarStats.pairs > 0 && sb.coplanarStats.sameFacing > 0);
+  assert.equal(findCoplanar(bufData, undefined, { stride: 9 }).length, 0);
 });
