@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.21
+
+Automatic whole-engine coplanar & z-fighting elimination across `cull: 'none'` draws, same-pipeline multi-draws, static instanced draws, and custom mesh soups; 100% backwards-compatible.
+
+- **Automatic `cull: 'none'` front-beats-back splitting (`passes.ts`)**: opaque triangle draws with `cull: 'none'` in color+writable-depth passes automatically compile a paired `.back` pipeline (`cull: 'front'`, strictly non-negative lower bias band `1..32` vs front `500..628`) and draw front faces before back faces (reversed automatically for mirrored/reflection views with `det(view) < 0`), eliminating touching-solid wall z-fighting while letting Early-Z reject hidden interior back faces. Opt out per draw with `DrawOptions.backFaceBias: false` (e.g. thin foliage).
+- **Zero-extra-pipeline same-pipeline multi-draw viewport tiering (`passes.ts`, `resources.ts`)**: when multiple enabled opaque draws in a pass share one `GPURenderPipeline`, `RenderPass.encode()` steps `setViewport(..., 0, maxDepth)` upward from `0.99999` in `1.2e-6` increments (8 tiers, exact `z = 0` preserved for sky) with zero additional pipeline compiles, and stores `Texture._baseMaxDepth` so downstream `readOnly` or `clear: false` depth passes inherit matching depth range.
+- **Automatic static-instance micro-bias (`plugin/wgsl.ts`, `plugin/vite.ts`, `passes.ts`)**: `injectInstanceBias()` wraps `@vertex` entries that read `@builtin(instance_index)` with an override-gated 32-tier Fibonacci reversed-Z offset (`override WEFT_INST_BIAS: f32 = 0.0;`, exact source line numbers preserved, shaders without `instance_index` left byte-identical, opt-out `WeftOptions.autoInstanceBias: false`). `RenderPass` automatically activates `WEFT_INST_BIAS: 5e-7` only on opaque non-indirect multi-instance (`instances !== 1`) draws (`DrawOptions.instanceBias: false` opts out).
+- **Separated `shaderBiasSlot` & guaranteed non-overlapping layer bands (`passes.ts`)**: slots key on `(shader.id, vs, fs, constants)` across 32 slots, and semantic `depthLayer` bands (`terrain` `0` < `back` `1..32` < `base` `504..628` < `detail` `1804..1928` < `decal` `4404..4528` < `overlay` `9604..9728`) stay mathematically disjoint across float32 binades, viewport tiers, and instance bias.
+- **`separateCoplanar()` v2, `StorageOptions.geometry`, and `TriangleSoup` (`coplanar.ts`, `resources.ts`, `mesh.ts`)**: centroid-relative plane bucketing + 26-neighbor normal check (fixes far-from-origin precision), directed opposite-half-edge manifold component growing with same-facing overlap exclusion (fixes shared-corner stacked boxes), signed-gap-preserving DFS separation (never collapses existing small gaps), `StorageOptions.geometry` for one-line auto-separation on GPU upload, and `TriangleSoup` / `packTag()` 9-float architectural soup builder with built-in coplanar separation.
+- **Tests**: 117/117 passing in `@ericrius1/weft` and 58/58 passing in `@ericrius1/cast` (added coverage in `test/coplanar.test.mjs`).
+
 ## 0.2.20
 
 Portable shader manifest emission (`ShaderManifest` v1) for native `wgpu` / offline tooling; 100% backwards-compatible.
