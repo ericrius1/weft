@@ -14,6 +14,7 @@
 // 4. A `.d.wgsl.ts` declaration is generated next to the shader, so `import s from './x.wgsl'` gives typed struct
 //    fields and binding names (TS `allowArbitraryExtensions`).
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, resolve, relative, sep } from 'node:path';
 import { WgslReflect, WgslParser, TokenTypes } from 'wgsl_reflect/wgsl_reflect.module.js';
 import { leanWgsl } from './lean.js';
@@ -422,5 +423,28 @@ export function writeDeclaration(file, s, weftImport, opts = {}) {
         return false;
     writeFileSync(dts, text);
     return true;
+}
+/** Convert a compiled shader into a portable, JSON-serializable manifest entry (expanded WGSL + reflection + line map). */
+export function manifestEntry(s) {
+    const sha256 = createHash('sha256').update(s.code).digest('hex').slice(0, 16);
+    return {
+        id: s.id,
+        label: s.label,
+        sha256,
+        code: s.code,
+        files: s.files,
+        runs: s.runs,
+        reflect: s.reflect,
+    };
+}
+/** Compile a list of `.wgsl` files into a deterministic, UTF-16-sorted `ShaderManifest` for native engines or offline
+ *  audits. Throws at the first file that fails to preprocess or reflect. */
+export function buildShaderManifest(files, opts) {
+    const entries = files.map((f) => manifestEntry(compileWgsl(resolve(opts.root, f), opts)));
+    entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const shaders = {};
+    for (const e of entries)
+        shaders[e.id] = e;
+    return { version: 1, shaders };
 }
 //# sourceMappingURL=wgsl.js.map

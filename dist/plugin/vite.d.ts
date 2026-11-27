@@ -1,4 +1,6 @@
 import type { Plugin } from 'vite';
+import { manifestEntry, buildShaderManifest, type ShaderManifest, type ShaderManifestEntry } from './wgsl.js';
+export { buildShaderManifest, manifestEntry, type ShaderManifest, type ShaderManifestEntry };
 export interface WeftOptions {
     /** prefix → a directory, or a package whose shaders `#include "prefix/…"` reaches (e.g. { loom: '@ericrius1/loom' }) */
     libs?: Record<string, string>;
@@ -13,6 +15,9 @@ export interface WeftOptions {
     /** the browser given each shader's comment-free code, only what its entry points reach (plugin/lean.ts), so a
      *  change elsewhere in an included file leaves its pipelines in the browser's cache. Default true */
     lean?: boolean;
+    /** write a portable ShaderManifest JSON (`version: 1`, expanded WGSL + reflection + line map) on build:
+     *  a path resolved from Vite `root` (e.g. `'../crates/world-native/shaders.manifest.json'`), or `false` (default) */
+    manifest?: string | false;
 }
 export declare const PACKAGE = "@ericrius1/weft";
 /** this package's own shader library (dist/plugin/vite.js → shaders/) */

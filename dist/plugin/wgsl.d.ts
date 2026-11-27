@@ -102,4 +102,23 @@ export interface DeclarationOptions {
 }
 export declare function declaration(s: CompiledShader, weftImport: string, opts?: DeclarationOptions): string;
 export declare function writeDeclaration(file: string, s: CompiledShader, weftImport: string, opts?: DeclarationOptions): boolean;
+export interface ShaderManifestEntry {
+    id: string;
+    label: string;
+    /** first 16 hex chars of SHA-256 over `code` */
+    sha256: string;
+    code: string;
+    files: string[];
+    runs: number[];
+    reflect: ShaderReflection;
+}
+export interface ShaderManifest {
+    version: 1;
+    shaders: Record<string, ShaderManifestEntry>;
+}
+/** Convert a compiled shader into a portable, JSON-serializable manifest entry (expanded WGSL + reflection + line map). */
+export declare function manifestEntry(s: CompiledShader): ShaderManifestEntry;
+/** Compile a list of `.wgsl` files into a deterministic, UTF-16-sorted `ShaderManifest` for native engines or offline
+ *  audits. Throws at the first file that fails to preprocess or reflect. */
+export declare function buildShaderManifest(files: readonly string[], opts: CompileOptions): ShaderManifest;
 //# sourceMappingURL=wgsl.d.ts.map

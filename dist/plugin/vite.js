@@ -4,7 +4,8 @@ import { join, dirname, resolve, isAbsolute, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { compileWgsl, writeDeclaration } from './wgsl.js';
+import { compileWgsl, writeDeclaration, manifestEntry, buildShaderManifest } from './wgsl.js';
+export { buildShaderManifest, manifestEntry };
 import { splitDeclarations } from './lean.js';
 export const PACKAGE = '@ericrius1/weft';
 /** this package's own shader library (dist/plugin/vite.js → shaders/) */
@@ -57,6 +58,8 @@ export function weft(opts = {}) {
     // (e.g. shared #include structs & helper functions) become shared virtual modules so Rollup emits them once.
     const sharedStructs = new Map();
     const sharedDecls = new Map();
+    const manifestMap = new Map();
+    let buildFailed = false;
     const hashOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 12);
     const STRUCT_MIN = 150;
     const DECL_MIN = 120;
@@ -138,6 +141,8 @@ export function weft(opts = {}) {
         buildStart() {
             sharedStructs.clear();
             sharedDecls.clear();
+            manifestMap.clear();
+            buildFailed = false;
             if (opts.types === false)
                 return;
             for (const f of walk(root)) {
@@ -176,6 +181,8 @@ export function weft(opts = {}) {
                     set.add(file);
                 }
                 declare(file, s);
+                if (isBuild && opts.manifest)
+                    manifestMap.set(s.id, manifestEntry(s));
                 const { includes: _i, structFiles: _sf, ...rest } = s;
                 return moduleCode(rest);
             }
@@ -188,6 +195,20 @@ export function weft(opts = {}) {
                 return moduleCode({ id: id0, label: id0.split('/').pop(), code: '', files: [id0], runs: [], error: msg,
                     reflect: { structs: {}, bindings: {}, entries: [], overrides: {} } });
             }
+        },
+        buildEnd(err) {
+            if (err)
+                buildFailed = true;
+        },
+        closeBundle(err) {
+            if (err || buildFailed || !isBuild || !opts.manifest)
+                return;
+            const outPath = resolve(root, opts.manifest);
+            const shaders = {};
+            for (const id of [...manifestMap.keys()].sort())
+                shaders[id] = manifestMap.get(id);
+            mkdirSync(dirname(outPath), { recursive: true });
+            writeFileSync(outPath, JSON.stringify({ version: 1, shaders }, null, 2) + '\n');
         },
         configureServer(server) {
             server.middlewares.use((req, _res, next) => {
