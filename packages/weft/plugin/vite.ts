@@ -16,7 +16,8 @@ import { join, dirname, resolve, isAbsolute, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { compileWgsl, writeDeclaration, type CompiledShader } from './wgsl.js';
+import { compileWgsl, writeDeclaration, manifestEntry, buildShaderManifest, type CompiledShader, type ShaderManifest, type ShaderManifestEntry } from './wgsl.js';
+export { buildShaderManifest, manifestEntry, type ShaderManifest, type ShaderManifestEntry };
 import { splitDeclarations } from './lean.js';
 
 export interface WeftOptions {
@@ -33,6 +34,9 @@ export interface WeftOptions {
   /** the browser given each shader's comment-free code, only what its entry points reach (plugin/lean.ts), so a
    *  change elsewhere in an included file leaves its pipelines in the browser's cache. Default true */
   lean?: boolean;
+  /** write a portable ShaderManifest JSON (`version: 1`, expanded WGSL + reflection + line map) on build:
+   *  a path resolved from Vite `root` (e.g. `'../crates/world-native/shaders.manifest.json'`), or `false` (default) */
+  manifest?: string | false;
 }
 
 export const PACKAGE = '@ericrius1/weft';
@@ -79,6 +83,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
   // (e.g. shared #include structs & helper functions) become shared virtual modules so Rollup emits them once.
   const sharedStructs = new Map<string, string>();
   const sharedDecls = new Map<string, string>();
+  const manifestMap = new Map<string, ShaderManifestEntry>();
   const hashOf = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 12);
   const STRUCT_MIN = 150;
   const DECL_MIN = 120;
@@ -151,6 +156,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
     buildStart() {
       sharedStructs.clear();
       sharedDecls.clear();
+      manifestMap.clear();
       if (opts.types === false) return;
       for (const f of walk(root)) {
         try { declare(f, compile(f)); } catch { /* reported when imported */ }
@@ -182,6 +188,7 @@ export function weft(opts: WeftOptions = {}): Plugin {
           set.add(file);
         }
         declare(file, s);
+        if (isBuild && opts.manifest) manifestMap.set(s.id, manifestEntry(s));
         const { includes: _i, structFiles: _sf, ...rest } = s;
         return moduleCode(rest);
       } catch (e) {
@@ -192,6 +199,14 @@ export function weft(opts: WeftOptions = {}): Plugin {
         return moduleCode({ id: id0, label: id0.split('/').pop()!, code: '', files: [id0], runs: [], error: msg,
           reflect: { structs: {}, bindings: {}, entries: [], overrides: {} } });
       }
+    },
+    closeBundle() {
+      if (!isBuild || !opts.manifest || !manifestMap.size) return;
+      const outPath = resolve(root, opts.manifest);
+      const shaders: Record<string, ShaderManifestEntry> = {};
+      for (const id of [...manifestMap.keys()].sort()) shaders[id] = manifestMap.get(id)!;
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, JSON.stringify({ version: 1, shaders } satisfies ShaderManifest, null, 2) + '\n');
     },
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {

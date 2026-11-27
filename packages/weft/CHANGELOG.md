@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.20
+
+Portable shader manifest emission (`ShaderManifest` v1) for native `wgpu` / offline tooling; 100% backwards-compatible.
+
+- **`buildShaderManifest()` & `manifestEntry()` (`@ericrius1/weft/wgsl`, re-exported from `@ericrius1/weft/vite`)**: compiles `.wgsl` files into a deterministic, lexicographically sorted `{ version: 1, shaders }` JSON structure containing expanded WGSL (`code`), 16-hex SHA-256 (`sha256`), source `files`/`runs` line map, and full `wgsl_reflect` struct/binding/entry/override metadata (canonical pre-trim struct layouts even when `lean: true`).
+- **`weft({ manifest })` Vite plugin option (`plugin/vite.ts`)**: when given a path resolved from Vite `root`, collects every compiled `.wgsl` module during `vite build` and writes the deterministic `ShaderManifest` JSON on `closeBundle()` without polluting `dist/`.
+- **Tests**: added `test/manifest.test.mjs` covering `buildShaderManifest`, `manifestEntry`, `lean` parity, and Vite `closeBundle` emission.
+
 ## 0.2.19
 
 Host-independent remote asset manifests in Vite plugins; 100% backwards-compatible.
