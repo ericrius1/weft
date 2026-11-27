@@ -121,3 +121,17 @@ test('every statement of a case body is in the syntax tree', async () => {
   const sw = ast[0].body.find((s) => s.astNodeType === 'switch');
   assert.deepEqual(sw.cases.map((c) => c.body.length), [4, 0, 3]);
 });
+
+test('fragment output locations are reflected accurately including non-contiguous MRT', () => {
+  const code = `
+struct Out02 { @location(0) c: vec4f, @location(2) g: vec4f }
+@fragment fn fs02() -> Out02 { return Out02(vec4f(1.0), vec4f(0.0)); }
+@fragment fn fs0() -> @location(0) vec4f { return vec4f(1.0); }`;
+  const r = reflectWgsl(code);
+  const e02 = r.entries.find((e) => e.name === 'fs02');
+  const e0 = r.entries.find((e) => e.name === 'fs0');
+  assert.equal(e02.targets, 2);
+  assert.deepEqual(e02.targetLocations, [0, 2]);
+  assert.equal(e0.targets, 1);
+  assert.deepEqual(e0.targetLocations, [0]);
+});

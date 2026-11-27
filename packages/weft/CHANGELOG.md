@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.22
+
+Non-contiguous MRT target write masks, `weft/gbuf` thin G-buffer packing helpers, and conservative min/max Hi-Z linear-depth pyramids (`HiZ` / `kit.hiz`); 100% backwards-compatible.
+
+- **Location-aware fragment target `writeMask` (`plugin/wgsl.ts`, `src/passes.ts`)**: `reflectWgsl()` records `EntryInfo.targetLocations` (sorted `@location(N)` indices for fragment entries), and `RenderPass` sets `writeMask: 0` on any pass attachment index absent from `targetLocations` rather than assuming contiguous `0..targets-1`. A static shader writing `@location(0)` and `@location(2)` (skipping a `@location(1)` motion target) now leaves location 1 untouched while writing location 2 cleanly.
+- **`weft/gbuf` WGSL include (`shaders/gbuf.wgsl`)**: octahedral unit normal packing (`octEncode`/`octDecode`) and thin `rgba16float` G-buffer pack/unpack helpers (`packGbuf`, `gbufValid`, `gbufNormal`, `gbufMirror`, `gbufRough`, `gbufAmbShare`).
+- **Conservative min/max Hi-Z pyramid (`src/hiz.ts`, `shaders/hiz.wgsl`, `kit.hiz`)**: `new HiZ(kit, src, opts)` / `kit.hiz(src, opts)` builds a half-res-to-1×1 `rg16float` min/max linear-depth pyramid via `textureLoad` (no `float32-filterable` requirement, odd-dimension edge-conservative, automatic resize rebuild).
+
 ## 0.2.21
 
 Automatic whole-engine coplanar & z-fighting elimination across `cull: 'none'` draws, same-pipeline multi-draws, static instanced draws, and custom mesh soups; 100% backwards-compatible.

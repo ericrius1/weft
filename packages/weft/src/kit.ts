@@ -10,6 +10,7 @@ import { UniformBuffer, StorageBuffer, Texture, PingPong, RunAction, type Storag
 import { Compute, RenderPass, RawItem, pipelinesOf, settle, type AnyPipelineRecord, type Compiler, type ComputeOptions, type RenderPassOptions, type RunItem,
   type SharedPipeline, type Waitable } from './passes';
 import { FrameGraph } from './graph';
+import { HiZ, type HiZOptions } from './hiz';
 import { SharedGroup, type SamplerName } from './binder';
 import { STAGE, TEX } from './gpuconst';
 import { Profiler } from './profiler';
@@ -375,6 +376,8 @@ export class Kit {
   action(fn: () => void, label = 'action') { return new RunAction(fn, label); }
   /** create an explicit phase-ordered FrameGraph whose cached RunEntry[] passes straight to `kit.run(g.entries())` */
   graph(phases: readonly string[]) { return new FrameGraph(phases); }
+  /** build a conservative min/max hierarchical linear-depth (Hi-Z) pyramid (`rg16float`) from a linear view-z texture */
+  hiz(src: Texture, opts?: HiZOptions) { return new HiZ(this, src, opts); }
   view(camera = new Camera(), size: [number, number] | number | null = null, label = 'view') {
     const v = new View(this, camera, size, label);
     this.views.push(v);

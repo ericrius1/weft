@@ -429,3 +429,26 @@ test('holding compiler defers kit.module() until a parked pipeline actually star
   assert.equal(moduleCalls, 1, 'module() called once compile started');
   assert.ok(a.pipe.pipeline && !a.pipe.error);
 });
+
+test('RenderPass sets writeMask by reflected fragment @location (non-contiguous MRT)', async () => {
+  const { Texture } = await import('../dist/src/resources.js');
+  const kit = fakeKit();
+  kit.device.createTexture = (d) => ({ ...d, createView: () => ({}), destroy() {} });
+  const mrt = shader('test/mrt02.wgsl', `
+struct Out02 { @location(0) c: vec4f, @location(2) g: vec4f }
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { return vec4f(f32(i), 0.0, 0.0, 1.0); }
+@fragment fn fs02() -> Out02 { return Out02(vec4f(1.0), vec4f(0.5)); }
+@fragment fn fs0() -> @location(0) vec4f { return vec4f(1.0); }`);
+  const tex = (label) => new Texture(kit, { label, format: 'rgba16float', size: [4, 4] });
+  const pass = new RenderPass(kit, {
+    label: 'scene.mrt',
+    color: [{ target: tex('hdr') }, { target: tex('motion') }, { target: tex('gbuf') }],
+  });
+  pass.draw(mrt, { label: 'write02', fragment: 'fs02' });
+  pass.draw(mrt, { label: 'write0', fragment: 'fs0' });
+  await pass.ready();
+  const d02 = kit.compiled.find((d) => d.label === 'write02');
+  const d0 = kit.compiled.find((d) => d.label === 'write0');
+  assert.deepEqual(d02.fragment.targets.map((t) => t.writeMask), [0xf, 0, 0xf]);
+  assert.deepEqual(d0.fragment.targets.map((t) => t.writeMask), [0xf, 0, 0]);
+});
