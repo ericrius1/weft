@@ -42,6 +42,9 @@ fn clampZ(z: f32) -> f32 {
     lo = min(lo, c);
     hi = max(hi, c);
   }
+  // Strictly conservative f16 conversion: pad lo down and hi up by 1 f16 ULP (2^-10) so round-to-nearest never narrows [lo, hi].
+  lo = max(lo * 0.9990234375, 0.0);
+  hi = min(hi * 1.0009765625, HIZ_MAX_Z);
   return vec4f(lo, hi, 0.0, 1.0);
 }
 

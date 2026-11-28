@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.23
+
+Automatic opaque MRT `@location(2)` zero opt-out wrapper and strictly conservative `f16` Hi-Z rounding; 100% backwards-compatible.
+
+- **Opaque non-G-buffer `@location(2)` zero opt-out (`src/mrt-optout.ts`, `src/passes.ts`)**: when an opaque, depth-writing draw enters a render pass with `> 2` color attachments and its fragment entry does not declare `@location(2)`, `weft` automatically derives a cached shader wrapper that outputs `vec4f(0.0)` at `@location(2)` (handling both `@location(0) vec4f` and multi-output struct returns, `@builtin(front_facing)`, `@builtin(frag_depth)`, and comments while preserving 1-based line numbers). This prevents opaque non-G-buffer draws from inheriting stale G-buffer pixels underneath while translucent/blended draws keep `writeMask: 0`.
+- **Strictly conservative `f16` Hi-Z bounds (`shaders/hiz.wgsl`)**: `first` widens `[lo, hi]` by 1 `f16` ULP (`2^-10`) before storing to `rg16float`, preventing round-to-nearest narrowing at kilometer ranges.
+
 ## 0.2.22
 
 Non-contiguous MRT target write masks, `weft/gbuf` thin G-buffer packing helpers, and conservative min/max Hi-Z linear-depth pyramids (`HiZ` / `kit.hiz`); 100% backwards-compatible.
