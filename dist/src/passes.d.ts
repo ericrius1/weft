@@ -80,7 +80,7 @@ export declare class SharedPipeline {
 export declare class PipelineRecord<P extends GPURenderPipeline | GPUComputePipeline> {
     readonly kit: Kit;
     readonly label: string;
-    readonly shader: Shader;
+    shader: Shader;
     readonly describe: () => PipelineDesc;
     readonly layoutKey: () => string;
     /** the pipeline as it is (read `pipeline`, which a compile scheduler may make on the spot) */
@@ -362,6 +362,7 @@ export declare class Draw<S extends Shader = Shader> {
     backPipe: PipelineRecord<GPURenderPipeline> | null;
     private vs;
     private fs;
+    private effShader;
     private unsub;
     private on_;
     /** `bundle`: the DrawBundle it's baked into (pass.bundle().draw makes these) */
@@ -382,6 +383,7 @@ export declare class Draw<S extends Shader = Shader> {
     /** internal: whether this draw participates in same-pipeline per-draw viewport maxDepth tiering */
     get viewportTierEligible(): boolean;
     private wantsBackBias;
+    private resolveEffShader;
     private pickEntries;
     rebuild(): void;
     set(name: keyof NonNullable<DrawOptions<S>['bind']> & string, value: Bindable): this;

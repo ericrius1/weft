@@ -1,6 +1,7 @@
 import { Binder, BindError, forgetBindings } from './binder';
 import { Ref, deref, Texture, TexView, StorageBuffer, RunAction, isDepthFormat, rawUid } from './resources';
 import { DrawBundle } from './bundle';
+import { shaderWithZeroLocation } from './mrt-optout';
 const val = (x, d) => (x === undefined ? d : typeof x === 'function' ? x() : x);
 const vals = (x) => (typeof x === 'function' ? x() : x);
 const on = (e) => (e === undefined ? true : typeof e === 'function' ? e() : e);
@@ -543,6 +544,7 @@ export class Draw {
     backPipe = null;
     vs;
     fs;
+    effShader;
     unsub;
     on_;
     /** `bundle`: the DrawBundle it's baked into (pass.bundle().draw makes these) */
@@ -561,14 +563,15 @@ export class Draw {
             throw new BindError(`${this.label}: a bundled draw can't issue its own calls (encode)`);
         this.on_ = opts.enabled ?? true;
         this.pickEntries();
-        this.binder = new Binder(kit, shader, this.fs ? [this.vs, this.fs] : [this.vs], { ...(opts.bind ?? {}) }, this.label);
+        this.effShader = this.resolveEffShader();
+        this.binder = new Binder(kit, this.effShader, this.fs ? [this.vs, this.fs] : [this.vs], { ...(opts.bind ?? {}) }, this.label);
         const meta = { tags: opts.tags, owner: opts.owner, phase: opts.phase };
         const split = this.wantsBackBias();
-        this.pipe = new PipelineRecord(kit, this.label, shader, () => this.descriptor(split ? 'back' : undefined), () => this.binder.layoutKey, meta);
+        this.pipe = new PipelineRecord(kit, this.label, this.effShader, () => this.descriptor(split ? 'back' : undefined), () => this.binder.layoutKey, meta);
         this.pipe.changed = () => this.bundle?.invalidate();
         this.pipe.build();
         if (split) {
-            this.backPipe = new PipelineRecord(kit, `${this.label}.back`, shader, () => this.descriptor('front'), () => this.binder.layoutKey, meta);
+            this.backPipe = new PipelineRecord(kit, `${this.label}.back`, this.effShader, () => this.descriptor('front'), () => this.binder.layoutKey, meta);
             this.backPipe.changed = () => this.bundle?.invalidate();
             this.backPipe.build();
         }
@@ -628,6 +631,22 @@ export class Draw {
             return false;
         return true;
     }
+    resolveEffShader() {
+        if (!this.fs)
+            return this.shader;
+        const f = this.pass.formats();
+        if (f.colors.length <= 2 || !f.depth || f.depthReadOnly || /[su]int/.test(f.colors[2]))
+            return this.shader;
+        const o = this.opts;
+        if ((o.depthWrite ?? true) === false || !isOpaqueBlend(o.blend))
+            return this.shader;
+        const fsEntry = this.shader.reflect.entries.find((e) => e.name === this.fs);
+        const locs = fsEntry?.targetLocations;
+        const outs = fsEntry?.targets ?? 1;
+        if (locs ? locs.includes(2) : outs > 2)
+            return this.shader;
+        return shaderWithZeroLocation(this.shader, this.fs, 2);
+    }
     pickEntries() {
         this.vs = pickEntry(this.shader, 'vertex', this.opts.vertex, this.label);
         this.fs = this.opts.fragment === null ? null : pickEntry(this.shader, 'fragment', this.opts.fragment, this.label);
@@ -635,6 +654,10 @@ export class Draw {
     rebuild() {
         try {
             this.pickEntries();
+            this.effShader = this.resolveEffShader();
+            this.pipe.shader = this.effShader;
+            if (this.backPipe)
+                this.backPipe.shader = this.effShader;
             this.binder.entries = this.fs ? [this.vs, this.fs] : [this.vs];
             this.binder.build();
             this.bundle?.invalidate();
@@ -653,14 +676,14 @@ export class Draw {
     descriptor(cullOverride) {
         const o = this.opts, module = NO_MODULE;
         const f = this.pass.formats();
-        const fsEntry = this.fs ? this.shader.reflect.entries.find((e) => e.name === this.fs) : undefined;
+        const fsEntry = this.fs ? this.effShader.reflect.entries.find((e) => e.name === this.fs) : undefined;
         const locs = fsEntry?.targetLocations;
         const outs = fsEntry?.targets ?? 1;
         const blends = Array.isArray(o.blend) ? o.blend : f.colors.map(() => o.blend);
         const masks = Array.isArray(o.writeMask) ? o.writeMask : f.colors.map(() => o.writeMask ?? 0xf);
         const targets = f.colors.map((format, i) => ({ format, blend: blendOf(blends[i]), writeMask: (locs ? locs.includes(i) : i < outs) ? masks[i] : 0 }));
         const a2c = !!o.alphaToCoverage && f.samples > 1;
-        const tells = !!this.fs && !!this.shader.reflect.entries.find((e) => e.name === this.fs)?.overrides.includes(A2C) && !(o.constants && A2C in o.constants);
+        const tells = !!this.fs && !!this.effShader.reflect.entries.find((e) => e.name === this.fs)?.overrides.includes(A2C) && !(o.constants && A2C in o.constants);
         const fsConstants = tells ? { ...o.constants, [A2C]: a2c ? 1 : 0 } : o.constants;
         const topo = o.topology ?? 'triangle-list';
         const isTri = topo === 'triangle-list' || topo === 'triangle-strip';
@@ -671,7 +694,7 @@ export class Draw {
             && !!f.depth && f.colors.length > 0 && !f.depthReadOnly
             && this.fs !== null && depthWrite && isOpaqueBlend(o.blend)
             && isTri && (cmp === 'greater-equal' || cmp === 'greater') && !hasExplicitBias;
-        const hasInstBiasOverride = !!this.shader.reflect.entries.find((e) => e.name === this.vs)?.overrides.includes(INST_BIAS);
+        const hasInstBiasOverride = !!this.effShader.reflect.entries.find((e) => e.name === this.vs)?.overrides.includes(INST_BIAS);
         const useInstBias = canAutoBias && hasInstBiasOverride
             && !(o.constants && INST_BIAS in o.constants)
             && o.instanceBias !== false && !o.indirect
@@ -680,7 +703,7 @@ export class Draw {
         const desc = {
             label: cullOverride === 'front' ? `${this.label}.back` : this.label,
             layout: this.binder.layout,
-            vertex: { module, entryPoint: this.vs, constants: constantsFor(this.shader, this.vs, vsConstants), buffers: o.vertexBuffers?.map((v) => v.layout) },
+            vertex: { module, entryPoint: this.vs, constants: constantsFor(this.effShader, this.vs, vsConstants), buffers: o.vertexBuffers?.map((v) => v.layout) },
             primitive: { topology: topo, cullMode: cullOverride ?? o.cull ?? 'back', frontFace: o.frontFace ?? 'ccw', unclippedDepth: o.unclippedDepth && this.kit.features.has('depth-clip-control') ? true : undefined },
             // (WebGPU refuses alpha to coverage without multisampling: such a pipeline would fail and never draw)
             multisample: { count: f.samples, alphaToCoverageEnabled: a2c },
@@ -692,7 +715,7 @@ export class Draw {
         if (topo === 'triangle-strip' || topo === 'line-strip')
             desc.primitive.stripIndexFormat = o.indices ? (o.indices.format ?? 'uint32') : undefined;
         if (this.fs)
-            desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.shader, this.fs, fsConstants), targets };
+            desc.fragment = { module, entryPoint: this.fs, constants: constantsFor(this.effShader, this.fs, fsConstants), targets };
         if (f.depth) {
             let depthBias = o.depthBias;
             let depthBiasSlopeScale = o.depthBiasSlopeScale;
