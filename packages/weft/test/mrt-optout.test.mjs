@@ -15,8 +15,9 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f }
 `;
   const wrapped = wrapFragmentZeroLocation(wgsl, 'fs', 2);
   assert.ok(wrapped);
-  assert.match(wrapped, /fn __weft_z2_fs\(i: VOut, ff: bool\) -> vec4f \{/);
-  assert.match(wrapped, /@location\(2\) _c2: vec4f/);
+  assert.match(wrapped, /fn weft_z2_fs\(i: VOut, ff: bool\) -> vec4f \{/);
+  assert.match(wrapped, /@location\(2\) w_c2: vec4f/);
+  assert.doesNotMatch(wrapped, /\b__/);
   const refl = reflectWgsl(wrapped);
   const fs = refl.entries.find((e) => e.stage === 'fragment' && e.name === 'fs');
   assert.ok(fs);
