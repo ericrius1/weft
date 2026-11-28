@@ -163,7 +163,6 @@ export function wrapFragmentZeroLocation(code, fsName, loc) {
     if (!match)
         return null;
     const origHeader = code.slice(match.headerStart, match.braceStart + 1);
-    const origParams = code.slice(match.paramsStart + 1, match.paramsEnd);
     const maskedParams = masked.slice(match.paramsStart + 1, match.paramsEnd);
     const paramDecls = splitTopLevel(maskedParams, ',');
     const strippedParams = [];
@@ -180,8 +179,9 @@ export function wrapFragmentZeroLocation(code, fsName, loc) {
         argNames.push(name);
     }
     const retMasked = masked.slice(match.arrowEnd, match.braceStart).trim();
-    const helperName = `__weft_z${loc}_${fsName}`;
-    const outStructName = `__WeftZ${loc}_${fsName}`;
+    // WGSL §2.2 forbids identifiers starting with `__`, so generated wrapper symbols use a `weft_z` / `WeftZ` prefix.
+    const helperName = `weft_z${loc}_${fsName}`;
+    const outStructName = `WeftZ${loc}_${fsName}`;
     // Case 1: direct `@location(k) Type` return (e.g. `-> @location(0) vec4f`)
     if (retMasked.includes('@')) {
         const locMatch = /@location\s*\(\s*(\d+)\s*\)/.exec(retMasked);
@@ -194,8 +194,8 @@ export function wrapFragmentZeroLocation(code, fsName, loc) {
         if (!retType)
             return null;
         const newHeader = preserveLines(origHeader, `fn ${helperName}(${strippedParams.join(', ')}) -> ${retType} {`);
-        const wrapper = `\nstruct ${outStructName} { @location(${retLoc}) _c0: ${retType}, @location(${loc}) _c${loc}: vec4f }\n`
-            + `@fragment fn ${fsName}(${origParams}) -> ${outStructName} {\n`
+        const wrapper = `\nstruct ${outStructName} { @location(${retLoc}) w_c0: ${retType}, @location(${loc}) w_c${loc}: vec4f }\n`
+            + `@fragment fn ${fsName}(${maskedParams}) -> ${outStructName} {\n`
             + `  return ${outStructName}(${helperName}(${argNames.join(', ')}), vec4f(0.0));\n`
             + `}\n`;
         return code.slice(0, match.headerStart) + newHeader + code.slice(match.braceStart + 1) + wrapper;
@@ -229,10 +229,10 @@ export function wrapFragmentZeroLocation(code, fsName, loc) {
         fieldNames.push(fn);
     }
     const newHeader = preserveLines(origHeader, `fn ${helperName}(${strippedParams.join(', ')}) -> ${structName} {`);
-    const wrapper = `\nstruct ${outStructName} { ${members.join(', ')}, @location(${loc}) _c${loc}: vec4f }\n`
-        + `@fragment fn ${fsName}(${origParams}) -> ${outStructName} {\n`
-        + `  let _r = ${helperName}(${argNames.join(', ')});\n`
-        + `  return ${outStructName}(${fieldNames.map((f) => `_r.${f}`).join(', ')}, vec4f(0.0));\n`
+    const wrapper = `\nstruct ${outStructName} { ${members.join(', ')}, @location(${loc}) w_c${loc}: vec4f }\n`
+        + `@fragment fn ${fsName}(${maskedParams}) -> ${outStructName} {\n`
+        + `  let w_r = ${helperName}(${argNames.join(', ')});\n`
+        + `  return ${outStructName}(${fieldNames.map((f) => `w_r.${f}`).join(', ')}, vec4f(0.0));\n`
         + `}\n`;
     return code.slice(0, match.headerStart) + newHeader + code.slice(match.braceStart + 1) + wrapper;
 }

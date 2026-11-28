@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.24
+
+WGSL identifier compliance fix for opaque MRT `@location(2)` zero opt-out wrappers (`src/mrt-optout.ts`).
+
+- Replaced leading `__` double-underscore prefixes (reserved/illegal under WGSL §2.2 in Tint) with `weft_z` / `WeftZ` / `w_` prefixes and comment-masked parameter lists.
+
 ## 0.2.23
 
 Automatic opaque MRT `@location(2)` zero opt-out wrapper and strictly conservative `f16` Hi-Z rounding; 100% backwards-compatible.
